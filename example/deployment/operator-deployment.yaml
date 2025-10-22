@@ -443,13 +443,17 @@ spec:
         - --metrics-secure=false
         - --leader-elect
         - --health-probe-bind-address=:8081
+        # Leader election is ENABLED for production safety:
+        # - Prevents duplicate reconciliation during rolling updates
+        # - Ensures graceful shutdown
+        # - Required even for single-replica deployments
         command:
         - /manager
         # Multi-arch image (ARM64 + AMD64)
-        # Available tags: v1.0.0, latest
-        # Production: use specific version (v1.0.0)
+        # Available tags: v1.1.0, v1.0.0, latest
+        # Production: use specific version (v1.1.0)
         # Development: use latest
-        image: lukaszbielinski/permission-binder-operator:v1.0.0
+        image: lukaszbielinski/permission-binder-operator:v1.1.0
         livenessProbe:
           httpGet:
             path: /healthz

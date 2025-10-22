@@ -5,6 +5,22 @@ All notable changes to the Permission Binder Operator will be documented in this
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Leader Election**: Enabled by default for production safety
+  - Prevents duplicate reconciliation during rolling updates
+  - Ensures only one active controller at any time
+  - Fast leadership transitions with `LeaderElectionReleaseOnCancel`
+  - Required for safe Kubernetes deployments (even single-replica)
+- **Leader Election Documentation**: Comprehensive guide in README and RUNBOOK
+- **Leader Election Troubleshooting**: Dedicated P3 playbook in RUNBOOK
+
+### Changed
+- `--leader-elect` flag now defaults to `true` (was `false`)
+- All deployment examples include leader election by default
+- Updated documentation to reflect leader election as production requirement
+
 ## [1.0.0] - 2025-10-22
 
 ### Added
@@ -34,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Documentation
 - **Comprehensive README**: Production-grade documentation
-- **Operational Runbook**: On-call procedures and troubleshooting (docs/RUNBOOK.md)
+- **Operational Runbook**: Operational procedures and troubleshooting (docs/RUNBOOK.md)
 - **Backup & Recovery Guide**: Including Kasten K10 integration (docs/BACKUP.md)
 - **E2E Test Scenarios**: 30 comprehensive test scenarios
 - **Monitoring Setup Guide**: Complete Prometheus/Grafana setup

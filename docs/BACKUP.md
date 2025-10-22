@@ -372,9 +372,9 @@ echo "DR Drill $(date): SUCCESS" >> dr-drill-log.txt
 - **Metrics:** 30 days (Prometheus)
 
 ### Access Control
-- Backup access: Platform team + DBA
-- Restore operations: Require approval
-- Audit logs: Security team access
+- Backup access: Kubernetes cluster administrators
+- Restore operations: Require proper RBAC permissions
+- Audit logs: Monitor and review regularly
 
 ---
 
@@ -395,9 +395,9 @@ echo "DR Drill $(date): SUCCESS" >> dr-drill-log.txt
 
 ## Support
 
-**Issues:** GitHub Issues or Internal Ticket System  
-**Urgent:** Slack #platform-oncall  
-**Documentation:** https://wiki.example.com/permission-binder
+**Issues:** [GitHub Issues](https://github.com/lukasz-bielinski/permission-binder-operator/issues)  
+**Discussions:** [GitHub Discussions](https://github.com/lukasz-bielinski/permission-binder-operator/discussions)  
+**Documentation:** [Repository Docs](https://github.com/lukasz-bielinski/permission-binder-operator)
 
 ---
 

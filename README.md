@@ -23,6 +23,7 @@ A safe, predictable, and auditable Kubernetes operator that automatically manage
 - ✅ **Graceful Error Handling** - Partial failures don't cascade
 - ✅ **Automatic Reconciliation** - Self-healing on configuration changes
 - ✅ **Finalizer-based Cleanup** - Ensures proper resource lifecycle
+- ✅ **Leader Election** - Safe rolling updates with zero downtime
 
 ### Observability
 - ✅ **JSON Structured Logging** - Machine-readable logs for SIEM
@@ -97,7 +98,7 @@ spec:
 ## Documentation
 
 ### For Operations
-- [**Runbook**](docs/RUNBOOK.md) - On-call procedures and troubleshooting
+- [**Runbook**](docs/RUNBOOK.md) - Operational procedures and troubleshooting
 - [**Backup & Recovery**](docs/BACKUP.md) - DR procedures with Kasten K10
 - [E2E Test Scenarios](example/e2e-test-scenarios.md) - 24 test scenarios
 - [Monitoring Guide](example/monitoring/README.md) - Metrics, alerts, dashboards
@@ -260,6 +261,36 @@ All managed resources have annotations:
 - Cleanup logic runs before PermissionBinder deletion
 - Resources are properly marked as orphaned
 - No stuck deletions
+
+### Leader Election
+
+Leader election is **enabled by default** for production safety:
+- Prevents duplicate reconciliation during rolling updates
+- Ensures only one active controller at any time
+- Required for safe Kubernetes deployments (even single-replica)
+
+**How it works:**
+1. During rolling update, both old and new pods exist briefly
+2. Leader election ensures only ONE pod is active
+3. Old leader releases lock on shutdown (< 1 second)
+4. New leader takes over immediately
+5. Zero downtime, zero duplicate operations
+
+**Configuration:**
+```bash
+# Leader election is enabled by default
+# To disable (NOT recommended for production):
+--leader-elect=false
+```
+
+**Leader Election Metrics:**
+```promql
+# Check current leader
+leader_election_master_status{name="permission-binder-operator"}
+
+# Leader transitions during rolling updates
+rate(leader_election_master_status[5m])
+```
 
 ---
 
