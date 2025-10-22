@@ -1,0 +1,94 @@
+# Prometheus Operator values for n5pro node
+# Install with: helm install prometheus prometheus-community/kube-prometheus-stack -n monitoring --create-namespace -f prometheus-values-n5pro.yaml
+
+# Global settings
+defaultRules:
+  create: true
+
+# Prometheus server
+prometheus:
+  prometheusSpec:
+    # Monitor all ServiceMonitors across all namespaces
+    serviceMonitorSelectorNilUsesHelmValues: false
+    
+    # Node selector - only n5pro
+    nodeSelector:
+      kubernetes.io/hostname: n5pro
+    
+    # Resources
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 100m
+      limits:
+        memory: 2Gi
+        cpu: 1000m
+    
+    # Storage
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+# Grafana
+grafana:
+  enabled: true
+  adminPassword: "admin"
+  
+  # Node selector - only n5pro
+  nodeSelector:
+    kubernetes.io/hostname: n5pro
+  
+  # Resources
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 500m
+
+# Alert Manager
+alertmanager:
+  enabled: true
+  
+  # Node selector - only n5pro
+  alertmanagerSpec:
+    nodeSelector:
+      kubernetes.io/hostname: n5pro
+    
+    resources:
+      requests:
+        memory: 64Mi
+        cpu: 50m
+      limits:
+        memory: 128Mi
+        cpu: 200m
+
+# Prometheus Operator
+prometheusOperator:
+  # Node selector - only n5pro
+  nodeSelector:
+    kubernetes.io/hostname: n5pro
+  
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 500m
+
+# Node Exporter - disabled (runs on all nodes by default)
+nodeExporter:
+  enabled: false
+
+# Kube State Metrics
+kubeStateMetrics:
+  # Node selector - only n5pro
+  nodeSelector:
+    kubernetes.io/hostname: n5pro
+
