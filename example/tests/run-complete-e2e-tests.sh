@@ -26,6 +26,40 @@ info_log() {
     echo "ℹ️  $1" | tee -a $TEST_RESULTS
 }
 
+# Retry kubectl commands with exponential backoff (for RPi k3s restarts)
+kubectl_retry() {
+    local max_attempts=5
+    local timeout=2
+    local attempt=1
+    local exitCode=0
+    
+    while [ $attempt -le $max_attempts ]; do
+        if "$@" 2>&1; then
+            return 0
+        else
+            exitCode=$?
+        fi
+        
+        # Check if it's a connection error
+        if echo "$("$@" 2>&1)" | grep -qE "connection refused|ServiceUnavailable|i/o timeout"; then
+            if [ $attempt -lt $max_attempts ]; then
+                info_log "⚠️  K3s connection issue (attempt $attempt/$max_attempts), retrying in ${timeout}s..."
+                sleep $timeout
+                timeout=$((timeout * 2))  # Exponential backoff
+                attempt=$((attempt + 1))
+            else
+                info_log "❌ K3s connection failed after $max_attempts attempts"
+                return $exitCode
+            fi
+        else
+            # Not a connection error, return immediately
+            return $exitCode
+        fi
+    done
+    
+    return $exitCode
+}
+
 # ============================================================================
 # Pre-Test: Initial State Verification
 # ============================================================================
@@ -72,8 +106,10 @@ kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=jso
   -p='[{"op":"add","path":"/spec/roleMapping/developer","value":"edit"}]' >/dev/null 2>&1
 
 # Add ConfigMap entry with "developer" role to test the new mapping
-kubectl patch configmap permission-binder-whitelist -n $NAMESPACE --type=json \
-  -p='[{"op":"add","path":"/data/whitelist.txt","value":"CN=COMPANY-K8S-demo-app-staging-admin,OU=Example,DC=example,DC=com\nCN=COMPANY-K8S-demo-app-production-admin,OU=Example,DC=example,DC=com\nCN=COMPANY-K8S-platform-shared-admin,OU=Example,DC=example,DC=com\nCN=COMPANY-K8S-test-namespace-developer,OU=Example,DC=example,DC=com"}]' >/dev/null 2>&1
+# Get current whitelist and append new entry
+CURRENT_WHITELIST=$(kubectl get configmap permission-binder-whitelist -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')
+kubectl patch configmap permission-binder-whitelist -n $NAMESPACE --type=merge \
+  -p="{\"data\":{\"whitelist.txt\":\"${CURRENT_WHITELIST}\nCN=COMPANY-K8S-test-namespace-developer,OU=Example,DC=example,DC=com\"}}" >/dev/null 2>&1
 
 sleep 20
 
