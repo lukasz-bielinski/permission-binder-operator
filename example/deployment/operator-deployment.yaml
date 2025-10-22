@@ -458,7 +458,7 @@ spec:
         # Available tags: v1.2.1, v1.1.0, v1.0.0, latest
         # Production: use specific version (v1.2.1)
         # Development: use latest
-        image: lukaszbielinski/permission-binder-operator:v1.2.1
+        image: lukaszbielinski/permission-binder-operator:v1.3.0
         imagePullPolicy: Always
         livenessProbe:
           httpGet:
