@@ -98,7 +98,7 @@ spec:
 ## Documentation
 
 ### For Operations
-- [**Runbook**](docs/RUNBOOK.md) - On-call procedures and troubleshooting
+- [**Runbook**](docs/RUNBOOK.md) - Operational procedures and troubleshooting
 - [**Backup & Recovery**](docs/BACKUP.md) - DR procedures with Kasten K10
 - [E2E Test Scenarios](example/e2e-test-scenarios.md) - 24 test scenarios
 - [Monitoring Guide](example/monitoring/README.md) - Metrics, alerts, dashboards

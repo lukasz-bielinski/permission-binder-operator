@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Documentation
 - **Comprehensive README**: Production-grade documentation
-- **Operational Runbook**: On-call procedures and troubleshooting (docs/RUNBOOK.md)
+- **Operational Runbook**: Operational procedures and troubleshooting (docs/RUNBOOK.md)
 - **Backup & Recovery Guide**: Including Kasten K10 integration (docs/BACKUP.md)
 - **E2E Test Scenarios**: 30 comprehensive test scenarios
 - **Monitoring Setup Guide**: Complete Prometheus/Grafana setup

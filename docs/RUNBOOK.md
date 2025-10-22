@@ -1,8 +1,8 @@
 # Permission Binder Operator - Operational Runbook
 
 **Version:** 1.0  
-**Last Updated:** 2025-10-15  
-**Maintainer:** Platform Team  
+**Last Updated:** 2025-10-22  
+**Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)  
 **Severity Levels:** P1 (Critical), P2 (High), P3 (Medium), P4 (Low)
 
 ---
@@ -76,7 +76,7 @@ kubectl get events -n permissions-binder-operator --sort-by='.lastTimestamp'
    kubectl rollout restart deployment operator-controller-manager -n permissions-binder-operator
    ```
 
-**Escalation:** If restart doesn't help after 3 attempts → Senior Platform Engineer
+**Escalation:** If restart doesn't help after 3 attempts, open a [GitHub Issue](https://github.com/lukasz-bielinski/permission-binder-operator/issues) with full diagnostics
 
 ---
 
@@ -121,7 +121,7 @@ kubectl logs -n permissions-binder-operator deployment/operator-controller-manag
    kubectl auth can-i get pods --as=system:group:<group-name> -n <namespace>
    ```
 
-**Escalation:** Security team must approve new ClusterRoles
+**Note:** Review and validate ClusterRole permissions before creating new ones in production environments
 
 ---
 
@@ -648,23 +648,23 @@ kubectl get permissionbinder permissionbinder-example -n permissions-binder-oper
 
 ---
 
-## Contacts & Escalation
+## Support & Contributing
 
-### On-Call Rotation
-- **Primary:** Platform Team (Slack: #platform-oncall)
-- **Secondary:** Senior Platform Engineer
-- **Escalation:** Security Team (for ClusterRole issues)
+### Getting Help
+- **GitHub Issues**: Report bugs or request features at [GitHub Issues](https://github.com/lukasz-bielinski/permission-binder-operator/issues)
+- **GitHub Discussions**: Ask questions at [GitHub Discussions](https://github.com/lukasz-bielinski/permission-binder-operator/discussions)
+- **Documentation**: Check README.md and other docs in this repository
 
-### SLA
-- **P1 (Critical):** 15 minutes response, 1 hour resolution
-- **P2 (High):** 1 hour response, 4 hours resolution
-- **P3 (Medium):** Next business day
-- **P4 (Low):** Best effort
+### Contributing
+- See [SECURITY.md](../SECURITY.md) for security vulnerability reporting
+- Pull requests are welcome!
+- Follow the existing code style and add tests for new features
 
-### Communication
-- Incidents: #incidents Slack channel
-- Status updates: Every 30 minutes during P1
-- Post-mortem: Within 48 hours of P1/P2
+### Severity Guidelines
+- **P1 (Critical):** Operator completely down, affecting production workloads
+- **P2 (High):** Partial functionality loss, workaround available
+- **P3 (Medium):** Minor issues, no immediate impact
+- **P4 (Low):** Documentation, cosmetic issues
 
 ---
 
