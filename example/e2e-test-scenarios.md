@@ -1,7 +1,7 @@
 # E2E Test Scenarios for Permission Binder Operator
 
 ## Test Suite Overview
-This document contains comprehensive end-to-end test scenarios for the Permission Binder Operator to ensure it behaves correctly in all situations.
+This document contains **31 comprehensive end-to-end test scenarios** (Pre-Test + Tests 1-30) for the Permission Binder Operator to ensure it behaves correctly in all situations.
 
 ## Prerequisites
 - K3s cluster with mixed architectures (ARM64 and AMD64)
