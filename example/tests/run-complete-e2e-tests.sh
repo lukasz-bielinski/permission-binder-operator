@@ -107,8 +107,8 @@ kubectl_retry kubectl patch permissionbinder permissionbinder-example -n $NAMESP
 
 # Add ConfigMap entry with "developer" role to test the new mapping
 # Get current whitelist and append new entry
-CURRENT_WHITELIST=$(kubectl_retry kubectl get configmap permission-binder-whitelist -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')
-kubectl_retry kubectl patch configmap permission-binder-whitelist -n $NAMESPACE --type=merge \
+CURRENT_WHITELIST=$(kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')
+kubectl_retry kubectl patch configmap permission-config -n $NAMESPACE --type=merge \
   -p="{\"data\":{\"whitelist.txt\":\"${CURRENT_WHITELIST}\nCN=COMPANY-K8S-test-namespace-developer,OU=Example,DC=example,DC=com\"}}" >/dev/null 2>&1
 
 sleep 20
@@ -152,7 +152,7 @@ kubectl_retry kubectl patch permissionbinder permissionbinder-example -n $NAMESP
 sleep 15
 
 # Check if operator processed new prefix
-NEW_PREFIX_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=50 | grep -c "NEW-PREFIX" || echo "0")
+NEW_PREFIX_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=50 | grep -c "NEW-PREFIX" | tr -d '\n' | head -1 || echo "0")
 info_log "Logs mentioning NEW-PREFIX: $NEW_PREFIX_LOGS"
 
 if [ "$NEW_PREFIX_LOGS" -gt 0 ]; then
@@ -196,7 +196,7 @@ else
 fi
 
 # Check logs for "Skipping excluded"
-SKIP_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=50 | grep -c "excluded" || echo "0")
+SKIP_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=50 | grep -c "excluded" | tr -d '\n' | head -1 || echo "0")
 info_log "Exclude-related log entries: $SKIP_LOGS"
 
 # Cleanup
@@ -854,7 +854,7 @@ PORT_FORWARD_PID=$!
 sleep 3
 
 # Query metrics endpoint
-METRICS_RESPONSE=$(curl -s http://localhost:8080/metrics 2>/dev/null | grep -c "permission_binder" || echo "0")
+METRICS_RESPONSE=$(curl -s http://localhost:8080/metrics 2>/dev/null | grep -c "permission_binder" | tr -d '\n' | head -1 || echo "0")
 METRICS_RESPONSE=$(echo "$METRICS_RESPONSE" | tr -d '\n' | head -1)
 
 # Kill port-forward
