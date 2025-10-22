@@ -1,0 +1,17 @@
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/managed-by: kustomize
+  name: permissionbinder-sample
+spec:
+  roleMapping:
+    engineer: clusterrole-engineer
+    admin: clusterrole-admin
+    viewer: clusterrole-viewer
+  prefix: "COMPANY-K8S"
+  excludeList:
+    - "COMPANY-K8S-HPA-admin"
+  configMapName: "permission-config"
+  configMapNamespace: "default"

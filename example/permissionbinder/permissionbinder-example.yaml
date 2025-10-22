@@ -1,0 +1,26 @@
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: permissionbinder-example
+  namespace: permissions-binder-operator
+  labels:
+    app.kubernetes.io/name: permission-binder-operator
+    app.kubernetes.io/instance: example
+spec:
+  # Mapping of roles to existing ClusterRoles
+  roleMapping:
+    engineer: edit
+    admin: admin
+    viewer: view
+  
+  # Prefix used to identify permission strings
+  prefix: "COMPANY-K8S"
+  
+  # Exclusion list
+  excludeList:
+    - "COMPANY-K8S-HPA-admin"
+  
+  # ConfigMap configuration
+  configMapName: "permission-config"
+  configMapNamespace: "permissions-binder-operator"
+

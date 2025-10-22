@@ -1,0 +1,37 @@
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: multi-tenant-permissionbinder
+  namespace: default
+  labels:
+    app.kubernetes.io/name: permission-binder-operator
+    app.kubernetes.io/instance: multi-tenant
+spec:
+  # Extended role mapping for multi-tenant environment
+  roleMapping:
+    # Basic roles
+    engineer: clusterrole-engineer
+    admin: clusterrole-admin
+    viewer: clusterrole-viewer
+    
+    # Specialized roles
+    devops: clusterrole-devops
+    security: clusterrole-security
+    auditor: clusterrole-auditor
+    
+    # Environment-specific roles
+    staging-admin: clusterrole-staging-admin
+    production-viewer: clusterrole-production-viewer
+  
+  # Prefix for multi-tenant environment
+  prefix: "MT-K8S"
+  
+  # Exclusion list for system roles
+  excludeList:
+    - "MT-K8S-SYSTEM-admin"
+    - "MT-K8S-MONITORING-viewer"
+    - "MT-K8S-LOGGING-viewer"
+  
+  # ConfigMap configuration
+  configMapName: "multi-tenant-permission-config"
+  configMapNamespace: "default"

@@ -1,0 +1,23 @@
+# permissions for end users to view permissionbinders.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/managed-by: kustomize
+  name: permissionbinder-viewer-role
+rules:
+- apiGroups:
+  - permission.permission-binder.io
+  resources:
+  - permissionbinders
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - permission.permission-binder.io
+  resources:
+  - permissionbinders/status
+  verbs:
+  - get

@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multi-tenant-permission-config
+  namespace: default
+  labels:
+    app.kubernetes.io/name: permission-binder-operator
+    app.kubernetes.io/instance: multi-tenant
+data:
+  # Examples of permissions for different tenants
+  MT-K8S-tenant1-project1-engineer: "MT-K8S-tenant1-project1-engineer"
+  MT-K8S-tenant1-project2-admin: "MT-K8S-tenant1-project2-admin"
+  MT-K8S-tenant2-app1-viewer: "MT-K8S-tenant2-app1-viewer"
+  MT-K8S-tenant2-app2-devops: "MT-K8S-tenant2-app2-devops"
+  
+  # Examples of environment-specific permissions
+  MT-K8S-tenant1-staging-staging-admin: "MT-K8S-tenant1-staging-staging-admin"
+  MT-K8S-tenant2-production-production-viewer: "MT-K8S-tenant2-production-production-viewer"
+  
+  # Examples of specialized permissions
+  MT-K8S-security-team-security: "MT-K8S-security-team-security"
+  MT-K8S-audit-team-auditor: "MT-K8S-audit-team-auditor"
+  
+  # Excluded system permissions
+  MT-K8S-SYSTEM-admin: "MT-K8S-SYSTEM-admin"
+  MT-K8S-MONITORING-viewer: "MT-K8S-MONITORING-viewer"
+  MT-K8S-LOGGING-viewer: "MT-K8S-LOGGING-viewer"

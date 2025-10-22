@@ -1,0 +1,209 @@
+# Prometheus AlertManager Rules for Permission Binder Operator
+# These rules use custom metrics exported by the operator
+#
+# Deploy to Prometheus with:
+# kubectl apply -f prometheus-alerts.yaml
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: permission-binder-alerts
+  namespace: monitoring
+  labels:
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: permission-binder-security
+      interval: 30s
+      rules:
+        # Alert when ClusterRole doesn't exist
+        # Based on controller-runtime metrics or custom metrics
+        - alert: PermissionBinderMissingClusterRole
+          expr: |
+            increase(controller_runtime_reconcile_errors_total{
+              controller="permissionbinder",
+              namespace="permissions-binder-operator"
+            }[5m]) > 5
+          for: 5m
+          labels:
+            severity: warning
+            component: permission-binder-operator
+            team: platform
+          annotations:
+            summary: "Permission Binder: Reconciliation errors detected"
+            description: "Operator has {{ $value }} reconciliation errors in last 5 minutes. Check logs for missing ClusterRoles."
+            action_required: "Check logs: kubectl logs -n permissions-binder-operator deployment/operator-controller-manager | jq 'select(.severity==\"warning\")'"
+            runbook_url: "https://wiki.example.com/runbooks/permission-binder-errors"
+            
+        # Alert on high reconciliation duration
+        - alert: PermissionBinderSlowReconciliation
+          expr: |
+            histogram_quantile(0.99,
+              rate(controller_runtime_reconcile_duration_seconds_bucket{
+                controller="permissionbinder",
+                namespace="permissions-binder-operator"
+              }[5m])
+            ) > 30
+          for: 10m
+          labels:
+            severity: warning
+            component: permission-binder-operator
+            team: platform
+          annotations:
+            summary: "Permission Binder: Slow reconciliation detected"
+            description: "99th percentile reconciliation time is {{ $value }}s (threshold: 30s)"
+            action_required: "Check for large ConfigMaps or performance issues"
+            runbook_url: "https://wiki.example.com/runbooks/permission-binder-performance"
+            
+    - name: permission-binder-operations
+      interval: 30s
+      rules:
+        # Alert when operator pod is not running
+        - alert: PermissionBinderOperatorDown
+          expr: |
+            up{job="operator-controller-manager-metrics-service",
+               namespace="permissions-binder-operator"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            component: permission-binder-operator
+            team: platform
+          annotations:
+            summary: "Permission Binder: Operator is down"
+            description: "Operator pod is not running or metrics endpoint is unavailable"
+            action_required: "Check pod status: kubectl get pods -n permissions-binder-operator"
+            runbook_url: "https://wiki.example.com/runbooks/permission-binder-down"
+            
+        # Alert on pod restarts
+        - alert: PermissionBinderFrequentRestarts
+          expr: |
+            rate(kube_pod_container_status_restarts_total{
+              namespace="permissions-binder-operator",
+              pod=~"operator-controller-manager-.*"
+            }[15m]) > 0
+          for: 15m
+          labels:
+            severity: warning
+            component: permission-binder-operator
+            team: platform
+          annotations:
+            summary: "Permission Binder: Pod restarting frequently"
+            description: "Operator pod has restarted {{ $value }} times in last 15 minutes"
+            action_required: "Check pod logs: kubectl logs -n permissions-binder-operator deployment/operator-controller-manager --previous"
+            runbook_url: "https://wiki.example.com/runbooks/permission-binder-restarts"
+            
+        # Alert on high memory usage
+        - alert: PermissionBinderHighMemoryUsage
+          expr: |
+            container_memory_usage_bytes{
+              namespace="permissions-binder-operator",
+              pod=~"operator-controller-manager-.*",
+              container="manager"
+            } / 
+            container_spec_memory_limit_bytes{
+              namespace="permissions-binder-operator",
+              pod=~"operator-controller-manager-.*",
+              container="manager"
+            } > 0.9
+          for: 15m
+          labels:
+            severity: warning
+            component: permission-binder-operator
+            team: platform
+          annotations:
+            summary: "Permission Binder: High memory usage"
+            description: "Operator memory usage is {{ $value | humanizePercentage }} of limit"
+            action_required: "Consider increasing memory limits or investigate memory leak"
+            runbook_url: "https://wiki.example.com/runbooks/permission-binder-memory"
+            
+    - name: permission-binder-slo
+      interval: 2m
+      rules:
+        # SLO: 99.9% availability
+        - alert: PermissionBinderSLOViolation
+          expr: |
+            (
+              1 - (
+                rate(controller_runtime_reconcile_errors_total{
+                  controller="permissionbinder",
+                  namespace="permissions-binder-operator"
+                }[30m])
+                /
+                rate(controller_runtime_reconcile_total{
+                  controller="permissionbinder",
+                  namespace="permissions-binder-operator"
+                }[30m])
+              )
+            ) < 0.999
+          for: 10m
+          labels:
+            severity: critical
+            component: permission-binder-operator
+            team: platform
+            slo: availability
+          annotations:
+            summary: "Permission Binder: SLO violation - Availability below 99.9%"
+            description: "Reconciliation success rate is {{ $value | humanizePercentage }} (target: 99.9%)"
+            action_required: "Investigate recent errors and failures"
+            runbook_url: "https://wiki.example.com/runbooks/permission-binder-slo"
+
+---
+# Alternative: Simple alerts based on logs (if custom metrics not available)
+# These use Prometheus' log-based metrics via promtail or similar
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: permission-binder-log-based-alerts
+  namespace: monitoring
+  labels:
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: permission-binder-log-security
+      interval: 1m
+      rules:
+        # Alert based on log metrics (if you have promtail or similar)
+        - alert: PermissionBinderMissingClusterRoleFromLogs
+          expr: |
+            rate(log_messages_total{
+              namespace="permissions-binder-operator",
+              severity="warning",
+              message=~".*ClusterRole does not exist.*"
+            }[5m]) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+            component: permission-binder-operator
+            team: platform
+          annotations:
+            summary: "Permission Binder: Missing ClusterRole detected in logs"
+            description: "Warning logs about missing ClusterRoles detected at {{ $value }} per second"
+            action_required: "Check logs for specific ClusterRole names and create them"
+            query: 'kubectl logs -n permissions-binder-operator deployment/operator-controller-manager | jq ''select(.severity=="warning" and .clusterRole)'''
+
+---
+# ServiceMonitor for exposing operator metrics to Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: operator-controller-manager-metrics
+  namespace: permissions-binder-operator
+  labels:
+    control-plane: controller-manager
+spec:
+  endpoints:
+    - path: /metrics
+      port: https
+      scheme: https
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        insecureSkipVerify: true
+      interval: 30s
+      scrapeTimeout: 10s
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+

@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: permission-config-invalid-chars
+  namespace: permissions-binder-operator
+  labels:
+    app.kubernetes.io/name: permission-binder-operator
+    test-type: invalid-characters
+data:
+  # Valid entry
+  NEW_PREFIX-valid-namespace-admin: "NEW_PREFIX-valid-namespace-admin"
+  
+  # Invalid: uppercase (Kubernetes namespaces must be lowercase)
+  NEW_PREFIX-UPPERCASE-NAMESPACE-admin: "NEW_PREFIX-UPPERCASE-NAMESPACE-admin"
+  
+  # Invalid: underscore (not allowed in DNS names)
+  NEW_PREFIX-namespace_with_underscore-admin: "NEW_PREFIX-namespace_with_underscore-admin"
+  
+  # Invalid: starts with number
+  NEW_PREFIX-123namespace-admin: "NEW_PREFIX-123namespace-admin"
+  
+  # Invalid: special characters
+  NEW_PREFIX-namespace@special-admin: "NEW_PREFIX-namespace@special-admin"
+  NEW_PREFIX-namespace#hash-admin: "NEW_PREFIX-namespace#hash-admin"
+  
+  # Invalid: too long (> 63 characters for namespace name)
+  NEW_PREFIX-this-is-a-very-long-namespace-name-that-exceeds-the-kubernetes-limit-of-63-characters-admin: "NEW_PREFIX-this-is-a-very-long-namespace-name-that-exceeds-the-kubernetes-limit-of-63-characters-admin"
+  
+  # Edge case: dots (allowed but may cause issues)
+  NEW_PREFIX-namespace.with.dots-admin: "NEW_PREFIX-namespace.with.dots-admin"
+  
+  # Edge case: starts/ends with hyphen (not allowed)
+  NEW_PREFIX--starts-with-hyphen-admin: "NEW_PREFIX--starts-with-hyphen-admin"
+  NEW_PREFIX-ends-with-hyphen--admin: "NEW_PREFIX-ends-with-hyphen--admin"
+
+# Expected behavior:
+# - Valid entry: processed successfully
+# - Invalid entries: operator logs ERROR and continues processing
+# - No operator crash
+# - Kubernetes will reject invalid namespace creation with clear error
+
+
+

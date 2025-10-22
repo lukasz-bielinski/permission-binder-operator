@@ -1,0 +1,72 @@
+# Prometheus Configuration for Permission Binder Operator
+# Add this to your Prometheus configuration file
+
+scrape_configs:
+- job_name: 'permission-binder-operator'
+  kubernetes_sd_configs:
+  - role: endpoints
+    namespaces:
+      names:
+      - permissions-binder-operator
+  relabel_configs:
+  # Keep only the metrics service
+  - source_labels: [__meta_kubernetes_service_name]
+    action: keep
+    regex: operator-controller-manager-metrics-service
+  # Keep only the https port
+  - source_labels: [__meta_kubernetes_endpoint_port_name]
+    action: keep
+    regex: https
+  # Update the address to use port 8443
+  - source_labels: [__address__]
+    target_label: __address__
+    regex: (.+)
+    replacement: ${1}:8443
+  # Add useful labels
+  - source_labels: [__meta_kubernetes_namespace]
+    target_label: kubernetes_namespace
+  - source_labels: [__meta_kubernetes_service_name]
+    target_label: kubernetes_service_name
+  - source_labels: [__meta_kubernetes_pod_name]
+    target_label: kubernetes_pod_name
+  - source_labels: [__meta_kubernetes_pod_node_name]
+    target_label: kubernetes_node_name
+  # Use HTTPS
+  scheme: https
+  tls_config:
+    insecure_skip_verify: true
+  # Only keep permission_binder metrics
+  metric_relabel_configs:
+  - source_labels: [__name__]
+    regex: 'permission_binder_.*'
+    action: keep
+  # Set scrape interval
+  scrape_interval: 30s
+  scrape_timeout: 10s
+
+# Alerting rules for Permission Binder Operator
+rule_files:
+- "/etc/prometheus/rules/permission-binder-operator.yml"
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets:
+      - alertmanager:9093
+
+# Recording rules for better performance
+recording_rules:
+- name: permission_binder_operator
+  rules:
+  # Rate of ConfigMap processing
+  - record: permission_binder_configmap_processing_rate
+    expr: rate(permission_binder_configmap_entries_processed_total[5m])
+  
+  # Rate of missing ClusterRole events
+  - record: permission_binder_missing_clusterrole_rate
+    expr: rate(permission_binder_missing_clusterrole_total[5m])
+  
+  # Rate of adoption events
+  - record: permission_binder_adoption_rate
+    expr: rate(permission_binder_adoption_events_total[5m])

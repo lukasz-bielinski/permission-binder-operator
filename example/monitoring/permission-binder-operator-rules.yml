@@ -1,0 +1,106 @@
+groups:
+- name: permission-binder-operator.rules
+  rules:
+  # Critical: Missing ClusterRole (Security Issue)
+  - alert: PermissionBinderMissingClusterRole
+    expr: increase(permission_binder_missing_clusterrole_total[5m]) > 0
+    for: 0m
+    labels:
+      severity: warning
+      category: security
+      component: permission-binder-operator
+    annotations:
+      summary: "Permission Binder detected missing ClusterRole"
+      description: "Permission Binder operator created RoleBinding for non-existent ClusterRole '{{ $labels.clusterrole }}' in namespace '{{ $labels.namespace }}'. This is a security risk as no permissions will be granted until ClusterRole is created."
+      runbook_url: "https://github.com/lukaszbielinski/permission-binder-operator/blob/main/docs/RUNBOOK.md#missing-clusterrole"
+  
+  # Warning: High number of orphaned resources
+  - alert: PermissionBinderHighOrphanedResources
+    expr: permission_binder_orphaned_resources_total > 10
+    for: 5m
+    labels:
+      severity: warning
+      category: reliability
+      component: permission-binder-operator
+    annotations:
+      summary: "High number of orphaned resources detected"
+      description: "Permission Binder operator has {{ $value }} orphaned {{ $labels.resource_type }} resources. This may indicate PermissionBinder was deleted without proper cleanup."
+      runbook_url: "https://github.com/lukaszbielinski/permission-binder-operator/blob/main/docs/RUNBOOK.md#orphaned-resources"
+  
+  # Critical: Operator not processing ConfigMap entries
+  - alert: PermissionBinderConfigMapProcessingFailed
+    expr: rate(permission_binder_configmap_entries_processed_total{status="error"}[5m]) > 0.1
+    for: 2m
+    labels:
+      severity: critical
+      category: reliability
+      component: permission-binder-operator
+    annotations:
+      summary: "Permission Binder failing to process ConfigMap entries"
+      description: "Permission Binder operator is failing to process ConfigMap entries at rate {{ $value }} errors/second. This may indicate configuration issues or resource constraints."
+      runbook_url: "https://github.com/lukaszbielinski/permission-binder-operator/blob/main/docs/RUNBOOK.md#configmap-processing-errors"
+  
+  # Warning: No recent adoption events
+  - alert: PermissionBinderNoAdoptionEvents
+    expr: increase(permission_binder_adoption_events_total[1h]) == 0
+    for: 1h
+    labels:
+      severity: info
+      category: reliability
+      component: permission-binder-operator
+    annotations:
+      summary: "No orphaned resource adoption events in the last hour"
+      description: "Permission Binder operator has not adopted any orphaned resources in the last hour. This is normal if no PermissionBinder was recreated recently."
+  
+  # Info: High number of managed resources
+  - alert: PermissionBinderHighManagedResources
+    expr: permission_binder_managed_rolebindings_total > 100
+    for: 5m
+    labels:
+      severity: info
+      category: capacity
+      component: permission-binder-operator
+    annotations:
+      summary: "High number of managed RoleBindings"
+      description: "Permission Binder operator is managing {{ $value }} RoleBindings. Consider monitoring resource usage and performance."
+  
+  # Warning: ConfigMap processing rate too low
+  - alert: PermissionBinderLowConfigMapProcessingRate
+    expr: rate(permission_binder_configmap_entries_processed_total{status="success"}[5m]) < 0.1
+    for: 10m
+    labels:
+      severity: warning
+      category: reliability
+      component: permission-binder-operator
+    annotations:
+      summary: "Low ConfigMap processing rate"
+      description: "Permission Binder operator is processing ConfigMap entries at very low rate ({{ $value }} entries/second). This may indicate the operator is not responding to ConfigMap changes."
+      runbook_url: "https://github.com/lukaszbielinski/permission-binder-operator/blob/main/docs/RUNBOOK.md#low-processing-rate"
+  
+  # Critical: Operator pod down
+  - alert: PermissionBinderOperatorDown
+    expr: up{job="permission-binder-operator"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      category: availability
+      component: permission-binder-operator
+    annotations:
+      summary: "Permission Binder operator is down"
+      description: "Permission Binder operator has been down for more than 1 minute. This will prevent processing of ConfigMap changes and RoleBinding management."
+      runbook_url: "https://github.com/lukaszbielinski/permission-binder-operator/blob/main/docs/RUNBOOK.md#operator-down"
+  
+  # Warning: High error rate in ConfigMap processing
+  - alert: PermissionBinderHighErrorRate
+    expr: rate(permission_binder_configmap_entries_processed_total{status="error"}[5m]) / rate(permission_binder_configmap_entries_processed_total[5m]) > 0.1
+    for: 5m
+    labels:
+      severity: warning
+      category: reliability
+      component: permission-binder-operator
+    annotations:
+      summary: "High error rate in ConfigMap processing"
+      description: "Permission Binder operator has error rate of {{ $value | humanizePercentage }} in ConfigMap processing. This may indicate configuration issues."
+      runbook_url: "https://github.com/lukaszbielinski/permission-binder-operator/blob/main/docs/RUNBOOK.md#high-error-rate"
+
+

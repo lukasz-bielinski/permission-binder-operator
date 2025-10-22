@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: permission-binder-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+
+resources:
+  # Operator deployment (includes CRD)
+  - deployment/operator-deployment.yaml
+  
+  # Example ConfigMap
+  - configmap/permission-config.yaml
+  
+  # Example PermissionBinder CR
+  - permissionbinder/permissionbinder-example.yaml
+  
+  # Monitoring resources
+  - monitoring/servicemonitor.yaml
+  - monitoring/prometheusrule.yaml
+
+# Configuration for ArgoCD
+commonLabels:
+  app.kubernetes.io/name: permission-binder-operator
+  app.kubernetes.io/part-of: permission-binder-operator
+
+# Namespace for all resources
+namespace: permissions-binder-operator

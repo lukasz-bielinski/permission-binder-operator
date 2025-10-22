@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: permission-config
+  namespace: default
+data:
+  COMPANY-K8S-project1-engineer: "COMPANY-K8S-project1-engineer"
+  COMPANY-K8S-project2-admin: "COMPANY-K8S-project2-admin"
+  COMPANY-K8S-project3-viewer: "COMPANY-K8S-project3-viewer"
+  COMPANY-K8S-HPA-admin: "COMPANY-K8S-HPA-admin"  # This should be excluded
+  COMPANY-K8S-test-namespace-engineer: "COMPANY-K8S-test-namespace-engineer"

@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: permission-binder-operator-staging
+
+resources:
+  - ../../crd/permission.permission-binder.io_permissionbinders.yaml
+  - ../../deployment/operator-deployment.yaml
+  - ../../configmap/permission-config.yaml
+  - ../../permissionbinder/permissionbinder-example.yaml
+
+# Configuration for staging environment
+namespace: permission-binder-staging
+
+commonLabels:
+  app.kubernetes.io/name: permission-binder-operator
+  app.kubernetes.io/part-of: permission-binder-operator
+  environment: staging
+
+# Patches for staging environment
+patches:
+  - target:
+      kind: Deployment
+      name: permission-binder-operator-controller-manager
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: lukaszbielinski/permission-binder-operator:latest
+      - op: replace
+        path: /spec/replicas
+        value: 1

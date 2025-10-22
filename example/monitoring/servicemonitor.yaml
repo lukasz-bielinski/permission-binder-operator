@@ -1,0 +1,50 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: permission-binder-operator
+  namespace: permissions-binder-operator
+  labels:
+    app.kubernetes.io/name: permission-binder-operator
+    app.kubernetes.io/instance: permission-binder-operator
+    app.kubernetes.io/version: "latest"
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/part-of: permission-binder-operator
+    app.kubernetes.io/managed-by: kustomize
+    release: prometheus
+spec:
+  # Selector to match the Service
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: permission-binder-operator
+  
+  # Namespace selector (optional - defaults to same namespace)
+  namespaceSelector:
+    matchNames:
+    - permissions-binder-operator
+  
+  # Endpoints configuration
+  endpoints:
+  - port: http
+    interval: 30s
+    path: /metrics
+    scheme: http
+    # Optional: scrape timeout
+    scrapeTimeout: 10s
+    # Optional: honor labels from the target
+    honorLabels: true
+    # Optional: metric relabeling
+    metricRelabelings:
+    - sourceLabels: [__name__]
+      regex: 'permission_binder_.*'
+      action: keep
+    # Optional: relabeling
+    relabelings:
+    - sourceLabels: [__namespace__]
+      targetLabel: kubernetes_namespace
+    - sourceLabels: [__service__]
+      targetLabel: kubernetes_service_name
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: kubernetes_pod_name
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: kubernetes_node_name

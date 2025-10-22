@@ -1,0 +1,122 @@
+# Loki AlertManager Rules for Permission Binder Operator
+# These rules parse JSON logs and create alerts based on log content
+#
+# Deploy to Loki/Grafana with:
+# kubectl apply -f loki-alerts.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-alerting-rules
+  namespace: monitoring
+data:
+  loki-alerts.yaml: |
+    groups:
+      - name: permission-binder-security
+        interval: 1m
+        rules:
+          # Alert when ClusterRole doesn't exist
+          - alert: PermissionBinderMissingClusterRole
+            expr: |
+              count_over_time({namespace="permissions-binder-operator"} 
+                | json 
+                | severity="warning" 
+                | clusterRole!="" 
+                | message=~"ClusterRole does not exist.*" [5m]) > 5
+            labels:
+              severity: warning
+              component: permission-binder-operator
+              team: platform
+            annotations:
+              summary: "Permission Binder: Missing ClusterRole detected"
+              description: "ClusterRole {{ $labels.clusterRole }} does not exist. RoleBindings are created but will not grant permissions until ClusterRole is created."
+              action_required: "Create missing ClusterRole: {{ $labels.clusterRole }}"
+              runbook_url: "https://wiki.example.com/runbooks/permission-binder-missing-clusterrole"
+              dashboard_url: "https://grafana.example.com/d/permission-binder"
+              
+          # Alert on high rate of errors
+          - alert: PermissionBinderHighErrorRate
+            expr: |
+              rate({namespace="permissions-binder-operator"} 
+                | json 
+                | level="error" [5m]) > 0.5
+            for: 5m
+            labels:
+              severity: critical
+              component: permission-binder-operator
+              team: platform
+            annotations:
+              summary: "Permission Binder: High error rate detected"
+              description: "Error rate is {{ $value }} errors/second over the last 5 minutes"
+              runbook_url: "https://wiki.example.com/runbooks/permission-binder-errors"
+              
+          # Alert when orphaned resources detected
+          - alert: PermissionBinderOrphanedResources
+            expr: |
+              count_over_time({namespace="permissions-binder-operator"} 
+                | json 
+                | message=~".*orphaned.*" 
+                | message!~".*Adopted.*" [10m]) > 0
+            labels:
+              severity: warning
+              component: permission-binder-operator
+              team: platform
+            annotations:
+              summary: "Permission Binder: Orphaned resources detected"
+              description: "Orphaned RoleBindings or Namespaces detected. These resources are preserved but no longer managed."
+              action_required: "Review orphaned resources and recreate PermissionBinder if needed"
+              runbook_url: "https://wiki.example.com/runbooks/permission-binder-orphaned-resources"
+              
+          # Alert on reconciliation failures
+          - alert: PermissionBinderReconciliationFailed
+            expr: |
+              count_over_time({namespace="permissions-binder-operator"} 
+                | json 
+                | message=~"Failed to.*" [10m]) > 10
+            labels:
+              severity: warning
+              component: permission-binder-operator
+              team: platform
+            annotations:
+              summary: "Permission Binder: Multiple reconciliation failures"
+              description: "Operator is experiencing {{ $value }} reconciliation failures"
+              runbook_url: "https://wiki.example.com/runbooks/permission-binder-reconciliation"
+              
+      - name: permission-binder-operations
+        interval: 5m
+        rules:
+          # Alert when operator is not running
+          - alert: PermissionBinderOperatorDown
+            expr: |
+              absent_over_time({namespace="permissions-binder-operator"} 
+                | json 
+                | logger="setup" [10m]) == 1
+            for: 10m
+            labels:
+              severity: critical
+              component: permission-binder-operator
+              team: platform
+            annotations:
+              summary: "Permission Binder: Operator is down"
+              description: "No logs from operator in last 10 minutes"
+              action_required: "Check operator pod status: kubectl get pods -n permissions-binder-operator"
+              runbook_url: "https://wiki.example.com/runbooks/permission-binder-down"
+
+---
+# Query examples for debugging in Loki
+# 
+# 1. All errors:
+# {namespace="permissions-binder-operator"} | json | level="error"
+#
+# 2. Missing ClusterRoles:
+# {namespace="permissions-binder-operator"} | json | severity="warning" | clusterRole!=""
+#
+# 3. Orphaned resources:
+# {namespace="permissions-binder-operator"} | json | message=~".*orphaned.*"
+#
+# 4. Security events:
+# {namespace="permissions-binder-operator"} | json | security_impact="high"
+#
+# 5. Adoption events:
+# {namespace="permissions-binder-operator"} | json | action="adoption"
+

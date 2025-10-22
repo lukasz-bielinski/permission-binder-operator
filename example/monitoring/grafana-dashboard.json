@@ -1,0 +1,305 @@
+{
+  "dashboard": {
+    "title": "Permission Binder Operator - Production",
+    "tags": ["permission-binder", "security", "rbac", "production"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "⚠️ Missing ClusterRoles (Security Critical)",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "datasource": "Loki",
+        "targets": [{
+          "expr": "{namespace=\"permissions-binder-operator\"} | json | severity=\"warning\" | clusterRole!=\"\" | line_format \"{{.timestamp}} | {{.clusterRole}} | {{.namespace}}\"",
+          "refId": "A"
+        }],
+        "alert": {
+          "name": "Missing ClusterRoles Detected",
+          "message": "ClusterRoles are missing - RoleBindings created but won't grant permissions",
+          "frequency": "5m",
+          "conditions": [{
+            "type": "query",
+            "query": {"params": ["A", "5m", "now"]},
+            "reducer": {"type": "count"},
+            "evaluator": {"type": "gt", "params": [0]}
+          }]
+        }
+      },
+      {
+        "id": 2,
+        "title": "📊 Operator Health Status",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "up{job=\"operator-controller-manager-metrics-service\",namespace=\"permissions-binder-operator\"}",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {"type": "value", "value": "0", "text": "DOWN", "color": "red"},
+              {"type": "value", "value": "1", "text": "UP", "color": "green"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "🔄 Reconciliation Rate",
+        "type": "graph",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "rate(controller_runtime_reconcile_total{controller=\"permissionbinder\"}[5m])",
+          "legendFormat": "Reconciliations/sec",
+          "refId": "A"
+        }]
+      },
+      {
+        "id": 4,
+        "title": "❌ Error Rate (Last 5 minutes)",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 8},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "rate(controller_runtime_reconcile_errors_total{controller=\"permissionbinder\"}[5m])",
+            "legendFormat": "Errors/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(controller_runtime_reconcile_total{controller=\"permissionbinder\"}[5m])",
+            "legendFormat": "Total/sec",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [{"format": "ops"}, {"format": "short"}],
+        "thresholds": [
+          {"value": 0.5, "colorMode": "critical", "op": "gt", "fill": true, "line": true}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "⏱️ Reconciliation Duration (P50, P95, P99)",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 8},
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(controller_runtime_reconcile_duration_seconds_bucket{controller=\"permissionbinder\"}[5m]))",
+            "legendFormat": "P50",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(controller_runtime_reconcile_duration_seconds_bucket{controller=\"permissionbinder\"}[5m]))",
+            "legendFormat": "P95",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(controller_runtime_reconcile_duration_seconds_bucket{controller=\"permissionbinder\"}[5m]))",
+            "legendFormat": "P99",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [{"format": "s"}, {"format": "short"}],
+        "thresholds": [
+          {"value": 30, "colorMode": "critical", "op": "gt", "fill": false, "line": true}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "🔐 Security Events (High Impact)",
+        "type": "logs",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+        "datasource": "Loki",
+        "targets": [{
+          "expr": "{namespace=\"permissions-binder-operator\"} | json | security_impact=\"high\" | line_format \"{{.timestamp}} | {{.level | upper}} | {{.message}}\"",
+          "refId": "A"
+        }],
+        "options": {
+          "showTime": true,
+          "showLabels": false,
+          "wrapLogMessage": true
+        }
+      },
+      {
+        "id": 7,
+        "title": "♻️ Orphaned Resources",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 14},
+        "datasource": "Loki",
+        "targets": [{
+          "expr": "count_over_time({namespace=\"permissions-binder-operator\"} | json | message=~\".*Annotated.*orphaned.*\" [24h])",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 1, "color": "yellow"},
+                {"value": 10, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "✅ Adoption Events (Recovery)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 14},
+        "datasource": "Loki",
+        "targets": [{
+          "expr": "count_over_time({namespace=\"permissions-binder-operator\"} | json | action=\"adoption\" [24h])",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "📝 Recent Error Logs",
+        "type": "logs",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+        "datasource": "Loki",
+        "targets": [{
+          "expr": "{namespace=\"permissions-binder-operator\"} | json | level=\"error\" | line_format \"{{.timestamp}} | {{.message}} | {{.error}}\"",
+          "refId": "A"
+        }],
+        "options": {
+          "showTime": true,
+          "showLabels": true,
+          "wrapLogMessage": true,
+          "sortOrder": "Descending"
+        }
+      },
+      {
+        "id": 10,
+        "title": "📈 Success Rate (SLO: 99.9%)",
+        "type": "gauge",
+        "gridPos": {"h": 6, "w": 6, "x": 0, "y": 22},
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "(1 - (rate(controller_runtime_reconcile_errors_total{controller=\"permissionbinder\"}[30m]) / rate(controller_runtime_reconcile_total{controller=\"permissionbinder\"}[30m]))) * 100",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 95,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                {"value": 95, "color": "red"},
+                {"value": 99, "color": "yellow"},
+                {"value": 99.9, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "💾 Memory Usage",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 6, "x": 6, "y": 22},
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "container_memory_usage_bytes{namespace=\"permissions-binder-operator\",pod=~\"operator-controller-manager-.*\",container=\"manager\"} / 1024 / 1024",
+          "legendFormat": "Memory (MB)",
+          "refId": "A"
+        }],
+        "yaxes": [{"format": "decmbytes"}, {"format": "short"}]
+      },
+      {
+        "id": 12,
+        "title": "🚀 Pod Restarts (Last 24h)",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 6, "x": 12, "y": 22},
+        "datasource": "Prometheus",
+        "targets": [{
+          "expr": "increase(kube_pod_container_status_restarts_total{namespace=\"permissions-binder-operator\",pod=~\"operator-controller-manager-.*\"}[24h])",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 1, "color": "yellow"},
+                {"value": 5, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 13,
+        "title": "📊 Managed Resources Count",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 6, "x": 18, "y": 22},
+        "datasource": "Loki",
+        "targets": [
+          {
+            "expr": "count_over_time({namespace=\"permissions-binder-operator\"} | json | message=~\".*Created RoleBinding.*\" [24h])",
+            "legendFormat": "RoleBindings Created",
+            "refId": "A"
+          }
+        ]
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "namespace",
+          "type": "constant",
+          "query": "permissions-binder-operator",
+          "hide": 2
+        },
+        {
+          "name": "time_range",
+          "type": "interval",
+          "query": "5m,15m,30m,1h,6h,12h,24h",
+          "auto": true,
+          "current": {"text": "30m", "value": "30m"}
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "Loki",
+          "enable": true,
+          "expr": "{namespace=\"permissions-binder-operator\"} | json | message=~\".*starting manager.*\"",
+          "tagKeys": "version",
+          "textFormat": "Operator {{version}} started",
+          "iconColor": "blue"
+        },
+        {
+          "name": "Critical Events",
+          "datasource": "Loki",
+          "enable": true,
+          "expr": "{namespace=\"permissions-binder-operator\"} | json | level=\"error\" | security_impact=\"high\"",
+          "iconColor": "red"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    }
+  }
+}
+
+
