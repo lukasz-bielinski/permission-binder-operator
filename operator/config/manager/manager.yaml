@@ -63,6 +63,8 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+        # Leader election is enabled by default for production safety
+        # It prevents duplicate reconciliation during rolling updates
         image: controller:latest
         name: manager
         securityContext:
