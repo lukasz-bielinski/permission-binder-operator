@@ -2,7 +2,7 @@
 # Complete E2E Test Suite for Permission Binder Operator
 # Production-Grade Environment - IMPROVED VERSION
 
-set -e
+# Note: Do NOT use 'set -e' as we want to continue on failures and report all test results
 
 export KUBECONFIG=$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)
 NAMESPACE="permissions-binder-operator"
