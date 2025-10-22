@@ -8,21 +8,41 @@ Permission Binder Operator monitors ConfigMap and creates RoleBindings in approp
 
 ## Data Format
 
-ConfigMap should contain keys in the format:
-```
-{PREFIX}-{NAMESPACE}-{ROLE}
+ConfigMap should contain a `whitelist.txt` key with LDAP Distinguished Name (DN) entries:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: permission-config
+  namespace: default
+data:
+  whitelist.txt: |-
+    CN=COMPANY-K8S-project1-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-project2-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
 ```
 
-Example:
+**Format Details:**
+- Each line must contain a valid LDAP DN starting with `CN=`
+- The CN value is extracted and parsed as `{PREFIX}-{NAMESPACE}-{ROLE}`
+- Empty lines and lines starting with `#` are ignored (comments)
+
+**Example:**
 ```
-COMPANY-K8S-project1-engineer
-COMPANY-K8S-project2-admin
+Input LDAP DN: CN=COMPANY-K8S-project1-engineer,OU=Kubernetes,...
+Extracted CN:  COMPANY-K8S-project1-engineer
+Parsed as:     Prefix=COMPANY-K8S, Namespace=project1, Role=engineer
+
+Input LDAP DN: CN=MT-K8S-tenant1-project-3121-engineer,OU=...
+Extracted CN:  MT-K8S-tenant1-project-3121-engineer
+Parsed as:     Prefix=MT-K8S, Namespace=tenant1-project-3121, Role=engineer
 ```
 
-Where:
-- `COMPANY-K8S` - prefix
-- `project1`, `project2` - namespace names
-- `engineer`, `admin` - roles to map to ClusterRoles
+**Parsing Logic:**
+- Prefix is defined in PermissionBinder CR (`spec.prefix`)
+- Role is matched against keys in `spec.roleMapping`
+- Namespace is everything between prefix and role (can contain hyphens)
+- If multiple roles match, the longest role name is used
 
 ## Configuration
 
@@ -54,10 +74,11 @@ metadata:
   name: permission-config
   namespace: default
 data:
-  COMPANY-K8S-project1-engineer: "COMPANY-K8S-project1-engineer"
-  COMPANY-K8S-project2-admin: "COMPANY-K8S-project2-admin"
-  COMPANY-K8S-project3-viewer: "COMPANY-K8S-project3-viewer"
-  COMPANY-K8S-HPA-admin: "COMPANY-K8S-HPA-admin"  # Excluded
+  whitelist.txt: |-
+    CN=COMPANY-K8S-project1-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-project2-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-project3-viewer,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    # CN=COMPANY-K8S-HPA-admin - Excluded via ExcludeList
 ```
 
 ## Installation
@@ -151,13 +172,14 @@ ldd bin/manager-amd64  # Should show "No dynamic dependencies"
 ## Operation Logic
 
 1. Operator monitors changes in ConfigMap
-2. For each key in ConfigMap:
-   - Checks if it starts with the specified prefix
-   - Checks if it's not on the exclusion list
-   - Parses the key to extract namespace and role
+2. For each line in `whitelist.txt`:
+   - Extracts CN value from LDAP DN format
+   - Checks if the CN is not on the exclusion list
+   - Parses the CN to extract prefix, namespace and role
+   - Validates the role exists in roleMapping
    - Creates namespace if it doesn't exist
    - Creates RoleBinding in the appropriate namespace
-3. RoleBinding links the group (value from ConfigMap) with ClusterRole (from mapping)
+3. RoleBinding links the LDAP group (full DN) with ClusterRole (from mapping)
 
 ## Status
 

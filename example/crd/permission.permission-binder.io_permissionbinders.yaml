@@ -48,13 +48,18 @@ spec:
                   is located
                 type: string
               excludeList:
-                description: ExcludeList contains strings to exclude from processing
+                description: ExcludeList contains CN values to exclude from processing
                 items:
                   type: string
                 type: array
-              prefix:
-                description: Prefix used to identify permission strings (e.g., "COMPANY-K8S")
-                type: string
+              prefixes:
+                description: |-
+                  Prefixes used to identify permission strings (e.g., ["COMPANY-K8S", "MT-K8S"])
+                  Supports multiple prefixes for multi-tenant scenarios
+                items:
+                  type: string
+                minItems: 1
+                type: array
               roleMapping:
                 additionalProperties:
                   type: string
@@ -64,7 +69,7 @@ spec:
             required:
             - configMapName
             - configMapNamespace
-            - prefix
+            - prefixes
             - roleMapping
             type: object
           status:

@@ -29,11 +29,13 @@ type PermissionBinderSpec struct {
 	// +kubebuilder:validation:Required
 	RoleMapping map[string]string `json:"roleMapping"`
 
-	// Prefix used to identify permission strings (e.g., "COMPANY-K8S")
+	// Prefixes used to identify permission strings (e.g., ["COMPANY-K8S", "MT-K8S"])
+	// Supports multiple prefixes for multi-tenant scenarios
 	// +kubebuilder:validation:Required
-	Prefix string `json:"prefix"`
+	// +kubebuilder:validation:MinItems=1
+	Prefixes []string `json:"prefixes"`
 
-	// ExcludeList contains strings to exclude from processing
+	// ExcludeList contains CN values to exclude from processing
 	// +kubebuilder:validation:Optional
 	ExcludeList []string `json:"excludeList,omitempty"`
 

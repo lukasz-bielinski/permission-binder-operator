@@ -10,7 +10,8 @@ spec:
     engineer: clusterrole-engineer
     admin: clusterrole-admin
     viewer: clusterrole-viewer
-  prefix: "COMPANY-K8S"
+  prefixes:
+    - "COMPANY-K8S"
   excludeList:
     - "COMPANY-K8S-HPA-admin"
   configMapName: "permission-config"

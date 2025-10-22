@@ -453,7 +453,7 @@ spec:
         # Available tags: v1.1.0, v1.0.0, latest
         # Production: use specific version (v1.1.0)
         # Development: use latest
-        image: lukaszbielinski/permission-binder-operator:v1.1.0
+        image: lukaszbielinski/permission-binder-operator:v1.2.0
         livenessProbe:
           httpGet:
             path: /healthz
