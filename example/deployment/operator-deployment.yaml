@@ -450,10 +450,11 @@ spec:
         command:
         - /manager
         # Multi-arch image (ARM64 + AMD64)
-        # Available tags: v1.1.0, v1.0.0, latest
-        # Production: use specific version (v1.1.0)
+        # Available tags: v1.2.1, v1.1.0, v1.0.0, latest
+        # Production: use specific version (v1.2.1)
         # Development: use latest
-        image: lukaszbielinski/permission-binder-operator:v1.2.0
+        image: lukaszbielinski/permission-binder-operator:v1.2.1
+        imagePullPolicy: Always
         livenessProbe:
           httpGet:
             path: /healthz

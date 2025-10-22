@@ -121,27 +121,39 @@ data:
 - Each line must be a valid LDAP DN starting with `CN=`
 - The CN value is extracted and parsed as `{PREFIX}-{NAMESPACE}-{ROLE}`
 - Empty lines and lines starting with `#` are ignored (comments)
-- The full LDAP DN is used as the group subject in the RoleBinding
+- The CN value (not full DN) is used as the group name in RoleBinding
+- Compatible with OpenShift LDAP sync (which creates groups with CN as name)
 
 **Example Parsing:**
 ```
-Input:  CN=COMPANY-K8S-project1-engineer,OU=Kubernetes,...
-CN:     COMPANY-K8S-project1-engineer
-Prefix: COMPANY-K8S (from PermissionBinder spec.prefixes)
-Role:   engineer (matched from spec.roleMapping keys)
-Namespace: project1 (everything between prefix and role)
+Input LDAP DN: CN=COMPANY-K8S-project1-engineer,OU=Kubernetes,...
+Extracted CN:  COMPANY-K8S-project1-engineer
+Prefix:        COMPANY-K8S (from PermissionBinder spec.prefixes)
+Namespace:     project1 (everything between prefix and role)
+Role:          engineer (matched from spec.roleMapping keys)
+Group Name:    COMPANY-K8S-project1-engineer (CN value used in RoleBinding)
 
-Input:  CN=MT-K8S-tenant1-project-3121-engineer,OU=...
-CN:     MT-K8S-tenant1-project-3121-engineer
-Prefix: MT-K8S (from spec.prefixes)
-Role:   engineer (matched from spec.roleMapping keys)
-Namespace: tenant1-project-3121 (supports hyphens!)
+Input LDAP DN: CN=MT-K8S-tenant1-project-3121-engineer,OU=...
+Extracted CN:  MT-K8S-tenant1-project-3121-engineer
+Prefix:        MT-K8S (from spec.prefixes)
+Namespace:     tenant1-project-3121 (supports hyphens!)
+Role:          engineer
+Group Name:    MT-K8S-tenant1-project-3121-engineer
 
-Input:  CN=MT-K8S-DEV-app-staging-admin,OU=...
-Prefixes: ["MT-K8S-DEV", "MT-K8S"]
-Matched: MT-K8S-DEV (longest prefix first)
-Namespace: app-staging
-Role:   admin
+Input LDAP DN: CN=MT-K8S-DEV-app-staging-admin,OU=...
+Prefixes:      ["MT-K8S-DEV", "MT-K8S"]
+Matched:       MT-K8S-DEV (longest prefix first)
+Namespace:     app-staging
+Role:          admin
+Group Name:    MT-K8S-DEV-app-staging-admin
+```
+
+**RoleBinding Example:**
+```yaml
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: COMPANY-K8S-project1-engineer  # CN value, not full LDAP DN
 ```
 
 **Important Notes:**
