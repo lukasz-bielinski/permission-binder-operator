@@ -163,11 +163,15 @@ sleep 10
 
 # Check adoption - look for both logs and metrics
 ADOPTION_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=300 | grep -v "^I" \
-  | grep -c "Adopted orphaned" 2>/dev/null || echo "0")
+  | grep -c "Adopted orphaned" 2>/dev/null | tr -d '\n' || echo "0")
 
 # Also check if orphaned resources decreased (adoption happened)
 ORPHANED_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json \
-  | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length')
+  | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length' | tr -d '\n')
+
+# Ensure variables are integers
+ADOPTION_LOGS=${ADOPTION_LOGS:-0}
+ORPHANED_AFTER=${ORPHANED_AFTER:-0}
 
 if [ "$ADOPTION_LOGS" -gt 0 ]; then
     pass_test "Automatic adoption of orphaned resources"
