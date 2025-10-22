@@ -66,7 +66,7 @@ kubectl_retry() {
 echo "Pre-Test: Initial State Verification"
 echo "-------------------------------------"
 
-POD_STATUS=$(kubectl get pods -n $NAMESPACE -l control-plane=controller-manager -o jsonpath='{.items[0].status.phase}')
+POD_STATUS=$(kubectl_retry get pods -n $NAMESPACE -l control-plane=controller-manager -o jsonpath='{.items[0].status.phase}')
 if [ "$POD_STATUS" == "Running" ]; then
     pass_test "Operator pod is running"
 else
@@ -82,7 +82,7 @@ else
 fi
 
 # Check finalizer
-FINALIZER=$(kubectl get permissionbinder permissionbinder-example -n $NAMESPACE -o jsonpath='{.metadata.finalizers[0]}')
+FINALIZER=$(kubectl_retry get permissionbinder permissionbinder-example -n $NAMESPACE -o jsonpath='{.metadata.finalizers[0]}')
 if [ "$FINALIZER" == "permission-binder.io/finalizer" ]; then
     pass_test "Finalizer is present on PermissionBinder"
 else
@@ -98,23 +98,23 @@ echo "Test 1: Role Mapping Changes"
 echo "------------------------------"
 
 # Count current RoleBindings
-RB_BEFORE=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_BEFORE=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 info_log "RoleBindings before: $RB_BEFORE"
 
 # Add new role to PermissionBinder mapping
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"add","path":"/spec/roleMapping/developer","value":"edit"}]' >/dev/null 2>&1
 
 # Add ConfigMap entry with "developer" role to test the new mapping
 # Get current whitelist and append new entry
-CURRENT_WHITELIST=$(kubectl get configmap permission-binder-whitelist -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')
-kubectl patch configmap permission-binder-whitelist -n $NAMESPACE --type=merge \
+CURRENT_WHITELIST=$(kubectl_retry get configmap permission-binder-whitelist -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')
+kubectl_retry patch configmap permission-binder-whitelist -n $NAMESPACE --type=merge \
   -p="{\"data\":{\"whitelist.txt\":\"${CURRENT_WHITELIST}\nCN=COMPANY-K8S-test-namespace-developer,OU=Example,DC=example,DC=com\"}}" >/dev/null 2>&1
 
 sleep 20
 
 # Check if new RoleBindings were created
-RB_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_AFTER=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 if [ "$RB_AFTER" -gt "$RB_BEFORE" ]; then
     pass_test "New RoleBindings created after role mapping change"
     info_log "RoleBindings increased: $RB_BEFORE → $RB_AFTER"
@@ -123,7 +123,7 @@ else
 fi
 
 # Verify RoleBinding references new role
-DEVELOPER_RB=$(kubectl get rolebindings -A -o json | jq -r '.items[] | select(.roleRef.name=="edit") | .metadata.name' | grep -c "developer" 2>/dev/null | head -1 || echo "0")
+DEVELOPER_RB=$(kubectl_retry get rolebindings -A -o json | jq -r '.items[] | select(.roleRef.name=="edit") | .metadata.name' | grep -c "developer" 2>/dev/null | head -1 || echo "0")
 if [ "$DEVELOPER_RB" -gt 0 ]; then
     pass_test "RoleBindings reference new ClusterRole correctly"
 else
@@ -142,11 +142,11 @@ echo "-----------------------"
 # This test verifies prefix change behavior
 
 # Count RoleBindings with current prefix
-CURRENT_RB=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+CURRENT_RB=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 info_log "Current RoleBindings: $CURRENT_RB"
 
 # Change prefix array
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"replace","path":"/spec/prefixes","value":["NEW-PREFIX"]}]' >/dev/null 2>&1
 
 sleep 15
@@ -162,7 +162,7 @@ else
 fi
 
 # Restore original prefix
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"replace","path":"/spec/prefixes","value":["COMPANY-K8S"]}]' >/dev/null 2>&1
 sleep 5
 
@@ -175,20 +175,20 @@ echo "Test 3: Exclude List Changes"
 echo "------------------------------"
 
 # Add excluded namespace to excludeNamespaces list
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"add","path":"/spec/excludeNamespaces/-","value":"excluded-test-ns"}]' >/dev/null 2>&1
 
 # Add entry to ConfigMap that should be excluded
-kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-exclude.txt
+kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-exclude.txt
 echo "CN=COMPANY-K8S-excluded-test-ns-admin,OU=Test,DC=example,DC=com" >> /tmp/whitelist-exclude.txt
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-exclude.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-exclude.txt
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-exclude="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-exclude="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 10
 
 # Check namespace was NOT created
-EXCLUDED_NS=$(kubectl get namespace excluded-test-ns 2>/dev/null && echo "created" || echo "excluded")
+EXCLUDED_NS=$(kubectl_retry get namespace excluded-test-ns 2>/dev/null && echo "created" || echo "excluded")
 if [ "$EXCLUDED_NS" == "excluded" ]; then
     pass_test "Excluded namespace was not created"
 else
@@ -200,7 +200,7 @@ SKIP_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --
 info_log "Exclude-related log entries: $SKIP_LOGS"
 
 # Cleanup
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"remove","path":"/spec/excludeNamespaces/1"}]' >/dev/null 2>&1
 
 echo ""
@@ -213,17 +213,17 @@ echo "-------------------------------------"
 
 # Add new LDAP DN entry to whitelist.txt
 NEW_ENTRY="CN=COMPANY-K8S-test4-new-namespace-admin,OU=TestOU,DC=example,DC=com"
-kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-add.txt
+kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-add.txt
 echo "$NEW_ENTRY" >> /tmp/whitelist-add.txt
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-add.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-add.txt
 
 # Force reconciliation
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-addition="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-addition="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 30
 
 # Check namespace created
-NS_EXISTS=$(kubectl get namespace test4-new-namespace 2>/dev/null | wc -l)
+NS_EXISTS=$(kubectl_retry get namespace test4-new-namespace 2>/dev/null | wc -l)
 if [ "$NS_EXISTS" -gt 0 ]; then
     pass_test "New namespace created from ConfigMap entry"
 else
@@ -231,7 +231,7 @@ else
 fi
 
 # Check RoleBinding created
-RB_EXISTS=$(kubectl get rolebinding test4-new-namespace-admin -n test4-new-namespace 2>/dev/null | wc -l)
+RB_EXISTS=$(kubectl_retry get rolebinding test4-new-namespace-admin -n test4-new-namespace 2>/dev/null | wc -l)
 if [ "$RB_EXISTS" -gt 0 ]; then
     pass_test "RoleBinding created for new ConfigMap entry"
 else
@@ -239,7 +239,7 @@ else
 fi
 
 # Verify annotations
-ANNOTATIONS=$(kubectl get rolebinding test4-new-namespace-admin -n test4-new-namespace -o jsonpath='{.metadata.annotations}' 2>/dev/null | jq -e '."permission-binder.io/managed-by"' 2>/dev/null)
+ANNOTATIONS=$(kubectl_retry get rolebinding test4-new-namespace-admin -n test4-new-namespace -o jsonpath='{.metadata.annotations}' 2>/dev/null | jq -e '."permission-binder.io/managed-by"' 2>/dev/null)
 if [ "$ANNOTATIONS" == "\"permission-binder-operator\"" ]; then
     pass_test "RoleBinding has correct annotations"
 else
@@ -255,18 +255,18 @@ echo "Test 5: ConfigMap Changes - Removal"
 echo "------------------------------------"
 
 # Count RoleBindings before removal
-RB_BEFORE_REMOVAL=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_BEFORE_REMOVAL=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 
 # Remove entry from whitelist.txt (remove project3 if exists)
-kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | grep -v "project3" > /tmp/whitelist-removal.txt
+kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | grep -v "project3" > /tmp/whitelist-removal.txt
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-removal.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-removal.txt
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-removal="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-removal="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 20
 
 # Check RoleBinding removed
-RB_AFTER_REMOVAL=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_AFTER_REMOVAL=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 if [ "$RB_AFTER_REMOVAL" -le "$RB_BEFORE_REMOVAL" ]; then
     pass_test "RoleBinding removed after ConfigMap entry deletion"
     info_log "RoleBindings: $RB_BEFORE_REMOVAL → $RB_AFTER_REMOVAL"
@@ -275,7 +275,7 @@ else
 fi
 
 # Verify namespace preserved (SAFE MODE)
-NS_PROJECT3=$(kubectl get namespace project3 2>/dev/null | wc -l)
+NS_PROJECT3=$(kubectl_retry get namespace project3 2>/dev/null | wc -l)
 if [ "$NS_PROJECT3" -gt 0 ]; then
     pass_test "Namespace preserved after entry removal (SAFE MODE)"
 else
@@ -291,25 +291,25 @@ echo "Test 6: Role Removal from Mapping"
 echo "-----------------------------------"
 
 # Add temporary role
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"add","path":"/spec/roleMapping/temp-test-role","value":"view"}]' >/dev/null 2>&1
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-temp-add="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-temp-add="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 10
 
 # Check if temp role RoleBindings were created
-TEMP_RB_COUNT=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.name | contains("temp-test-role"))] | length')
+TEMP_RB_COUNT=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.name | contains("temp-test-role"))] | length')
 info_log "Temp role RoleBindings created: $TEMP_RB_COUNT"
 
 # Remove temp role
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"remove","path":"/spec/roleMapping/temp-test-role"}]' >/dev/null 2>&1
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-temp-remove="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-temp-remove="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 10
 
 # Check temp role RoleBindings were removed
-TEMP_RB_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.name | contains("temp-test-role"))] | length')
+TEMP_RB_AFTER=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.name | contains("temp-test-role"))] | length')
 if [ "$TEMP_RB_AFTER" -eq 0 ]; then
     pass_test "RoleBindings removed when role deleted from mapping"
 else
@@ -328,7 +328,7 @@ echo "-----------------------------"
 # Even when ConfigMap entries are removed, namespaces should persist
 
 # Check if any managed namespaces exist
-MANAGED_NS_COUNT=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+MANAGED_NS_COUNT=$(kubectl_retry get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 info_log "Managed namespaces: $MANAGED_NS_COUNT"
 
 if [ "$MANAGED_NS_COUNT" -gt 0 ]; then
@@ -338,7 +338,7 @@ else
 fi
 
 # Verify namespaces have proper labels
-LABELED_NS=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '.items[0].metadata.name' 2>/dev/null)
+LABELED_NS=$(kubectl_retry get namespaces -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '.items[0].metadata.name' 2>/dev/null)
 if [ "$LABELED_NS" != "null" ] && [ -n "$LABELED_NS" ]; then
     info_log "Example managed namespace: $LABELED_NS"
     pass_test "Namespaces are properly labeled and protected"
@@ -353,17 +353,17 @@ echo "Test 8: PermissionBinder Deletion (SAFE MODE)"
 echo "-----------------------------------------------"
 
 # Count resources before deletion
-RB_BEFORE_DELETE=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
-NS_BEFORE_DELETE=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_BEFORE_DELETE=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+NS_BEFORE_DELETE=$(kubectl_retry get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 info_log "Before deletion: $RB_BEFORE_DELETE RoleBindings, $NS_BEFORE_DELETE Namespaces"
 
 # Delete PermissionBinder
-kubectl delete permissionbinder permissionbinder-example -n $NAMESPACE >/dev/null 2>&1
+kubectl_retry delete permissionbinder permissionbinder-example -n $NAMESPACE >/dev/null 2>&1
 sleep 10
 
 # Check resources were NOT deleted (SAFE MODE)
-RB_AFTER_DELETE=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
-NS_AFTER_DELETE=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_AFTER_DELETE=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+NS_AFTER_DELETE=$(kubectl_retry get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 
 if [ "$RB_AFTER_DELETE" -eq "$RB_BEFORE_DELETE" ] && [ "$NS_AFTER_DELETE" -eq "$NS_BEFORE_DELETE" ]; then
     pass_test "SAFE MODE: Resources NOT deleted when PermissionBinder deleted"
@@ -373,7 +373,7 @@ else
 fi
 
 # Check orphaned annotations
-ORPHANED_COUNT=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length')
+ORPHANED_COUNT=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length')
 if [ "$ORPHANED_COUNT" -gt 0 ]; then
     pass_test "Resources marked as orphaned (annotation added)"
     info_log "Orphaned resources: $ORPHANED_COUNT"
@@ -394,8 +394,8 @@ kubectl apply -f example/permissionbinder/permissionbinder-example.yaml >/dev/nu
 sleep 5
 
 # Count resources before restart
-RB_BEFORE_RESTART=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
-NS_BEFORE_RESTART=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_BEFORE_RESTART=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+NS_BEFORE_RESTART=$(kubectl_retry get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 
 # Restart operator
 kubectl rollout restart deployment operator-controller-manager -n $NAMESPACE >/dev/null 2>&1
@@ -403,8 +403,8 @@ kubectl rollout status deployment operator-controller-manager -n $NAMESPACE --ti
 sleep 15
 
 # Count resources after restart
-RB_AFTER_RESTART=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
-NS_AFTER_RESTART=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_AFTER_RESTART=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+NS_AFTER_RESTART=$(kubectl_retry get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 
 # Verify no duplicates created
 if [ "$RB_AFTER_RESTART" -eq "$RB_BEFORE_RESTART" ] && [ "$NS_AFTER_RESTART" -eq "$NS_BEFORE_RESTART" ]; then
@@ -423,12 +423,12 @@ echo "Test 10: Conflict Handling"
 echo "----------------------------"
 
 # Add duplicate entry to ConfigMap
-kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-dup.txt
+kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-dup.txt
 echo "CN=COMPANY-K8S-project1-engineer,OU=Test,DC=example,DC=com" >> /tmp/whitelist-dup.txt
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-dup.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-dup.txt
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-conflict="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-conflict="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 15
 
 # Verify no crash errors in logs
@@ -440,7 +440,7 @@ else
 fi
 
 # Verify RoleBindings still managed
-RB_CONFLICT=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_CONFLICT=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 if [ "$RB_CONFLICT" -gt 0 ]; then
     pass_test "RoleBindings still managed despite duplicates"
 else
@@ -456,12 +456,12 @@ echo "Test 11: Invalid Configuration Handling"
 echo "-----------------------------------------"
 
 # Add invalid LDAP DN to whitelist.txt (missing CN=)
-kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-invalid.txt
+kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-invalid.txt
 echo "INVALID-FORMAT-no-cn-prefix,OU=Test,DC=example,DC=com" >> /tmp/whitelist-invalid.txt
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-invalid.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-invalid.txt
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-invalid="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-invalid="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 10
 
 # Check operator logs for error handling
@@ -469,7 +469,7 @@ ERROR_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager -
 info_log "Error/invalid log entries: $ERROR_LOGS"
 
 # Verify valid entries still processed
-VALID_RB_COUNT=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+VALID_RB_COUNT=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 if [ "$VALID_RB_COUNT" -ge 5 ]; then
     pass_test "Valid entries still processed despite invalid entry"
 else
@@ -477,7 +477,7 @@ else
 fi
 
 # Verify operator still running
-POD_STATUS=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.phase}')
+POD_STATUS=$(kubectl_retry get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.phase}')
 if [ "$POD_STATUS" == "Running" ]; then
     pass_test "Operator remains running after invalid configuration"
 else
@@ -493,9 +493,9 @@ echo "Test 12: Multi-Architecture Verification"
 echo "------------------------------------------"
 
 # Check operator pod architecture
-POD_NAME=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].metadata.name}')
-NODE_NAME=$(kubectl get pod -n $NAMESPACE $POD_NAME -o jsonpath='{.spec.nodeName}')
-NODE_ARCH=$(kubectl get node $NODE_NAME -o jsonpath='{.status.nodeInfo.architecture}')
+POD_NAME=$(kubectl_retry get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].metadata.name}')
+NODE_NAME=$(kubectl_retry get pod -n $NAMESPACE $POD_NAME -o jsonpath='{.spec.nodeName}')
+NODE_ARCH=$(kubectl_retry get node $NODE_NAME -o jsonpath='{.status.nodeInfo.architecture}')
 
 info_log "Operator running on node: $NODE_NAME ($NODE_ARCH)"
 
@@ -507,7 +507,7 @@ else
 fi
 
 # Check image supports multi-arch
-IMAGE=$(kubectl get deployment operator-controller-manager -n $NAMESPACE -o jsonpath='{.spec.template.spec.containers[0].image}')
+IMAGE=$(kubectl_retry get deployment operator-controller-manager -n $NAMESPACE -o jsonpath='{.spec.template.spec.containers[0].image}')
 info_log "Operator image: $IMAGE"
 
 echo ""
@@ -519,10 +519,10 @@ echo "Test 13: Non-Existent ClusterRole (Security)"
 echo "----------------------------------------------"
 
 # Add role with non-existent ClusterRole
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"add","path":"/spec/roleMapping/security-test","value":"nonexistent-clusterrole"}]' >/dev/null 2>&1
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-security="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-security="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 10
 
 # Check for security warning in logs
@@ -536,7 +536,7 @@ else
 fi
 
 # Verify RoleBinding was still created (operator should create it despite missing ClusterRole)
-SECURITY_RB=$(kubectl get rolebinding --all-namespaces -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.roleRef.name=="nonexistent-clusterrole")] | length')
+SECURITY_RB=$(kubectl_retry get rolebinding --all-namespaces -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.roleRef.name=="nonexistent-clusterrole")] | length')
 if [ "$SECURITY_RB" -gt 0 ]; then
     pass_test "RoleBinding created despite missing ClusterRole"
 else
@@ -544,7 +544,7 @@ else
 fi
 
 # Cleanup
-kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"remove","path":"/spec/roleMapping/security-test"}]' >/dev/null 2>&1
 
 echo ""
@@ -556,11 +556,11 @@ echo "Test 14: Orphaned Resources Adoption"
 echo "--------------------------------------"
 
 # Check for orphaned resources (from Test 8)
-ORPHANED_BEFORE=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length')
+ORPHANED_BEFORE=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length')
 info_log "Orphaned resources before reconciliation: $ORPHANED_BEFORE"
 
 # Force reconciliation
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-adoption="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-adoption="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 30
 
 # Check adoption logs
@@ -568,7 +568,7 @@ ADOPTION_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manage
 info_log "Adoption-related log entries: $ADOPTION_LOGS"
 
 # Check if orphaned resources decreased
-ORPHANED_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length' | tr -d '\n')
+ORPHANED_AFTER=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length' | tr -d '\n')
 
 if [ "$ORPHANED_AFTER" -lt "$ORPHANED_BEFORE" ] || [ "$ADOPTION_LOGS" -gt 0 ]; then
     pass_test "Automatic adoption of orphaned resources"
@@ -586,28 +586,28 @@ echo "Test 15: Manual RoleBinding Modification (Protection)"
 echo "-------------------------------------------------------"
 
 # Find a managed RoleBinding
-SAMPLE_RB=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq -r '.items[0] | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null)
+SAMPLE_RB=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq -r '.items[0] | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null)
 
 if [ -n "$SAMPLE_RB" ] && [ "$SAMPLE_RB" != "null/" ]; then
     RB_NAMESPACE=$(echo $SAMPLE_RB | cut -d/ -f1)
     RB_NAME=$(echo $SAMPLE_RB | cut -d/ -f2)
     
     # Get original group
-    ORIGINAL_GROUP=$(kubectl get rolebinding $RB_NAME -n $RB_NAMESPACE -o jsonpath='{.subjects[0].name}' 2>/dev/null)
+    ORIGINAL_GROUP=$(kubectl_retry get rolebinding $RB_NAME -n $RB_NAMESPACE -o jsonpath='{.subjects[0].name}' 2>/dev/null)
     info_log "Testing RoleBinding: $RB_NAMESPACE/$RB_NAME (group: $ORIGINAL_GROUP)"
     
     # Manually modify RoleBinding
-    kubectl patch rolebinding $RB_NAME -n $RB_NAMESPACE --type='json' \
+    kubectl_retry patch rolebinding $RB_NAME -n $RB_NAMESPACE --type='json' \
       -p='[{"op":"replace","path":"/subjects/0/name","value":"MANUALLY-HACKED-GROUP"}]' >/dev/null 2>&1
     
     sleep 5
     
     # Trigger reconciliation
-    kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-override="$(date +%s)" --overwrite >/dev/null 2>&1
+    kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-override="$(date +%s)" --overwrite >/dev/null 2>&1
     sleep 10
     
     # Check if restored
-    CURRENT_GROUP=$(kubectl get rolebinding $RB_NAME -n $RB_NAMESPACE -o jsonpath='{.subjects[0].name}' 2>/dev/null)
+    CURRENT_GROUP=$(kubectl_retry get rolebinding $RB_NAME -n $RB_NAMESPACE -o jsonpath='{.subjects[0].name}' 2>/dev/null)
     
     if [ "$CURRENT_GROUP" == "$ORIGINAL_GROUP" ]; then
         pass_test "Operator enforced desired state (overrode manual change)"
@@ -630,12 +630,12 @@ echo "----------------------------------------------"
 # Note: Be careful with this test as it affects operator functionality
 
 # Remove a specific permission (list rolebindings)
-kubectl get clusterrole permission-binder-operator-manager-role -o json > /tmp/clusterrole-backup.json
-kubectl get clusterrole permission-binder-operator-manager-role -o json | \
+kubectl_retry get clusterrole permission-binder-operator-manager-role -o json > /tmp/clusterrole-backup.json
+kubectl_retry get clusterrole permission-binder-operator-manager-role -o json | \
   jq 'del(.rules[] | select(.resources[] == "rolebindings"))' | \
   kubectl apply -f - >/dev/null 2>&1
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-rbac-loss="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-rbac-loss="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 10
 
 # Check for permission errors in logs
@@ -654,7 +654,7 @@ rm -f /tmp/clusterrole-backup.json
 sleep 5
 
 # Verify operator recovered
-POD_STATUS=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.phase}')
+POD_STATUS=$(kubectl_retry get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.phase}')
 if [ "$POD_STATUS" == "Running" ]; then
     pass_test "Operator recovered after RBAC restoration"
 else
@@ -670,19 +670,19 @@ echo "Test 17: Partial Failure Recovery (Reliability)"
 echo "-------------------------------------------------"
 
 # Add mix of valid and invalid entries
-kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-mixed.txt
+kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-mixed.txt
 echo "CN=COMPANY-K8S-valid-test17-ns-admin,OU=Test,DC=example,DC=com" >> /tmp/whitelist-mixed.txt
 echo "INVALID-ENTRY-NO-CN" >> /tmp/whitelist-mixed.txt
 echo "CN=COMPANY-K8S-another-valid-test17-admin,OU=Test,DC=example,DC=com" >> /tmp/whitelist-mixed.txt
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-mixed.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-mixed.txt
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-partial="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-partial="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 20
 
 # Check if valid entries were processed
-VALID_NS1=$(kubectl get namespace valid-test17-ns 2>/dev/null | wc -l)
-VALID_NS2=$(kubectl get namespace another-valid-test17 2>/dev/null | wc -l)
+VALID_NS1=$(kubectl_retry get namespace valid-test17-ns 2>/dev/null | wc -l)
+VALID_NS2=$(kubectl_retry get namespace another-valid-test17 2>/dev/null | wc -l)
 
 if [ "$VALID_NS1" -gt 0 ] || [ "$VALID_NS2" -gt 0 ]; then
     pass_test "Valid entries processed despite invalid ones"
@@ -691,7 +691,7 @@ else
 fi
 
 # Verify operator still running
-POD_STATUS=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.phase}')
+POD_STATUS=$(kubectl_retry get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.phase}')
 if [ "$POD_STATUS" == "Running" ]; then
     pass_test "Operator remains running after partial failures"
 else
@@ -745,7 +745,7 @@ echo "---------------------------------------------------------"
 
 # Make rapid concurrent changes to trigger potential race conditions
 for i in {1..5}; do
-    kubectl annotate configmap permission-config -n $NAMESPACE concurrent-test-$i="$(date +%s)" --overwrite >/dev/null 2>&1 &
+    kubectl_retry annotate configmap permission-config -n $NAMESPACE concurrent-test-$i="$(date +%s)" --overwrite >/dev/null 2>&1 &
 done
 wait
 
@@ -756,7 +756,7 @@ RACE_ERRORS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager 
 info_log "Concurrent change log entries: $RACE_ERRORS"
 
 # Verify resources are consistent
-RB_CONSISTENT=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_CONSISTENT=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 if [ "$RB_CONSISTENT" -gt 0 ]; then
     pass_test "Resources consistent after concurrent changes"
 else
@@ -764,7 +764,7 @@ else
 fi
 
 # Verify operator didn't restart
-POD_RESTARTS=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
+POD_RESTARTS=$(kubectl_retry get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
 if [ "$POD_RESTARTS" -eq 0 ]; then
     pass_test "Operator handled concurrent changes without restarting"
 else
@@ -780,18 +780,18 @@ echo "Test 20: ConfigMap Corruption Handling"
 echo "----------------------------------------"
 
 # Test with various malformed entries
-kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-corrupt.txt
+kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-corrupt.txt
 echo "CN=COMPANY-K8S-incomplete" >> /tmp/whitelist-corrupt.txt  # Missing parts
 echo "CN=" >> /tmp/whitelist-corrupt.txt  # Empty CN
 echo "$(python3 -c 'print("A"*300)')" >> /tmp/whitelist-corrupt.txt  # Too long
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-corrupt.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-corrupt.txt
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-corrupt="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-corrupt="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 15
 
 # Verify operator didn't crash
-POD_RESTARTS=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
+POD_RESTARTS=$(kubectl_retry get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
 if [ "$POD_RESTARTS" -eq 0 ]; then
     pass_test "Operator handled corrupted ConfigMap without crashing"
 else
@@ -814,7 +814,7 @@ echo "-------------------------------------"
 info_log "Simulating network stress via rapid reconciliation"
 
 for i in {1..10}; do
-    kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE stress-test-$i="$(date +%s)" --overwrite >/dev/null 2>&1 &
+    kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE stress-test-$i="$(date +%s)" --overwrite >/dev/null 2>&1 &
 done
 wait
 sleep 15
@@ -824,7 +824,7 @@ CONN_ERRORS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager 
 info_log "Connection-related log entries: $CONN_ERRORS"
 
 # Verify operator is still functional
-RB_CURRENT=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_CURRENT=$(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 if [ "$RB_CURRENT" -gt 0 ]; then
     pass_test "Operator remained functional under stress"
     info_log "Managed RoleBindings: $RB_CURRENT"
@@ -833,7 +833,7 @@ else
 fi
 
 # Verify no crash/restarts
-POD_RESTARTS=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
+POD_RESTARTS=$(kubectl_retry get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
 if [ "$POD_RESTARTS" -eq 0 ]; then
     pass_test "Operator handled stress without restarting"
 else
@@ -876,9 +876,9 @@ echo "Test 23: Finalizer Behavior Verification"
 echo "------------------------------------------"
 
 # Check if PermissionBinder exists (may have been deleted in Test 8)
-if kubectl get permissionbinder permissionbinder-example -n $NAMESPACE >/dev/null 2>&1; then
+if kubectl_retry get permissionbinder permissionbinder-example -n $NAMESPACE >/dev/null 2>&1; then
     # Verify finalizer is present
-    FINALIZER=$(kubectl get permissionbinder permissionbinder-example -n $NAMESPACE -o jsonpath='{.metadata.finalizers[0]}' 2>/dev/null)
+    FINALIZER=$(kubectl_retry get permissionbinder permissionbinder-example -n $NAMESPACE -o jsonpath='{.metadata.finalizers[0]}' 2>/dev/null)
     if [ "$FINALIZER" == "permission-binder.io/finalizer" ]; then
         pass_test "Finalizer is present on PermissionBinder"
     else
@@ -901,14 +901,14 @@ echo "Test 24: Large ConfigMap Handling"
 echo "-----------------------------------"
 
 # Create ConfigMap with 50+ entries
-kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-large.txt
+kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-large.txt
 for i in {1..50}; do
     echo "CN=COMPANY-K8S-large-project-$i-admin,OU=Test,DC=example,DC=com" >> /tmp/whitelist-large.txt
 done
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-large.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-large.txt
 
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-large="$(date +%s)" --overwrite >/dev/null 2>&1
+kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-large="$(date +%s)" --overwrite >/dev/null 2>&1
 
 # Time the reconciliation
 START_TIME=$(date +%s)
@@ -917,7 +917,7 @@ END_TIME=$(date +%s)
 RECONCILE_TIME=$((END_TIME - START_TIME))
 
 # Check if entries were processed
-LARGE_NS_COUNT=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+LARGE_NS_COUNT=$(kubectl_retry get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
 info_log "Created namespaces: $LARGE_NS_COUNT"
 info_log "Reconciliation time: ${RECONCILE_TIME}s"
 
@@ -928,7 +928,7 @@ else
 fi
 
 # Check operator memory usage
-POD_NAME=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].metadata.name}')
+POD_NAME=$(kubectl_retry get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].metadata.name}')
 MEMORY_USAGE=$(kubectl top pod -n $NAMESPACE $POD_NAME 2>/dev/null | tail -1 | awk '{print $3}' || echo "N/A")
 info_log "Operator memory usage: $MEMORY_USAGE"
 
@@ -941,7 +941,7 @@ echo "Test 25: Prometheus Metrics Collection"
 echo "----------------------------------------"
 
 # Check if Prometheus is running
-PROMETHEUS_POD=$(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l)
+PROMETHEUS_POD=$(kubectl_retry get pods -n monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l)
 if [ "$PROMETHEUS_POD" -eq 0 ]; then
     info_log "Prometheus not running - skipping metrics tests 25-30"
     echo "Tests 25-30 skipped (Prometheus not installed)"
@@ -949,13 +949,13 @@ if [ "$PROMETHEUS_POD" -eq 0 ]; then
 else
     pass_test "Prometheus is running"
     
-    PROM_POD=$(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}')
+    PROM_POD=$(kubectl_retry get pods -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}')
     
     # Query basic operator metrics
-    METRICS_COUNT=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result | length')
+    METRICS_COUNT=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result | length')
     if [ "$METRICS_COUNT" -gt 0 ]; then
         pass_test "Prometheus collecting operator metrics"
-        CURRENT_RB=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]')
+        CURRENT_RB=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]')
         info_log "Current RoleBindings metric: $CURRENT_RB"
     else
         fail_test "Prometheus not collecting operator metrics"
@@ -970,16 +970,16 @@ else
     echo "-------------------------------------------------"
     
     # Record initial metric value
-    RB_METRIC_BEFORE=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
+    RB_METRIC_BEFORE=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
     info_log "RoleBindings metric before: $RB_METRIC_BEFORE"
     
     # Add new role
-    kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+    kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
       -p='[{"op":"add","path":"/spec/roleMapping/metrics-test","value":"view"}]' >/dev/null 2>&1
     sleep 30
     
     # Check updated metric
-    RB_METRIC_AFTER=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
+    RB_METRIC_AFTER=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
     info_log "RoleBindings metric after: $RB_METRIC_AFTER"
     
     if [ "$RB_METRIC_AFTER" -gt "$RB_METRIC_BEFORE" ]; then
@@ -989,7 +989,7 @@ else
     fi
     
     # Cleanup
-    kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+    kubectl_retry patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
       -p='[{"op":"remove","path":"/spec/roleMapping/metrics-test"}]' >/dev/null 2>&1
     
     echo ""
@@ -1001,20 +1001,20 @@ else
     echo "----------------------------------------------"
     
     # Record initial namespace metric
-    NS_METRIC_BEFORE=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_namespaces_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
+    NS_METRIC_BEFORE=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_namespaces_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
     info_log "Namespaces metric before: $NS_METRIC_BEFORE"
     
     # Add new namespace entry
-    kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-metrics.txt
+    kubectl_retry get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-metrics.txt
     echo "CN=COMPANY-K8S-metrics-test-ns27-admin,OU=Test,DC=example,DC=com" >> /tmp/whitelist-metrics.txt
     kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-metrics.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
     rm -f /tmp/whitelist-metrics.txt
     
-    kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-ns-metrics="$(date +%s)" --overwrite >/dev/null 2>&1
+    kubectl_retry annotate permissionbinder permissionbinder-example -n $NAMESPACE test-ns-metrics="$(date +%s)" --overwrite >/dev/null 2>&1
     sleep 30
     
     # Check updated metric
-    NS_METRIC_AFTER=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_namespaces_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
+    NS_METRIC_AFTER=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_namespaces_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
     info_log "Namespaces metric after: $NS_METRIC_AFTER"
     
     if [ "$NS_METRIC_AFTER" -gt "$NS_METRIC_BEFORE" ]; then
@@ -1032,7 +1032,7 @@ else
     echo "-------------------------------------"
     
     # Query orphaned resources metric
-    ORPHANED_METRIC=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_orphaned_resources_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo "0")
+    ORPHANED_METRIC=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_orphaned_resources_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo "0")
     info_log "Orphaned resources metric: $ORPHANED_METRIC"
     
     # Should be 0 after Test 14 (adoption completed)
@@ -1051,7 +1051,7 @@ else
     echo "---------------------------------------"
     
     # Query ConfigMap entries processed metric
-    CM_PROCESSED=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_configmap_entries_processed_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo "0")
+    CM_PROCESSED=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_configmap_entries_processed_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo "0")
     info_log "ConfigMap entries processed: $CM_PROCESSED"
     
     if [ "$CM_PROCESSED" != "0" ] && [ "$CM_PROCESSED" -gt 0 ] 2>/dev/null; then
@@ -1069,7 +1069,7 @@ else
     echo "----------------------------------"
     
     # Query adoption events metric
-    ADOPTION_METRIC=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_adoption_events_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
+    ADOPTION_METRIC=$(kubectl_retry exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_adoption_events_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
     info_log "Adoption events metric: $ADOPTION_METRIC"
     
     # Should have events from Test 14
@@ -1096,11 +1096,11 @@ echo ""
 echo "Detailed results saved to: $TEST_RESULTS"
 echo ""
 echo "Final Status:"
-kubectl get pods -n $NAMESPACE
+kubectl_retry get pods -n $NAMESPACE
 echo ""
 echo "Managed Resources:"
-echo "  RoleBindings: $(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)"
-echo "  Namespaces: $(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)"
+echo "  RoleBindings: $(kubectl_retry get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)"
+echo "  Namespaces: $(kubectl_retry get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)"
 echo ""
 echo "Completed: $(date)"
 echo ""
