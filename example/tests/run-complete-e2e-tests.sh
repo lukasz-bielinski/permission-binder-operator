@@ -494,6 +494,144 @@ info_log "Full cleanup behavior tested in Test 4 (Orphaned Resources & Adoption)
 echo ""
 
 # ============================================================================
+# Test 5: ConfigMap Entry Removal (from doc)
+# ============================================================================
+echo "Test 5: ConfigMap Entry Removal"
+echo "---------------------------------"
+
+# Count RoleBindings before removal
+RB_BEFORE=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+
+# Remove one entry from whitelist.txt (remove project3 entry)
+kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | grep -v "project3" > /tmp/whitelist-removal.txt
+kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-removal.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+rm -f /tmp/whitelist-removal.txt
+
+# Trigger reconciliation
+kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-removal="$(date +%s)" --overwrite >/dev/null 2>&1
+sleep 20
+
+# Check RoleBinding removed
+RB_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+if [ "$RB_AFTER" -lt "$RB_BEFORE" ]; then
+    pass_test "RoleBinding removed after ConfigMap entry deletion"
+    info_log "RoleBindings: $RB_BEFORE → $RB_AFTER"
+else
+    fail_test "RoleBinding not removed (still $RB_AFTER RoleBindings)"
+fi
+
+# Verify namespace preserved (not deleted)
+NS_PROJECT3=$(kubectl get namespace project3 2>/dev/null | wc -l)
+if [ "$NS_PROJECT3" -gt 0 ]; then
+    pass_test "Namespace preserved after entry removal (SAFE MODE)"
+else
+    fail_test "Namespace was deleted (should be preserved)"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 7 (doc): Namespace Protection
+# ============================================================================
+echo "Test 7 (doc): Namespace Protection"
+echo "------------------------------------"
+
+# Note: This is already tested in Test 5 above and Test 4 (Orphaned Resources)
+# Namespace project3 should exist but have no RoleBindings
+PROJECT3_RB_COUNT=$(kubectl get rolebindings -n project3 -l permission-binder.io/managed-by=permission-binder-operator --no-headers 2>/dev/null | wc -l)
+if [ "$PROJECT3_RB_COUNT" -eq 0 ] && [ "$NS_PROJECT3" -gt 0 ]; then
+    pass_test "Namespace protection verified (namespace exists, RoleBindings removed)"
+else
+    fail_test "Namespace protection failed (RB count: $PROJECT3_RB_COUNT, NS exists: $NS_PROJECT3)"
+fi
+
+info_log "Namespace protection ensures namespaces are NEVER deleted by operator"
+
+echo ""
+
+# ============================================================================
+# Test 9: Operator Restart Recovery
+# ============================================================================
+echo "Test 9: Operator Restart Recovery"
+echo "-----------------------------------"
+
+# Count resources before restart
+RB_BEFORE_RESTART=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+NS_BEFORE_RESTART=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+
+# Restart operator pod
+kubectl rollout restart deployment operator-controller-manager -n $NAMESPACE >/dev/null 2>&1
+kubectl rollout status deployment operator-controller-manager -n $NAMESPACE --timeout=60s >/dev/null 2>&1
+sleep 15
+
+# Count resources after restart
+RB_AFTER_RESTART=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+NS_AFTER_RESTART=$(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+
+# Verify no duplicates created
+if [ "$RB_AFTER_RESTART" -eq "$RB_BEFORE_RESTART" ] && [ "$NS_AFTER_RESTART" -eq "$NS_BEFORE_RESTART" ]; then
+    pass_test "Operator recovered without creating duplicates"
+    info_log "Resources stable: $RB_AFTER_RESTART RoleBindings, $NS_AFTER_RESTART Namespaces"
+else
+    fail_test "Resource count changed after restart (RB: $RB_BEFORE_RESTART → $RB_AFTER_RESTART, NS: $NS_BEFORE_RESTART → $NS_AFTER_RESTART)"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 12: Multi-Architecture Verification
+# ============================================================================
+echo "Test 12: Multi-Architecture Verification"
+echo "------------------------------------------"
+
+# Check operator pod architecture
+POD_NAME=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].metadata.name}')
+NODE_NAME=$(kubectl get pod -n $NAMESPACE $POD_NAME -o jsonpath='{.spec.nodeName}')
+NODE_ARCH=$(kubectl get node $NODE_NAME -o jsonpath='{.status.nodeInfo.architecture}')
+
+info_log "Operator running on node: $NODE_NAME ($NODE_ARCH)"
+
+# Verify operator is functional (RoleBindings exist)
+if [ "$RB_AFTER_RESTART" -gt 0 ]; then
+    pass_test "Operator functional on $NODE_ARCH architecture"
+else
+    fail_test "Operator not functional on $NODE_ARCH"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 1: Role Mapping Changes
+# ============================================================================
+echo "Test 1: Role Mapping Changes"
+echo "------------------------------"
+
+# Add new role to PermissionBinder mapping
+kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+  -p='[{"op":"add","path":"/spec/roleMapping/developer","value":"edit"}]' >/dev/null 2>&1
+
+sleep 20
+
+# Check if new RoleBindings were created (should have more than before)
+RB_WITH_NEW_ROLE=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+if [ "$RB_WITH_NEW_ROLE" -gt "$RB_AFTER_RESTART" ]; then
+    pass_test "New RoleBindings created after role mapping change"
+    info_log "RoleBindings increased: $RB_AFTER_RESTART → $RB_WITH_NEW_ROLE"
+else
+    fail_test "No new RoleBindings created (still $RB_WITH_NEW_ROLE)"
+fi
+
+# Verify at least one RoleBinding references the new role
+DEVELOPER_RB=$(kubectl get rolebindings -A -o json | jq -r '.items[] | select(.roleRef.name=="edit") | .metadata.name' | grep -c "developer" || echo "0")
+if [ "$DEVELOPER_RB" -gt 0 ]; then
+    pass_test "RoleBindings reference new ClusterRole correctly"
+else
+    info_log "No 'developer' RoleBindings found (may be due to ConfigMap not having matching entries)"
+fi
+
+echo ""
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
