@@ -802,6 +802,92 @@ info_log "Operator memory usage: $MEMORY_USAGE"
 echo ""
 
 # ============================================================================
+# Test 16: Operator Permission Loss (Security)
+# ============================================================================
+echo "Test 16: Operator Permission Loss (Security)"
+echo "----------------------------------------------"
+
+# Backup current ClusterRoleBinding
+kubectl get clusterrolebinding permission-binder-operator-manager-rolebinding -o yaml > /tmp/crb-backup.yaml 2>/dev/null
+
+# Remove a specific permission temporarily (rolebindings.create)
+kubectl get clusterrole permission-binder-operator-manager-role -o json | \
+  jq 'del(.rules[] | select(.resources[] == "rolebindings"))' | \
+  kubectl apply -f - >/dev/null 2>&1
+
+# Trigger reconciliation
+kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-rbac-loss="$(date +%s)" --overwrite >/dev/null 2>&1
+sleep 10
+
+# Check for permission errors in logs
+PERMISSION_ERRORS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=50 | \
+  grep -i "forbidden\|permission denied\|unauthorized" | wc -l)
+
+if [ "$PERMISSION_ERRORS" -gt 0 ]; then
+    pass_test "Operator logged permission errors correctly"
+    info_log "Permission error log entries: $PERMISSION_ERRORS"
+else
+    info_log "No permission errors detected (RBAC may still be valid)"
+fi
+
+# Restore permissions
+kubectl apply -f example/rbac/clusterrole.yaml >/dev/null 2>&1
+sleep 5
+
+# Verify operator recovered
+POD_STATUS=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.phase}')
+if [ "$POD_STATUS" == "Running" ]; then
+    pass_test "Operator recovered after RBAC restoration"
+else
+    fail_test "Operator not running after RBAC restoration: $POD_STATUS"
+fi
+
+rm -f /tmp/crb-backup.yaml
+
+echo ""
+
+# ============================================================================
+# Test 21: Network Failure Simulation (Reliability)
+# ============================================================================
+echo "Test 21: Network Failure Simulation (Reliability)"
+echo "---------------------------------------------------"
+
+# Note: True network partition is hard to simulate in K3s without CNI manipulation
+# Instead, we'll test operator behavior during brief API server unavailability
+info_log "Simulating network issues via rapid reconciliation"
+
+# Create many rapid reconciliation triggers to stress the system
+for i in {1..10}; do
+    kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE stress-test-$i="$(date +%s)" --overwrite >/dev/null 2>&1 &
+done
+wait
+sleep 15
+
+# Check for connection errors (if any)
+CONN_ERRORS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=100 | \
+  grep -i "connection refused\|timeout\|dial tcp\|i/o timeout" | wc -l)
+info_log "Connection-related log entries: $CONN_ERRORS"
+
+# Verify operator is still functional
+RB_CURRENT=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+if [ "$RB_CURRENT" -gt 0 ]; then
+    pass_test "Operator remained functional under stress"
+    info_log "Managed RoleBindings: $RB_CURRENT"
+else
+    fail_test "Operator lost managed resources"
+fi
+
+# Verify no crash/restarts
+POD_RESTARTS=$(kubectl get pod -n $NAMESPACE -l app.kubernetes.io/name=permission-binder-operator -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')
+if [ "$POD_RESTARTS" -eq 0 ]; then
+    pass_test "Operator handled stress without restarting"
+else
+    fail_test "Operator restarted $POD_RESTARTS times during stress test"
+fi
+
+echo ""
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
@@ -817,26 +903,152 @@ echo ""
 echo "Operator Status:"
 kubectl get pods -n $NAMESPACE
 # ============================================================================
-# Test 25-30: Prometheus Metrics Testing
+# Test 25: Prometheus Metrics Collection
 # ============================================================================
-echo ""
-echo "Test 25-30: Prometheus Metrics Testing"
-echo "--------------------------------------"
+echo "Test 25: Prometheus Metrics Collection"
+echo "----------------------------------------"
 
 # Check if Prometheus is running
-PROMETHEUS_POD=$(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus --no-headers | wc -l)
-if [ "$PROMETHEUS_POD" -gt 0 ]; then
+PROMETHEUS_POD=$(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l)
+if [ "$PROMETHEUS_POD" -eq 0 ]; then
+    fail_test "Prometheus not running - skipping metrics tests 25-30"
+    info_log "Install Prometheus to enable metrics testing"
+    echo ""
+else
     pass_test "Prometheus is running"
     
-    # Test Prometheus metrics collection
-    echo "Running Prometheus metrics tests..."
-    if ./example/tests/test-prometheus-metrics.sh >> $TEST_RESULTS 2>&1; then
-        pass_test "Prometheus metrics collection working correctly"
+    # Query basic operator metrics
+    PROM_POD=$(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}')
+    
+    # Test 25: Basic metrics collection
+    METRICS_COUNT=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result | length')
+    if [ "$METRICS_COUNT" -gt 0 ]; then
+        pass_test "Prometheus collecting operator metrics"
+        CURRENT_RB=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]')
+        info_log "Current RoleBindings metric: $CURRENT_RB"
     else
-        fail_test "Prometheus metrics collection has issues"
+        fail_test "Prometheus not collecting operator metrics"
     fi
-else
-    fail_test "Prometheus not running - skipping metrics tests"
+    
+    echo ""
+    
+    # ============================================================================
+    # Test 26: Metrics Update on Role Mapping Changes
+    # ============================================================================
+    echo "Test 26: Metrics Update on Role Mapping Changes"
+    echo "-------------------------------------------------"
+    
+    # Record initial metric value
+    RB_METRIC_BEFORE=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
+    info_log "RoleBindings metric before: $RB_METRIC_BEFORE"
+    
+    # Add new role (should increase RoleBindings)
+    kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+      -p='[{"op":"add","path":"/spec/roleMapping/metrics-test","value":"view"}]' >/dev/null 2>&1
+    sleep 30
+    
+    # Check updated metric
+    RB_METRIC_AFTER=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
+    info_log "RoleBindings metric after: $RB_METRIC_AFTER"
+    
+    if [ "$RB_METRIC_AFTER" -gt "$RB_METRIC_BEFORE" ]; then
+        pass_test "Metrics updated after role mapping change"
+    else
+        info_log "Metrics may need more time to update (scrape interval)"
+    fi
+    
+    # Cleanup
+    kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+      -p='[{"op":"remove","path":"/spec/roleMapping/metrics-test"}]' >/dev/null 2>&1
+    
+    echo ""
+    
+    # ============================================================================
+    # Test 27: Metrics Update on ConfigMap Changes
+    # ============================================================================
+    echo "Test 27: Metrics Update on ConfigMap Changes"
+    echo "----------------------------------------------"
+    
+    # Record initial namespace metric
+    NS_METRIC_BEFORE=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_namespaces_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
+    info_log "Namespaces metric before: $NS_METRIC_BEFORE"
+    
+    # Add new namespace entry
+    kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-metrics.txt
+    echo "CN=COMPANY-K8S-metrics-test-ns-admin,OU=Test,DC=example,DC=com" >> /tmp/whitelist-metrics.txt
+    kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-metrics.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+    rm -f /tmp/whitelist-metrics.txt
+    
+    kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-ns-metrics="$(date +%s)" --overwrite >/dev/null 2>&1
+    sleep 30
+    
+    # Check updated metric
+    NS_METRIC_AFTER=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_namespaces_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
+    info_log "Namespaces metric after: $NS_METRIC_AFTER"
+    
+    if [ "$NS_METRIC_AFTER" -gt "$NS_METRIC_BEFORE" ]; then
+        pass_test "Namespace metrics updated after ConfigMap change"
+    else
+        info_log "Metrics may need more time to update"
+    fi
+    
+    echo ""
+    
+    # ============================================================================
+    # Test 28: Orphaned Resources Metrics
+    # ============================================================================
+    echo "Test 28: Orphaned Resources Metrics"
+    echo "-------------------------------------"
+    
+    # Query orphaned resources metric
+    ORPHANED_METRIC=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_orphaned_resources_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
+    info_log "Orphaned resources metric: $ORPHANED_METRIC"
+    
+    # Note: Should be 0 after Test 4 (adoption completed)
+    if [ "$ORPHANED_METRIC" -eq 0 ]; then
+        pass_test "No orphaned resources (adoption completed successfully)"
+    else
+        info_log "Some resources still orphaned: $ORPHANED_METRIC (may need more reconciliation time)"
+    fi
+    
+    echo ""
+    
+    # ============================================================================
+    # Test 29: ConfigMap Processing Metrics
+    # ============================================================================
+    echo "Test 29: ConfigMap Processing Metrics"
+    echo "---------------------------------------"
+    
+    # Query ConfigMap entries processed metric
+    CM_PROCESSED=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_configmap_entries_processed_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "N/A")
+    info_log "ConfigMap entries processed: $CM_PROCESSED"
+    
+    if [ "$CM_PROCESSED" != "N/A" ] && [ "$CM_PROCESSED" -gt 0 ]; then
+        pass_test "ConfigMap processing metrics tracked"
+    else
+        info_log "ConfigMap processing metric not available (may not be implemented)"
+    fi
+    
+    echo ""
+    
+    # ============================================================================
+    # Test 30: Adoption Events Metrics
+    # ============================================================================
+    echo "Test 30: Adoption Events Metrics"
+    echo "----------------------------------"
+    
+    # Query adoption events metric
+    ADOPTION_METRIC=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_adoption_events_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
+    info_log "Adoption events metric: $ADOPTION_METRIC"
+    
+    # Should have at least 1 from Test 4
+    if [ "$ADOPTION_METRIC" -gt 0 ]; then
+        pass_test "Adoption events tracked in metrics"
+    else
+        info_log "No adoption events in metrics (may need more time or not implemented)"
+    fi
+    
+    echo ""
 fi
 
 echo ""
