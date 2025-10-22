@@ -45,7 +45,8 @@ spec:
     engineer: edit
     admin: admin
     viewer: view
-  prefix: "COMPANY-K8S"
+  prefixes:
+    - "COMPANY-K8S"
   excludeList: []
   configMapName: "whitelist-test-config"
   configMapNamespace: "permissions-binder-operator"
