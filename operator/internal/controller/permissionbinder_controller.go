@@ -314,16 +314,17 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 			continue
 		}
 
-		// Create RoleBinding (use the full LDAP DN as the group subject)
+		// Create RoleBinding (use the CN value as the group subject name)
+		// OpenShift LDAP syncer creates groups with CN value as name, not full DN
 		roleBindingName := fmt.Sprintf("%s-%s", namespace, role)
-		if err := r.createRoleBinding(ctx, namespace, roleBindingName, role, line, permissionBinder.Spec.RoleMapping[role], permissionBinder); err != nil {
+		if err := r.createRoleBinding(ctx, namespace, roleBindingName, role, cnValue, permissionBinder.Spec.RoleMapping[role], permissionBinder); err != nil {
 			logger.Error(err, "Failed to create RoleBinding", "namespace", namespace, "role", role)
 			continue
 		}
 
 		processedRoleBindings = append(processedRoleBindings, fmt.Sprintf("%s/%s", namespace, roleBindingName))
 		configMapEntriesProcessed.WithLabelValues("success").Inc()
-		logger.Info("Created RoleBinding", "namespace", namespace, "role", role, "ldapDN", line)
+		logger.Info("Created RoleBinding", "namespace", namespace, "role", role, "groupName", cnValue)
 	}
 
 	return processedRoleBindings, nil

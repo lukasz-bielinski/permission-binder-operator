@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **LDAP DN Whitelist Format Support**: Operator now parses LDAP Distinguished Names
   - Extracts CN value from DN entries (e.g., `CN=COMPANY-K8S-project1-engineer,OU=...`)
-  - Full LDAP DN used as group subject in RoleBindings
+  - CN value (not full DN) used as group name in RoleBindings
+  - Compatible with OpenShift LDAP sync (which creates groups with CN as name)
   - Supports comments (lines starting with `#`) and empty lines in whitelist
   - New E2E test suite for whitelist.txt format validation
 - **Multiple Prefix Support**: Support for multiple prefixes in PermissionBinder CR
