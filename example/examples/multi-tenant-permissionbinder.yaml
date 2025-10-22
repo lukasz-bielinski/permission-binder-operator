@@ -23,10 +23,11 @@ spec:
     staging-admin: clusterrole-staging-admin
     production-viewer: clusterrole-production-viewer
   
-  # Prefix for multi-tenant environment
-  prefix: "MT-K8S"
+  # Prefixes for multi-tenant environment (supports multiple tenants)
+  prefixes:
+    - "MT-K8S"
   
-  # Exclusion list for system roles
+  # Exclusion list for system roles (CN values to exclude)
   excludeList:
     - "MT-K8S-SYSTEM-admin"
     - "MT-K8S-MONITORING-viewer"

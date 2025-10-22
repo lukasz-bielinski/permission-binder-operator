@@ -8,18 +8,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Leader Election**: Enabled by default for production safety
-  - Prevents duplicate reconciliation during rolling updates
-  - Ensures only one active controller at any time
-  - Fast leadership transitions with `LeaderElectionReleaseOnCancel`
-  - Required for safe Kubernetes deployments (even single-replica)
-- **Leader Election Documentation**: Comprehensive guide in README and RUNBOOK
-- **Leader Election Troubleshooting**: Dedicated P3 playbook in RUNBOOK
+- **LDAP DN Whitelist Format Support**: Operator now parses LDAP Distinguished Names
+  - Extracts CN value from DN entries (e.g., `CN=COMPANY-K8S-project1-engineer,OU=...`)
+  - Full LDAP DN used as group subject in RoleBindings
+  - Supports comments (lines starting with `#`) and empty lines in whitelist
+  - New E2E test suite for whitelist.txt format validation
+- **Multiple Prefix Support**: Support for multiple prefixes in PermissionBinder CR
+  - Enables multi-tenant scenarios with different prefixes per tenant
+  - Longest prefix is matched first (handles overlapping prefixes like "MT-K8S-DEV" and "MT-K8S")
+  - Example: `prefixes: ["MT-K8S-DEV", "COMPANY-K8S", "MT-K8S"]`
+- **Namespace Hyphen Support**: Namespaces can now contain hyphens
+  - Role is identified by matching against roleMapping keys (not just last segment)
+  - Supports complex namespace names like `tenant1-project-3121`, `app-staging-v2`
+  - Longest role name is preferred when multiple roles match
 
 ### Changed
-- `--leader-elect` flag now defaults to `true` (was `false`)
-- All deployment examples include leader election by default
-- Updated documentation to reflect leader election as production requirement
+- **⚠️ BREAKING CHANGE: ConfigMap format**
+  - ConfigMap must now use `whitelist.txt` key instead of individual keys
+  - Each line in `whitelist.txt` must be a valid LDAP DN starting with `CN=`
+  - CN value is parsed as `{PREFIX}-{NAMESPACE}-{ROLE}` (unchanged)
+  - Migration: Convert key-value pairs to LDAP DN format (see Migration Guide below)
+- **⚠️ BREAKING CHANGE: PermissionBinder API**
+  - Field `prefix` (string) changed to `prefixes` ([]string)
+  - Must specify at least one prefix (minimum 1 item)
+  - Update existing CRs: `prefix: "COMPANY-K8S"` → `prefixes: ["COMPANY-K8S"]`
+
+### Migration Guide (v1.1 to v2.0)
+
+**1. Update PermissionBinder CR:**
+
+Old Format (v1.x):
+```yaml
+spec:
+  prefix: "COMPANY-K8S"
+```
+
+New Format (v2.0+):
+```yaml
+spec:
+  prefixes:
+    - "COMPANY-K8S"
+```
+
+**2. Update ConfigMap Format:**
+
+Old Format (v1.x):
+```yaml
+data:
+  COMPANY-K8S-project1-engineer: "COMPANY-K8S-project1-engineer"
+  COMPANY-K8S-project2-admin: "COMPANY-K8S-project2-admin"
+```
+
+New Format (v2.0+):
+```yaml
+data:
+  whitelist.txt: |-
+    CN=COMPANY-K8S-project1-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-project2-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
+```
+
+**Migration Steps:**
+1. Update CRDs: `kubectl apply -f example/crd/`
+2. Update PermissionBinder CR: Change `prefix:` to `prefixes: [...]`
+3. Update ConfigMap to use `whitelist.txt` format with LDAP DNs
+4. Upgrade operator to v2.0.0
+5. Verify RoleBindings are recreated correctly
+
+**Multi-Tenant Example:**
+```yaml
+spec:
+  prefixes:
+    - "MT-K8S-DEV"  # Tenant DEV
+    - "MT-K8S-PROD" # Tenant PROD  
+    - "COMPANY-K8S" # Legacy
+```
 
 ## [1.0.0] - 2025-10-22
 

@@ -65,11 +65,25 @@ spec:
     engineer: edit
     admin: admin
     viewer: view
-  prefix: "COMPANY-K8S"
+    read-only: view
+  prefixes:
+    - "COMPANY-K8S"
   excludeList:
     - "COMPANY-K8S-SYSTEM-admin"
   configMapName: "permission-config"
   configMapNamespace: "permissions-binder-operator"
+```
+
+**Multi-Prefix Support** (for multi-tenant environments):
+```yaml
+spec:
+  prefixes:
+    - "MT-K8S-DEV"  # Longest prefix matched first
+    - "COMPANY-K8S"
+    - "MT-K8S"
+  roleMapping:
+    engineer: edit
+    admin: admin
 ```
 
 ---
@@ -79,11 +93,64 @@ spec:
 ### How It Works
 
 1. **ConfigMap Monitoring** - Operator watches ConfigMap for changes
-2. **Parsing** - Extracts namespace and role from entries (format: `{PREFIX}-{NAMESPACE}-{ROLE}`)
-3. **Validation** - Checks ClusterRole exists (logs WARNING if not)
-4. **Namespace Creation** - Creates namespace if doesn't exist (with annotations)
-5. **RoleBinding Creation** - Creates RoleBinding linking group to ClusterRole
-6. **Reconciliation** - Continuously ensures desired state
+2. **LDAP DN Parsing** - Extracts CN value from LDAP Distinguished Name format
+3. **Permission String Parsing** - Extracts namespace and role from CN (format: `{PREFIX}-{NAMESPACE}-{ROLE}`)
+4. **Validation** - Checks ClusterRole exists (logs WARNING if not)
+5. **Namespace Creation** - Creates namespace if doesn't exist (with annotations)
+6. **RoleBinding Creation** - Creates RoleBinding linking LDAP group DN to ClusterRole
+7. **Reconciliation** - Continuously ensures desired state
+
+### ConfigMap Format
+
+The operator expects a `whitelist.txt` key in the ConfigMap containing LDAP Distinguished Name (DN) entries:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: permission-config
+  namespace: default
+data:
+  whitelist.txt: |-
+    CN=COMPANY-K8S-project1-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-project2-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-project3-viewer,OU=Kubernetes,OU=Platform,DC=example,DC=com
+```
+
+**Format Details:**
+- Each line must be a valid LDAP DN starting with `CN=`
+- The CN value is extracted and parsed as `{PREFIX}-{NAMESPACE}-{ROLE}`
+- Empty lines and lines starting with `#` are ignored (comments)
+- The full LDAP DN is used as the group subject in the RoleBinding
+
+**Example Parsing:**
+```
+Input:  CN=COMPANY-K8S-project1-engineer,OU=Kubernetes,...
+CN:     COMPANY-K8S-project1-engineer
+Prefix: COMPANY-K8S (from PermissionBinder spec.prefixes)
+Role:   engineer (matched from spec.roleMapping keys)
+Namespace: project1 (everything between prefix and role)
+
+Input:  CN=MT-K8S-tenant1-project-3121-engineer,OU=...
+CN:     MT-K8S-tenant1-project-3121-engineer
+Prefix: MT-K8S (from spec.prefixes)
+Role:   engineer (matched from spec.roleMapping keys)
+Namespace: tenant1-project-3121 (supports hyphens!)
+
+Input:  CN=MT-K8S-DEV-app-staging-admin,OU=...
+Prefixes: ["MT-K8S-DEV", "MT-K8S"]
+Matched: MT-K8S-DEV (longest prefix first)
+Namespace: app-staging
+Role:   admin
+```
+
+**Important Notes:**
+- **Multiple Prefixes**: Supports multiple prefixes (e.g., for different tenants)
+- **Prefix Matching**: Longest prefix is matched first (handles overlapping like "MT-K8S-DEV" and "MT-K8S")
+- **Role Identification**: Role is matched against `roleMapping` keys from PermissionBinder CR
+- **Namespace Hyphens**: Namespaces can contain hyphens (e.g., `project-123`, `tenant1-app-staging`)
+- **Role Disambiguation**: If multiple roles match, the longest role name is preferred (e.g., `read-only` over `only`)
+- **Suffix Matching**: Role matching is suffix-based - the CN must end with `-{role}`
 
 ### Key Behaviors
 

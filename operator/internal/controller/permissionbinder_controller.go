@@ -265,27 +265,48 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 	logger := log.FromContext(ctx)
 	var processedRoleBindings []string
 
-	// Process each key-value pair in the ConfigMap
-	for key, value := range configMap.Data {
-		// Check if the key matches our prefix
-		if !strings.HasPrefix(key, permissionBinder.Spec.Prefix) {
+	// Look for whitelist.txt key in ConfigMap
+	whitelistContent, found := configMap.Data["whitelist.txt"]
+	if !found {
+		logger.Info("No whitelist.txt found in ConfigMap, skipping processing")
+		return processedRoleBindings, nil
+	}
+
+	// Parse whitelist.txt line by line
+	lines := strings.Split(whitelistContent, "\n")
+	for lineNum, line := range lines {
+		line = strings.TrimSpace(line)
+		
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		// Check if the key is in the exclude list
-		if r.isExcluded(key, permissionBinder.Spec.ExcludeList) {
-			configMapEntriesProcessed.WithLabelValues("excluded").Inc()
-			logger.Info("Skipping excluded key", "key", key)
-			continue
-		}
-
-		// Parse the key to extract namespace and role
-		namespace, role, err := r.parsePermissionString(key, permissionBinder.Spec.Prefix, permissionBinder.Spec.RoleMapping)
+		// Extract CN value from LDAP DN format
+		// Example: CN=DD_0000-K8S-123-Cluster-admin,OU=Openshift-123,...
+		cnValue, err := r.extractCNFromDN(line)
 		if err != nil {
 			configMapEntriesProcessed.WithLabelValues("error").Inc()
-			logger.Error(err, "Failed to parse permission string", "key", key)
+			logger.Error(err, "Failed to extract CN from LDAP DN", "line", lineNum+1, "content", line)
 			continue
 		}
+
+		// Check if the CN value is in the exclude list
+		if r.isExcluded(cnValue, permissionBinder.Spec.ExcludeList) {
+			configMapEntriesProcessed.WithLabelValues("excluded").Inc()
+			logger.Info("Skipping excluded CN", "cn", cnValue)
+			continue
+		}
+
+		// Parse the CN value to extract namespace and role (try all prefixes)
+		namespace, role, matchedPrefix, err := r.parsePermissionStringWithPrefixes(cnValue, permissionBinder.Spec.Prefixes, permissionBinder.Spec.RoleMapping)
+		if err != nil {
+			configMapEntriesProcessed.WithLabelValues("error").Inc()
+			logger.Error(err, "Failed to parse permission string", "cn", cnValue, "line", lineNum+1)
+			continue
+		}
+		
+		logger.V(1).Info("Parsed permission string", "cn", cnValue, "prefix", matchedPrefix, "namespace", namespace, "role", role)
 
 		// Ensure namespace exists
 		if err := r.ensureNamespace(ctx, namespace, permissionBinder); err != nil {
@@ -293,19 +314,44 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 			continue
 		}
 
-		// Create RoleBinding
+		// Create RoleBinding (use the full LDAP DN as the group subject)
 		roleBindingName := fmt.Sprintf("%s-%s", namespace, role)
-		if err := r.createRoleBinding(ctx, namespace, roleBindingName, role, value, permissionBinder.Spec.RoleMapping[role], permissionBinder); err != nil {
+		if err := r.createRoleBinding(ctx, namespace, roleBindingName, role, line, permissionBinder.Spec.RoleMapping[role], permissionBinder); err != nil {
 			logger.Error(err, "Failed to create RoleBinding", "namespace", namespace, "role", role)
 			continue
 		}
 
 		processedRoleBindings = append(processedRoleBindings, fmt.Sprintf("%s/%s", namespace, roleBindingName))
 		configMapEntriesProcessed.WithLabelValues("success").Inc()
-		logger.Info("Created RoleBinding", "namespace", namespace, "role", role, "group", value)
+		logger.Info("Created RoleBinding", "namespace", namespace, "role", role, "ldapDN", line)
 	}
 
 	return processedRoleBindings, nil
+}
+
+// extractCNFromDN extracts the CN (Common Name) value from an LDAP DN string
+// Example: "CN=DD_0000-K8S-123-admin,OU=..." -> "DD_0000-K8S-123-admin"
+func (r *PermissionBinderReconciler) extractCNFromDN(dn string) (string, error) {
+	// Find CN= prefix
+	cnPrefix := "CN="
+	cnIndex := strings.Index(dn, cnPrefix)
+	if cnIndex == -1 {
+		return "", fmt.Errorf("CN not found in DN: %s", dn)
+	}
+
+	// Extract everything after CN=
+	afterCN := dn[cnIndex+len(cnPrefix):]
+	
+	// Find the end of CN value (marked by comma)
+	commaIndex := strings.Index(afterCN, ",")
+	if commaIndex == -1 {
+		// No comma found, use the entire remaining string
+		return strings.TrimSpace(afterCN), nil
+	}
+
+	// Extract CN value up to the comma
+	cnValue := strings.TrimSpace(afterCN[:commaIndex])
+	return cnValue, nil
 }
 
 // isExcluded checks if a key is in the exclude list
@@ -318,8 +364,36 @@ func (r *PermissionBinderReconciler) isExcluded(key string, excludeList []string
 	return false
 }
 
-// parsePermissionString parses a permission string like "COMPANY-K8S-blabla23-engineer"
-// and returns namespace and role
+// parsePermissionStringWithPrefixes tries to parse permission string with multiple prefixes
+// Returns namespace, role, matched prefix, and error
+func (r *PermissionBinderReconciler) parsePermissionStringWithPrefixes(permissionString string, prefixes []string, roleMapping map[string]string) (string, string, string, error) {
+	// Try each prefix (longest first to handle overlapping prefixes like "MT-K8S-DEV" and "MT-K8S")
+	sortedPrefixes := make([]string, len(prefixes))
+	copy(sortedPrefixes, prefixes)
+	
+	// Sort by length descending (longest first)
+	for i := 0; i < len(sortedPrefixes); i++ {
+		for j := i + 1; j < len(sortedPrefixes); j++ {
+			if len(sortedPrefixes[j]) > len(sortedPrefixes[i]) {
+				sortedPrefixes[i], sortedPrefixes[j] = sortedPrefixes[j], sortedPrefixes[i]
+			}
+		}
+	}
+	
+	for _, prefix := range sortedPrefixes {
+		namespace, role, err := r.parsePermissionString(permissionString, prefix, roleMapping)
+		if err == nil {
+			return namespace, role, prefix, nil
+		}
+	}
+	
+	return "", "", "", fmt.Errorf("no matching prefix found for: %s (available prefixes: %v)", permissionString, prefixes)
+}
+
+// parsePermissionString parses a permission string like "COMPANY-K8S-project-123-engineer"
+// and returns namespace and role. The role is determined by checking against roleMapping keys,
+// which allows namespaces to contain hyphens (e.g., "project-123").
+// If multiple roles match, the longest role name is used (e.g., "read-only" before "only").
 func (r *PermissionBinderReconciler) parsePermissionString(permissionString, prefix string, roleMapping map[string]string) (string, string, error) {
 	// Remove prefix
 	withoutPrefix := strings.TrimPrefix(permissionString, prefix+"-")
@@ -327,22 +401,44 @@ func (r *PermissionBinderReconciler) parsePermissionString(permissionString, pre
 		return "", "", fmt.Errorf("permission string does not start with prefix: %s", prefix)
 	}
 
-	// Split by "-" to get parts
-	parts := strings.Split(withoutPrefix, "-")
-	if len(parts) < 2 {
-		return "", "", fmt.Errorf("invalid permission string format: %s", permissionString)
+	// Try to match known roles from roleMapping by checking suffixes
+	// This allows namespaces to contain hyphens (e.g., "project-123-engineer" where role="engineer" and namespace="project-123")
+	// If multiple roles match, prefer the longest one (e.g., "read-only" over "only")
+	var matchedRole string
+	var namespace string
+	var maxRoleLength int
+	
+	for role := range roleMapping {
+		// Check if the string ends with "-{role}"
+		suffix := "-" + role
+		if strings.HasSuffix(withoutPrefix, suffix) {
+			// Found a matching role - prefer longer role names
+			if len(role) > maxRoleLength {
+				matchedRole = role
+				namespace = strings.TrimSuffix(withoutPrefix, suffix)
+				maxRoleLength = len(role)
+			}
+		}
 	}
 
-	// Last part should be the role
-	role := parts[len(parts)-1]
-	if _, exists := roleMapping[role]; !exists {
-		return "", "", fmt.Errorf("unknown role: %s", role)
+	if matchedRole == "" {
+		return "", "", fmt.Errorf("no matching role found in roleMapping for: %s (available roles: %v)", permissionString, getMapKeys(roleMapping))
 	}
 
-	// Everything except the last part is the namespace
-	namespace := strings.Join(parts[:len(parts)-1], "-")
+	if namespace == "" {
+		return "", "", fmt.Errorf("invalid permission string format: namespace cannot be empty in %s", permissionString)
+	}
 
-	return namespace, role, nil
+	return namespace, matchedRole, nil
+}
+
+// getMapKeys returns the keys of a map as a slice (helper for error messages)
+func getMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // ensureNamespace creates a namespace if it doesn't exist
@@ -581,7 +677,7 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 
 	// Check each namespace for missing role bindings
 	for _, namespace := range managedNamespaces {
-		for role, clusterRole := range permissionBinder.Spec.RoleMapping {
+		for role := range permissionBinder.Spec.RoleMapping {
 			roleBindingName := fmt.Sprintf("%s-%s", namespace, role)
 
 			// Check if role binding exists
@@ -590,13 +686,9 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 			if err != nil {
 				if errors.IsNotFound(err) {
 					// Role binding doesn't exist, create it
-					// We need to find the group from ConfigMap or use a default
-					group := fmt.Sprintf("%s-%s-%s", permissionBinder.Spec.Prefix, namespace, role)
-					if err := r.createRoleBinding(ctx, namespace, roleBindingName, role, group, clusterRole, permissionBinder); err != nil {
-						logger.Error(err, "Failed to create missing RoleBinding", "namespace", namespace, "role", role)
-						continue
-					}
-					logger.Info("Created missing RoleBinding", "namespace", namespace, "role", role)
+					// It will be recreated on next reconciliation from ConfigMap data
+					logger.Info("RoleBinding missing - will be recreated on next reconciliation", 
+						"namespace", namespace, "role", role)
 				} else {
 					logger.Error(err, "Failed to check RoleBinding", "namespace", namespace, "role", role)
 				}
@@ -616,11 +708,18 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 		}
 	}
 
-	// Remove role bindings that don't match current prefix
+	// Remove role bindings that don't match any current prefix
 	for _, roleBinding := range managedRoleBindings {
 		if len(roleBinding.Subjects) > 0 {
 			groupName := roleBinding.Subjects[0].Name
-			if !strings.HasPrefix(groupName, permissionBinder.Spec.Prefix+"-") {
+			matchesAnyPrefix := false
+			for _, prefix := range permissionBinder.Spec.Prefixes {
+				if strings.HasPrefix(groupName, prefix+"-") {
+					matchesAnyPrefix = true
+					break
+				}
+			}
+			if !matchesAnyPrefix {
 				if err := r.Delete(ctx, &roleBinding); err != nil {
 					logger.Error(err, "Failed to delete RoleBinding with invalid prefix", "namespace", roleBinding.Namespace, "name", roleBinding.Name, "group", groupName)
 				} else {

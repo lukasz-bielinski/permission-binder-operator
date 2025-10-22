@@ -12,13 +12,20 @@ spec:
     engineer: edit
     admin: admin
     viewer: view
+    read-only: read-only
   
-  # Prefix used to identify permission strings
-  prefix: "COMPANY-K8S"
+  # Prefixes used to identify permission strings (supports multiple for multi-tenant scenarios)
+  # Longest prefix is matched first (e.g., "MT-K8S-DEV" before "MT-K8S")
+  prefixes:
+    - "MT-K8S-DEV-K8S"
+    - "COMPANY-K8S"
+    - "MT-K8S"
   
-  # Exclusion list
+  # Exclusion list (CN values to exclude from processing)
   excludeList:
     - "COMPANY-K8S-HPA-admin"
+    - "MT-K8S-SYSTEM-admin"
+    - "MT-K8S-MONITORING-viewer"
   
   # ConfigMap configuration
   configMapName: "permission-config"
