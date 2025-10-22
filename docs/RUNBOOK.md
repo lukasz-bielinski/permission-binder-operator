@@ -227,6 +227,72 @@ kubectl logs -n permissions-binder-operator deployment/operator-controller-manag
 
 ---
 
+### P3 - Leader Election Issues
+
+**Symptoms:**
+- Multiple operators reconciling same resources
+- Duplicate RoleBindings created
+- Logs show leadership changes during stable operation
+- Alert: `PermissionBinderLeaderElectionFailed`
+
+**Diagnosis:**
+```bash
+# 1. Check leader election metrics
+kubectl port-forward -n permissions-binder-operator deployment/operator-controller-manager 8080:8080
+curl http://localhost:8080/metrics | grep leader_election
+
+# 2. Check for multiple active leaders
+kubectl logs -n permissions-binder-operator deployment/operator-controller-manager \
+  | jq 'select(.msg | contains("became leader"))'
+
+# 3. Check configmap locks
+kubectl get configmaps -n permissions-binder-operator | grep "2d227bcc.permission-binder.io"
+
+# 4. Verify only one pod is active
+kubectl get pods -n permissions-binder-operator -l control-plane=controller-manager
+```
+
+**Resolution:**
+1. **Split-brain (multiple leaders)**:
+   ```bash
+   # Force new election by restarting all pods
+   kubectl rollout restart deployment operator-controller-manager -n permissions-binder-operator
+   
+   # Wait for leader election
+   sleep 10
+   
+   # Verify only one leader
+   kubectl logs -n permissions-binder-operator deployment/operator-controller-manager \
+     | jq 'select(.msg | contains("successfully acquired lease"))'
+   ```
+
+2. **Leader election ConfigMap stuck**:
+   ```bash
+   # Delete lock (safe - will be recreated)
+   kubectl delete configmap -n permissions-binder-operator -l \
+     "component=leader-election"
+   
+   # Restart operator
+   kubectl rollout restart deployment operator-controller-manager -n permissions-binder-operator
+   ```
+
+3. **Network issues preventing lock renewal**:
+   ```bash
+   # Check API server connectivity
+   kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never \
+     -- curl -k https://kubernetes.default.svc.cluster.local:443
+   
+   # If connectivity issues, escalate to infrastructure team
+   ```
+
+**Notes:**
+- Leader election is CRITICAL for production safety
+- Never disable `--leader-elect` in production
+- Lock renewal happens every 10 seconds (default)
+- Leadership transitions during rolling updates are normal and expected
+
+---
+
 ### P3 - Slow Reconciliation
 
 **Symptoms:**

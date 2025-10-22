@@ -443,6 +443,10 @@ spec:
         - --metrics-secure=false
         - --leader-elect
         - --health-probe-bind-address=:8081
+        # Leader election is ENABLED for production safety:
+        # - Prevents duplicate reconciliation during rolling updates
+        # - Ensures graceful shutdown
+        # - Required even for single-replica deployments
         command:
         - /manager
         # Multi-arch image (ARM64 + AMD64)
