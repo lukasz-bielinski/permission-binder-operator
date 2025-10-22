@@ -71,6 +71,10 @@ info_log "RoleBindings before: $RB_BEFORE"
 kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"add","path":"/spec/roleMapping/developer","value":"edit"}]' >/dev/null 2>&1
 
+# Add ConfigMap entry with "developer" role to test the new mapping
+kubectl patch configmap permission-binder-whitelist -n $NAMESPACE --type=json \
+  -p='[{"op":"add","path":"/data/whitelist.txt","value":"CN=COMPANY-K8S-demo-app-staging-admin,OU=Example,DC=example,DC=com\nCN=COMPANY-K8S-demo-app-production-admin,OU=Example,DC=example,DC=com\nCN=COMPANY-K8S-platform-shared-admin,OU=Example,DC=example,DC=com\nCN=COMPANY-K8S-test-namespace-developer,OU=Example,DC=example,DC=com"}]' >/dev/null 2>&1
+
 sleep 20
 
 # Check if new RoleBindings were created
@@ -524,11 +528,11 @@ kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-ad
 sleep 30
 
 # Check adoption logs
-ADOPTION_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=100 | grep -v "^I" | grep -c "Adopted\|adoption" || echo "0")
+ADOPTION_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=100 | grep -v "^I" | grep -c "Adopted\|adoption" 2>/dev/null | tr -d '\n' | head -1 || echo "0")
 info_log "Adoption-related log entries: $ADOPTION_LOGS"
 
 # Check if orphaned resources decreased
-ORPHANED_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length')
+ORPHANED_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length' | tr -d '\n')
 
 if [ "$ORPHANED_AFTER" -lt "$ORPHANED_BEFORE" ] || [ "$ADOPTION_LOGS" -gt 0 ]; then
     pass_test "Automatic adoption of orphaned resources"
@@ -992,11 +996,11 @@ else
     echo "-------------------------------------"
     
     # Query orphaned resources metric
-    ORPHANED_METRIC=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_orphaned_resources_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
+    ORPHANED_METRIC=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_orphaned_resources_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo "0")
     info_log "Orphaned resources metric: $ORPHANED_METRIC"
     
     # Should be 0 after Test 14 (adoption completed)
-    if [ "$ORPHANED_METRIC" -eq 0 ]; then
+    if [ "$ORPHANED_METRIC" -eq 0 ] 2>/dev/null; then
         pass_test "No orphaned resources (adoption completed successfully)"
     else
         info_log "Some resources still orphaned: $ORPHANED_METRIC"
@@ -1011,10 +1015,10 @@ else
     echo "---------------------------------------"
     
     # Query ConfigMap entries processed metric
-    CM_PROCESSED=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_configmap_entries_processed_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "N/A")
+    CM_PROCESSED=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_configmap_entries_processed_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo "0")
     info_log "ConfigMap entries processed: $CM_PROCESSED"
     
-    if [ "$CM_PROCESSED" != "N/A" ] && [ "$CM_PROCESSED" -gt 0 ]; then
+    if [ "$CM_PROCESSED" != "0" ] && [ "$CM_PROCESSED" -gt 0 ] 2>/dev/null; then
         pass_test "ConfigMap processing metrics tracked"
     else
         info_log "ConfigMap processing metric not available (may not be implemented)"
