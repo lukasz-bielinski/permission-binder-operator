@@ -77,7 +77,7 @@ spec:
             required:
             - configMapName
             - configMapNamespace
-            - prefix
+            - prefixes
             - roleMapping
             type: object
           status:
