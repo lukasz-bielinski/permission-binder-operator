@@ -41,18 +41,12 @@ else
     fail_test "Operator pod not running: $POD_STATUS"
 fi
 
-# Check JSON logging (improved test)
-JSON_LOG=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=1 | grep -v "^I" | head -1 | jq -e '.level' 2>/dev/null && echo "valid" || echo "invalid")
-if [ "$JSON_LOG" == "valid" ]; then
+# Check JSON logging (robust test - check multiple lines)
+JSON_VALID_COUNT=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=10 | grep -v "^I" | while read line; do echo "$line" | jq -e '.level' >/dev/null 2>&1 && echo "1"; done | wc -l)
+if [ "$JSON_VALID_COUNT" -gt 0 ]; then
     pass_test "JSON structured logging is working"
 else
-    # Try alternative approach - check if any log line is valid JSON
-    JSON_ALT=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=5 | grep -v "^I" | head -1 | jq -e '.message' 2>/dev/null && echo "valid" || echo "invalid")
-    if [ "$JSON_ALT" == "valid" ]; then
-        pass_test "JSON structured logging is working (alternative check)"
-    else
-        fail_test "JSON logging not working properly"
-    fi
+    fail_test "JSON logging not working properly"
 fi
 
 # Check finalizer
@@ -160,16 +154,16 @@ fi
 # Recreate PermissionBinder
 kubectl apply -f example/permissionbinder/permissionbinder-example.yaml >/dev/null 2>&1
 
-# Wait longer for adoption to occur
-sleep 20
+# Wait for operator to process and trigger adoption (increased from 20s to 30s)
+sleep 30
 
-# Trigger reconciliation to force adoption
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-adoption="$(date +%s)" --overwrite >/dev/null 2>&1
+# Force reconciliation by updating ConfigMap
+kubectl patch configmap permission-config -n $NAMESPACE -p '{"metadata":{"annotations":{"test-trigger":"'$(date +%s)'"}}}' >/dev/null 2>&1
 sleep 10
 
 # Check adoption - look for both logs and metrics
-ADOPTION_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=200 | grep -v "^I" \
-  | jq -c 'select(.action=="adoption")' | wc -l)
+ADOPTION_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=300 | grep -v "^I" \
+  | grep -c "Adopted orphaned" 2>/dev/null || echo "0")
 
 # Also check if orphaned resources decreased (adoption happened)
 ORPHANED_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json \
@@ -178,22 +172,22 @@ ORPHANED_AFTER=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=
 if [ "$ADOPTION_LOGS" -gt 0 ]; then
     pass_test "Automatic adoption of orphaned resources"
     info_log "Adoption events: $ADOPTION_LOGS"
-elif [ "$ORPHANED_AFTER" -lt "$ORPHANED_COUNT" ]; then
-    pass_test "Automatic adoption of orphaned resources (detected via resource count)"
+elif [ "$ORPHANED_AFTER" -eq 0 ]; then
+    pass_test "Automatic adoption of orphaned resources (all resources adopted)"
     info_log "Orphaned resources decreased from $ORPHANED_COUNT to $ORPHANED_AFTER"
 else
     fail_test "No adoption events found"
+    info_log "Orphaned before: $ORPHANED_COUNT, after: $ORPHANED_AFTER"
 fi
 
-# Verify orphaned annotations removed
+# Verify orphaned annotations removed (should be 0 after successful adoption)
 STILL_ORPHANED=$(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json \
   | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length')
 
-if [ "$STILL_ORPHANED" -lt "$ORPHANED_COUNT" ]; then
+if [ "$STILL_ORPHANED" -eq 0 ]; then
     pass_test "Orphaned annotations removed after adoption"
-    info_log "Remaining orphaned: $STILL_ORPHANED (should decrease over time)"
 else
-    info_log "Some resources still orphaned: $STILL_ORPHANED (may need reconciliation)"
+    info_log "Some resources still orphaned: $STILL_ORPHANED (adoption may need more time)"
 fi
 
 echo ""
@@ -267,15 +261,17 @@ echo ""
 echo "Test 7: ConfigMap Entry Addition"
 echo "----------------------------------"
 
-# Add new entry
-kubectl patch configmap permission-config -n $NAMESPACE \
-  --type=merge -p '{"data":{"DG_FP00-K8S-e2e-test-namespace2-admin":"DG_FP00-K8S-e2e-test-namespace2-admin"}}' >/dev/null 2>&1
+# Add new LDAP DN entry to whitelist.txt
+NEW_ENTRY="CN=COMPANY-K8S-e2e-test-namespace2-admin,OU=TestOU,DC=example,DC=com"
+kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-tmp.txt
+echo "$NEW_ENTRY" >> /tmp/whitelist-tmp.txt
+kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-tmp.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 
-# Trigger reconciliation (operator watches ConfigMap automatically)
-kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-configmap2="$(date +%s)" --overwrite >/dev/null 2>&1
+# Force reconciliation by patching ConfigMap annotation
+kubectl patch configmap permission-config -n $NAMESPACE -p '{"metadata":{"annotations":{"test-entry":"'$(date +%s)'"}}}' >/dev/null 2>&1
 
-# Wait longer for reconciliation (ConfigMap watch may take time)
-sleep 15
+# Wait longer for reconciliation (increased from 15s to 30s)
+sleep 30
 
 # Check namespace created
 NS_EXISTS=$(kubectl get namespace e2e-test-namespace2 2>/dev/null | wc -l)
@@ -283,6 +279,7 @@ if [ "$NS_EXISTS" -gt 0 ]; then
     pass_test "New namespace created from ConfigMap entry"
 else
     fail_test "Namespace not created"
+    info_log "Checking if reconciliation was triggered..."
 fi
 
 # Check RoleBinding created
@@ -292,6 +289,9 @@ if [ "$RB_EXISTS" -gt 0 ]; then
 else
     fail_test "RoleBinding not created"
 fi
+
+# Cleanup temp file
+rm -f /tmp/whitelist-tmp.txt
 
 echo ""
 
