@@ -40,4 +40,7 @@ spec:
   # ldapSecretRef:
   #   name: "ldap-credentials"
   #   namespace: "permissions-binder-operator"
+  # 
+  # TLS certificate verification (optional, default: true)
+  # ldapTlsVerify: false  # Use only for self-signed certs (testing)
 

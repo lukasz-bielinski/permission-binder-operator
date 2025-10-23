@@ -72,6 +72,12 @@ spec:
                 - name
                 - namespace
                 type: object
+              ldapTlsVerify:
+                default: true
+                description: |-
+                  LdapTlsVerify enables TLS certificate verification for LDAPS connections
+                  Set to false to skip certificate verification (insecure, for testing only)
+                type: boolean
               prefixes:
                 description: |-
                   Prefixes used to identify permission strings (e.g., ["COMPANY-K8S", "MT-K8S"])

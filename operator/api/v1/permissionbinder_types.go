@@ -67,6 +67,12 @@ type PermissionBinderSpec struct {
 	// Required keys: domain_server, domain_username, domain_password
 	// +kubebuilder:validation:Optional
 	LdapSecretRef *LdapSecretReference `json:"ldapSecretRef,omitempty"`
+
+	// LdapTlsVerify enables TLS certificate verification for LDAPS connections
+	// Set to false to skip certificate verification (insecure, for testing only)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	LdapTlsVerify *bool `json:"ldapTlsVerify,omitempty"`
 }
 
 // PermissionBinderStatus defines the observed state of PermissionBinder
