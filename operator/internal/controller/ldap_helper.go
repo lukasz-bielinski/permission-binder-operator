@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 	corev1 "k8s.io/api/core/v1"
@@ -153,7 +154,7 @@ func ConnectLdap(creds *LdapCredentials) (*ldap.Conn, error) {
 }
 
 // CreateLdapGroup creates an LDAP/AD group if it doesn't exist
-func CreateLdapGroup(ctx context.Context, conn *ldap.Conn, groupInfo *LdapGroupInfo) error {
+func CreateLdapGroup(ctx context.Context, conn *ldap.Conn, groupInfo *LdapGroupInfo, clusterName string) error {
 	logger := log.FromContext(ctx)
 
 	// Check if group already exists
@@ -163,33 +164,38 @@ func CreateLdapGroup(ctx context.Context, conn *ldap.Conn, groupInfo *LdapGroupI
 		ldap.NeverDerefAliases,
 		0, 0, false,
 		"(objectClass=*)",
-		[]string{"cn"},
+		[]string{"cn", "description"},
 		nil,
 	)
 
 	sr, err := conn.Search(searchRequest)
 	if err == nil && len(sr.Entries) > 0 {
-		logger.Info("LDAP group already exists",
+		logger.Info("ℹ️  AD Group already exists (skipping creation)",
 			"group", groupInfo.GroupName,
-			"dn", groupInfo.FullDN)
+			"dn", groupInfo.FullDN,
+			"cluster", clusterName)
 		ldapGroupOperationsTotal.WithLabelValues("exists").Inc()
 		return nil // Group exists, nothing to do
 	}
 
-	// Group doesn't exist, create it
+	// Group doesn't exist, create it with cluster information
+	timestamp := time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
+	description := fmt.Sprintf("Created by permission-binder-operator from cluster '%s' on %s. Kubernetes namespace permission group.", clusterName, timestamp)
+
 	addRequest := ldap.NewAddRequest(groupInfo.FullDN, nil)
 	addRequest.Attribute("objectClass", []string{"top", "group"})
 	addRequest.Attribute("cn", []string{groupInfo.GroupName})
 	addRequest.Attribute("sAMAccountName", []string{groupInfo.GroupName})
-	addRequest.Attribute("description", []string{fmt.Sprintf("Kubernetes namespace permission group - Managed by permission-binder-operator")})
+	addRequest.Attribute("description", []string{description})
 
 	err = conn.Add(addRequest)
 	if err != nil {
 		// Check if error is "already exists" (race condition)
 		if ldap.IsErrorWithCode(err, ldap.LDAPResultEntryAlreadyExists) {
-			logger.Info("LDAP group was created by another process (race condition)",
+			logger.Info("ℹ️  AD Group already exists (race condition - created by another operator instance)",
 				"group", groupInfo.GroupName,
-				"dn", groupInfo.FullDN)
+				"dn", groupInfo.FullDN,
+				"cluster", clusterName)
 			ldapGroupOperationsTotal.WithLabelValues("exists").Inc()
 			return nil
 		}
@@ -198,12 +204,38 @@ func CreateLdapGroup(ctx context.Context, conn *ldap.Conn, groupInfo *LdapGroupI
 	}
 
 	ldapGroupOperationsTotal.WithLabelValues("created").Inc()
-	logger.Info("✅ Successfully created LDAP group",
+	logger.Info("✅ Successfully created AD Group",
 		"group", groupInfo.GroupName,
 		"dn", groupInfo.FullDN,
-		"path", groupInfo.Path)
+		"path", groupInfo.Path,
+		"cluster", clusterName,
+		"description", description)
 
 	return nil
+}
+
+// GetClusterName attempts to detect the cluster name from Kubernetes API server
+func (r *PermissionBinderReconciler) GetClusterName(ctx context.Context) string {
+	// Try to get cluster name from kube-system ConfigMap (common pattern)
+	configMap := &corev1.ConfigMap{}
+	err := r.Get(ctx, client.ObjectKey{Name: "cluster-info", Namespace: "kube-system"}, configMap)
+	if err == nil {
+		if clusterName, ok := configMap.Data["cluster-name"]; ok && clusterName != "" {
+			return clusterName
+		}
+	}
+
+	// Fallback: try to get from kube-public namespace
+	err = r.Get(ctx, client.ObjectKey{Name: "cluster-info", Namespace: "kube-public"}, configMap)
+	if err == nil {
+		if clusterName, ok := configMap.Data["cluster-name"]; ok && clusterName != "" {
+			return clusterName
+		}
+	}
+
+	// Fallback: use hostname or default
+	// In production, cluster name should be configured via ConfigMap or env var
+	return "kubernetes-cluster"
 }
 
 // ProcessLdapGroupCreation handles LDAP group creation for all whitelist entries
@@ -217,6 +249,10 @@ func (r *PermissionBinderReconciler) ProcessLdapGroupCreation(ctx context.Contex
 
 	logger.Info("🔐 Starting LDAP group creation process",
 		"entries", len(whitelistEntries))
+
+	// Get cluster name for AD group description
+	clusterName := r.GetClusterName(ctx)
+	logger.Info("Detected cluster name", "cluster", clusterName)
 
 	// Get LDAP credentials
 	creds, err := r.GetLdapCredentials(ctx, pb)
@@ -248,8 +284,8 @@ func (r *PermissionBinderReconciler) ProcessLdapGroupCreation(ctx context.Contex
 			continue
 		}
 
-		// Create LDAP group
-		err = CreateLdapGroup(ctx, conn, groupInfo)
+		// Create LDAP group (with cluster name in description)
+		err = CreateLdapGroup(ctx, conn, groupInfo, clusterName)
 		if err != nil {
 			logger.Error(err, "Failed to create LDAP group",
 				"group", groupInfo.GroupName,
@@ -262,9 +298,10 @@ func (r *PermissionBinderReconciler) ProcessLdapGroupCreation(ctx context.Contex
 	}
 
 	logger.Info("✅ LDAP group creation completed",
-		"success", successCount,
+		"created", successCount,
 		"errors", errorCount,
-		"total", len(whitelistEntries))
+		"total", len(whitelistEntries),
+		"cluster", clusterName)
 
 	// Return error only if ALL operations failed
 	if errorCount > 0 && successCount == 0 {
