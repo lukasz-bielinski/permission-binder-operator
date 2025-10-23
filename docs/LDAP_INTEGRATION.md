@@ -179,9 +179,23 @@ permission_binder_ldap_group_operations_total
 
 ## Logging
 
-LDAP operations produce structured JSON logs:
+LDAP operations produce structured JSON logs with detailed information:
+
+### When Group is Created
 
 ```json
+{
+  "level": "info",
+  "message": "🔐 Starting LDAP group creation process",
+  "entries": 10
+}
+
+{
+  "level": "info",
+  "message": "Detected cluster name",
+  "cluster": "production-k8s-cluster"
+}
+
 {
   "level": "info",
   "message": "Connected to LDAP server",
@@ -190,18 +204,87 @@ LDAP operations produce structured JSON logs:
 
 {
   "level": "info",
-  "message": "✅ Successfully created LDAP group",
+  "message": "✅ Successfully created AD Group",
   "group": "COMPANY-K8S-production-admin",
   "dn": "CN=COMPANY-K8S-production-admin,OU=Production,OU=Kubernetes,DC=company,DC=com",
-  "path": "OU=Production,OU=Kubernetes,DC=company,DC=com"
+  "path": "OU=Production,OU=Kubernetes,DC=company,DC=com",
+  "cluster": "production-k8s-cluster",
+  "description": "Created by permission-binder-operator from cluster 'production-k8s-cluster' on 2025-01-15 14:30:00 UTC. Kubernetes namespace permission group."
 }
 
 {
   "level": "info",
-  "message": "LDAP group already exists",
-  "group": "COMPANY-K8S-staging-engineer",
-  "dn": "CN=COMPANY-K8S-staging-engineer,OU=Staging,OU=Kubernetes,DC=company,DC=com"
+  "message": "✅ LDAP group creation completed",
+  "created": 8,
+  "errors": 0,
+  "total": 10,
+  "cluster": "production-k8s-cluster"
 }
+```
+
+### When Group Already Exists
+
+```json
+{
+  "level": "info",
+  "message": "ℹ️  AD Group already exists (skipping creation)",
+  "group": "COMPANY-K8S-staging-engineer",
+  "dn": "CN=COMPANY-K8S-staging-engineer,OU=Staging,OU=Kubernetes,DC=company,DC=com",
+  "cluster": "production-k8s-cluster"
+}
+```
+
+### AD Group Description Field
+
+When a group is created, the `description` attribute in Active Directory contains:
+
+```
+Created by permission-binder-operator from cluster 'production-k8s-cluster' on 2025-01-15 14:30:00 UTC. Kubernetes namespace permission group.
+```
+
+This allows you to:
+- **Audit**: Track which cluster created the group
+- **Timestamp**: Know when the group was created
+- **Source**: Identify groups managed by the operator vs manually created
+
+## Cluster Name Configuration
+
+The operator automatically detects the cluster name for AD group descriptions. It tries the following methods in order:
+
+1. **ConfigMap `cluster-info` in `kube-system` namespace** (recommended)
+2. **ConfigMap `cluster-info` in `kube-public` namespace**
+3. **Fallback**: `"kubernetes-cluster"`
+
+### Recommended: Set Cluster Name
+
+Create a ConfigMap with your cluster name:
+
+```bash
+kubectl create configmap cluster-info \
+  -n kube-system \
+  --from-literal=cluster-name="production-k8s-cluster"
+```
+
+Or via YAML:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-info
+  namespace: kube-system
+data:
+  cluster-name: "production-k8s-cluster"
+```
+
+**Why this matters:**
+- AD groups will have clear descriptions showing which cluster created them
+- Useful when managing multiple K8s clusters with the same AD
+- Helps with auditing and troubleshooting
+
+**Example AD Group Description:**
+```
+Created by permission-binder-operator from cluster 'production-k8s-cluster' on 2025-01-15 14:30:00 UTC. Kubernetes namespace permission group.
 ```
 
 ## Troubleshooting
