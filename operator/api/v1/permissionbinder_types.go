@@ -23,6 +23,17 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+// LdapSecretReference contains reference to a Secret with LDAP credentials
+type LdapSecretReference struct {
+	// Name of the Secret containing LDAP credentials
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Namespace of the Secret containing LDAP credentials
+	// +kubebuilder:validation:Required
+	Namespace string `json:"namespace"`
+}
+
 // PermissionBinderSpec defines the desired state of PermissionBinder
 type PermissionBinderSpec struct {
 	// RoleMapping defines mapping of role names to existing ClusterRoles
@@ -46,6 +57,16 @@ type PermissionBinderSpec struct {
 	// ConfigMapNamespace is the namespace where the ConfigMap is located
 	// +kubebuilder:validation:Required
 	ConfigMapNamespace string `json:"configMapNamespace"`
+
+	// CreateLdapGroups enables automatic LDAP group creation for namespaces
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	CreateLdapGroups bool `json:"createLdapGroups,omitempty"`
+
+	// LdapSecretRef references a Secret containing LDAP connection credentials
+	// Required keys: domain_server, domain_username, domain_password
+	// +kubebuilder:validation:Optional
+	LdapSecretRef *LdapSecretReference `json:"ldapSecretRef,omitempty"`
 }
 
 // PermissionBinderStatus defines the observed state of PermissionBinder

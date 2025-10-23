@@ -47,11 +47,31 @@ spec:
                 description: ConfigMapNamespace is the namespace where the ConfigMap
                   is located
                 type: string
+              createLdapGroups:
+                default: false
+                description: CreateLdapGroups enables automatic LDAP group creation
+                  for namespaces
+                type: boolean
               excludeList:
                 description: ExcludeList contains CN values to exclude from processing
                 items:
                   type: string
                 type: array
+              ldapSecretRef:
+                description: |-
+                  LdapSecretRef references a Secret containing LDAP connection credentials
+                  Required keys: domain_server, domain_username, domain_password
+                properties:
+                  name:
+                    description: Name of the Secret containing LDAP credentials
+                    type: string
+                  namespace:
+                    description: Namespace of the Secret containing LDAP credentials
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
               prefixes:
                 description: |-
                   Prefixes used to identify permission strings (e.g., ["COMPANY-K8S", "MT-K8S"])

@@ -1,0 +1,38 @@
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: permissionbinder-with-ldap
+  namespace: permissions-binder-operator
+  labels:
+    app.kubernetes.io/name: permission-binder-operator
+    app.kubernetes.io/instance: ldap-enabled
+spec:
+  # Mapping of roles to existing ClusterRoles
+  roleMapping:
+    engineer: edit
+    admin: admin
+    viewer: view
+    developer: developer
+  
+  # Prefixes used to identify permission strings
+  prefixes:
+    - "COMPANY-K8S"
+  
+  # Exclusion list (CN values to exclude from processing)
+  excludeList:
+    - "COMPANY-K8S-HPA-admin"
+    - "COMPANY-K8S-SYSTEM-admin"
+  
+  # ConfigMap configuration
+  configMapName: "permission-config"
+  configMapNamespace: "permissions-binder-operator"
+  
+  # LDAP Group Creation - ENABLED
+  # Automatically creates LDAP/AD groups for managed namespaces and roles
+  createLdapGroups: true
+  
+  # Reference to Secret containing LDAP credentials
+  ldapSecretRef:
+    name: "ldap-credentials"
+    namespace: "permissions-binder-operator"
+
