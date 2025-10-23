@@ -30,4 +30,17 @@ spec:
   # ConfigMap configuration
   configMapName: "permission-config"
   configMapNamespace: "permissions-binder-operator"
+  
+  # LDAP Group Creation (optional)
+  # When enabled, the operator will automatically create LDAP groups for managed namespaces
+  createLdapGroups: false
+  
+  # LDAP credentials reference (required if createLdapGroups is true)
+  # The secret must contain: domain_server, domain_username, domain_password
+  # ldapSecretRef:
+  #   name: "ldap-credentials"
+  #   namespace: "permissions-binder-operator"
+  # 
+  # TLS certificate verification (optional, default: true)
+  # ldapTlsVerify: false  # Use only for self-signed certs (testing)
 

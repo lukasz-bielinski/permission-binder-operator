@@ -111,6 +111,24 @@ var (
 		},
 		[]string{"status"}, // success, error, excluded
 	)
+
+	// Counter for LDAP group operations
+	ldapGroupOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "permission_binder_ldap_group_operations_total",
+			Help: "Total number of LDAP group operations (create, exists, error)",
+		},
+		[]string{"operation"}, // created, exists, error
+	)
+
+	// Counter for LDAP connection attempts
+	ldapConnectionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "permission_binder_ldap_connections_total",
+			Help: "Total number of LDAP connection attempts",
+		},
+		[]string{"status"}, // success, error
+	)
 )
 
 func init() {
@@ -119,6 +137,8 @@ func init() {
 		missingClusterRoleTotal,
 		orphanedResourcesTotal,
 		adoptionEventsTotal,
+		ldapGroupOperationsTotal,
+		ldapConnectionsTotal,
 		managedRoleBindingsTotal,
 		managedNamespacesTotal,
 		configMapEntriesProcessed,
@@ -264,6 +284,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permissionBinder *permissionv1.PermissionBinder, configMap *corev1.ConfigMap) ([]string, error) {
 	logger := log.FromContext(ctx)
 	var processedRoleBindings []string
+	var validWhitelistEntries []string // For LDAP group creation
 
 	// Look for whitelist.txt key in ConfigMap
 	whitelistContent, found := configMap.Data["whitelist.txt"]
@@ -276,7 +297,7 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 	lines := strings.Split(whitelistContent, "\n")
 	for lineNum, line := range lines {
 		line = strings.TrimSpace(line)
-		
+
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -305,8 +326,11 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 			logger.Error(err, "Failed to parse permission string", "cn", cnValue, "line", lineNum+1)
 			continue
 		}
-		
+
 		logger.V(1).Info("Parsed permission string", "cn", cnValue, "prefix", matchedPrefix, "namespace", namespace, "role", role)
+
+		// Add to valid entries for LDAP processing (use original line with full DN)
+		validWhitelistEntries = append(validWhitelistEntries, line)
 
 		// Ensure namespace exists
 		if err := r.ensureNamespace(ctx, namespace, permissionBinder); err != nil {
@@ -327,6 +351,15 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 		logger.Info("Created RoleBinding", "namespace", namespace, "role", role, "groupName", cnValue)
 	}
 
+	// Process LDAP group creation if enabled
+	if permissionBinder.Spec.CreateLdapGroups && len(validWhitelistEntries) > 0 {
+		logger.Info("🔐 LDAP group creation is enabled, processing entries", "count", len(validWhitelistEntries))
+		if err := r.ProcessLdapGroupCreation(ctx, permissionBinder, validWhitelistEntries); err != nil {
+			// Log error but don't fail the entire reconciliation
+			logger.Error(err, "⚠️  LDAP group creation failed (non-fatal)", "validEntries", len(validWhitelistEntries))
+		}
+	}
+
 	return processedRoleBindings, nil
 }
 
@@ -342,7 +375,7 @@ func (r *PermissionBinderReconciler) extractCNFromDN(dn string) (string, error) 
 
 	// Extract everything after CN=
 	afterCN := dn[cnIndex+len(cnPrefix):]
-	
+
 	// Find the end of CN value (marked by comma)
 	commaIndex := strings.Index(afterCN, ",")
 	if commaIndex == -1 {
@@ -371,7 +404,7 @@ func (r *PermissionBinderReconciler) parsePermissionStringWithPrefixes(permissio
 	// Try each prefix (longest first to handle overlapping prefixes like "MT-K8S-DEV" and "MT-K8S")
 	sortedPrefixes := make([]string, len(prefixes))
 	copy(sortedPrefixes, prefixes)
-	
+
 	// Sort by length descending (longest first)
 	for i := 0; i < len(sortedPrefixes); i++ {
 		for j := i + 1; j < len(sortedPrefixes); j++ {
@@ -380,14 +413,14 @@ func (r *PermissionBinderReconciler) parsePermissionStringWithPrefixes(permissio
 			}
 		}
 	}
-	
+
 	for _, prefix := range sortedPrefixes {
 		namespace, role, err := r.parsePermissionString(permissionString, prefix, roleMapping)
 		if err == nil {
 			return namespace, role, prefix, nil
 		}
 	}
-	
+
 	return "", "", "", fmt.Errorf("no matching prefix found for: %s (available prefixes: %v)", permissionString, prefixes)
 }
 
@@ -408,7 +441,7 @@ func (r *PermissionBinderReconciler) parsePermissionString(permissionString, pre
 	var matchedRole string
 	var namespace string
 	var maxRoleLength int
-	
+
 	for role := range roleMapping {
 		// Check if the string ends with "-{role}"
 		suffix := "-" + role
@@ -688,7 +721,7 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 				if errors.IsNotFound(err) {
 					// Role binding doesn't exist, create it
 					// It will be recreated on next reconciliation from ConfigMap data
-					logger.Info("RoleBinding missing - will be recreated on next reconciliation", 
+					logger.Info("RoleBinding missing - will be recreated on next reconciliation",
 						"namespace", namespace, "role", role)
 				} else {
 					logger.Error(err, "Failed to check RoleBinding", "namespace", namespace, "role", role)
