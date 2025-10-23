@@ -116,17 +116,18 @@ func (r *PermissionBinderReconciler) GetLdapCredentials(ctx context.Context, pb 
 }
 
 // ConnectLdap establishes connection to LDAP/AD server
-func ConnectLdap(creds *LdapCredentials) (*ldap.Conn, error) {
+func ConnectLdap(creds *LdapCredentials, tlsVerify bool) (*ldap.Conn, error) {
 	var conn *ldap.Conn
 	var err error
 
 	// Check if using LDAPS (secure)
 	if strings.HasPrefix(creds.Server, "ldaps://") {
-		// LDAPS connection
+		// LDAPS connection with configurable TLS verification
 		serverAddr := strings.TrimPrefix(creds.Server, "ldaps://")
-		conn, err = ldap.DialURL(fmt.Sprintf("ldaps://%s", serverAddr), ldap.DialWithTLSConfig(&tls.Config{
-			InsecureSkipVerify: false, // TODO: Make this configurable via CRD
-		}))
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: !tlsVerify, // Configurable via CRD
+		}
+		conn, err = ldap.DialURL(fmt.Sprintf("ldaps://%s", serverAddr), ldap.DialWithTLSConfig(tlsConfig))
 	} else {
 		// Plain LDAP connection
 		serverAddr := strings.TrimPrefix(creds.Server, "ldap://")
@@ -261,15 +262,23 @@ func (r *PermissionBinderReconciler) ProcessLdapGroupCreation(ctx context.Contex
 		return err
 	}
 
+	// Get TLS verification setting (default: true)
+	tlsVerify := true
+	if pb.Spec.LdapTlsVerify != nil {
+		tlsVerify = *pb.Spec.LdapTlsVerify
+	}
+
 	// Connect to LDAP
-	conn, err := ConnectLdap(creds)
+	conn, err := ConnectLdap(creds, tlsVerify)
 	if err != nil {
 		logger.Error(err, "Failed to connect to LDAP server")
 		return err
 	}
 	defer conn.Close()
 
-	logger.Info("Connected to LDAP server", "server", creds.Server)
+	logger.Info("Connected to LDAP server",
+		"server", creds.Server,
+		"tlsVerify", tlsVerify)
 
 	// Process each whitelist entry
 	successCount := 0
