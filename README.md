@@ -4,7 +4,7 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/docker/v/lukaszbielinski/permission-binder-operator?label=Docker%20Hub)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.5.0-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
