@@ -227,14 +227,9 @@ EXCLUDE_CN="COMPANY-K8S-excluded-test-ns-admin"
 # Step 1: Set excludeList FIRST (before any ConfigMap with that CN)
 kubectl_retry kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
   -p='[{"op":"replace","path":"/spec/excludeList","value":["'$EXCLUDE_CN'"]}]' >/dev/null 2>&1
+sleep 2
 
-# Step 2: Restart operator to force cache reload with new excludeList
-# This ensures operator has the updated PermissionBinder spec before processing ConfigMap
-kubectl_retry kubectl delete pod -n $NAMESPACE -l control-plane=controller-manager >/dev/null 2>&1
-kubectl_retry kubectl wait --for=condition=available --timeout=30s deployment/operator-controller-manager -n $NAMESPACE >/dev/null 2>&1
-sleep 5  # Extra wait for operator cache warmup and initial reconciliation
-
-# Step 3: Now add the excluded entry - operator should skip it
+# Step 2: Now add the excluded entry - operator should skip it (fix in v1.5.0-rc2)
 cat <<EOF | kubectl_retry kubectl apply -f - >/dev/null 2>&1
 apiVersion: v1
 kind: ConfigMap
@@ -248,20 +243,29 @@ data:
 EOF
 sleep 5
 
-# Check that operator logs show "Skipping excluded CN" (proof that excludeList works)
-SKIP_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=100 | jq -r 'select(.cn == "'$EXCLUDE_CN'" and .message == "Skipping excluded CN") | .cn' | wc -l)
-if [ "$SKIP_LOGS" -gt 0 ]; then
-    pass_test "Excluded CN skipped by operator (found $SKIP_LOGS 'Skipping excluded CN' log entries)"
+# Verify actual cluster state: namespace should NOT exist
+if kubectl_retry kubectl get namespace excluded-test-ns >/dev/null 2>&1; then
+    fail_test "Namespace 'excluded-test-ns' exists despite being in excludeList"
 else
-    fail_test "No 'Skipping excluded CN' logs found - excludeList may not be working"
+    pass_test "Namespace correctly not created (excluded by excludeList)"
 fi
 
-# Also verify namespace was NOT created (best effort - may have race condition from previous test runs)
-EXCLUDED_NS=$(kubectl_retry kubectl get namespace excluded-test-ns 2>/dev/null && echo "created" || echo "not-found")
-if [ "$EXCLUDED_NS" == "not-found" ]; then
-    info_log "✅ Bonus: Namespace was not created (no race condition)"
+# Verify no RoleBindings created for excluded namespace
+# Note: namespace doesn't exist, so we expect error - that's correct behavior
+EXCLUDED_RBS=$(kubectl_retry kubectl get rolebindings -n excluded-test-ns -l permission-binder.io/managed-by 2>/dev/null | grep -v "^NAME" | wc -l)
+EXCLUDED_RBS=$(echo "$EXCLUDED_RBS" | tr -d ' ')
+EXCLUDED_RBS=${EXCLUDED_RBS:-0}
+if [ "$EXCLUDED_RBS" -eq 0 ]; then
+    pass_test "No RoleBindings created for excluded namespace"
 else
-    info_log "⚠️  Namespace exists (likely from previous test/adoption - but excludeList still works per logs)"
+    fail_test "$EXCLUDED_RBS RoleBindings found in excluded namespace (should be 0)"
+fi
+
+# Verify the valid namespace still works (was not affected by excludeList)
+if kubectl_retry kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    pass_test "Valid namespace still exists (excludeList didn't affect valid entries)"
+else
+    fail_test "Valid namespace missing - excludeList may have affected it incorrectly"
 fi
 
 # Cleanup - remove from excludeList
