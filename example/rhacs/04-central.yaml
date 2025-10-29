@@ -1,0 +1,90 @@
+---
+apiVersion: platform.stackrox.io/v1alpha1
+kind: Central
+metadata:
+  name: stackrox-central-services
+  namespace: stackrox
+  labels:
+    app.kubernetes.io/name: central
+    app.kubernetes.io/part-of: rhacs
+spec:
+  central:
+    # Central server configuration
+    exposure:
+      loadBalancer:
+        enabled: false
+        port: 443
+      route:
+        enabled: true
+    
+    # Database persistence
+    db:
+      isEnabled: Default
+      persistence:
+        persistentVolumeClaim:
+          claimName: central-db
+          size: 100Gi
+    
+    # Resources for Central
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "1500m"
+      limits:
+        memory: "8Gi"
+        cpu: "4000m"
+    
+    # High availability (optional)
+    # replicas: 3
+    
+  # Egress/Internet connectivity
+  egress:
+    connectivityPolicy: Online
+  
+  # Image scanner configuration
+  scanner:
+    analyzer:
+      # Scanner resources
+      scaling:
+        autoScaling: Enabled
+        maxReplicas: 5
+        minReplicas: 2
+        replicas: 3
+        # Auto-scale when CPU > 70%
+        metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: Utilization
+              averageUtilization: 70
+      
+      resources:
+        requests:
+          memory: "2500Mi"
+          cpu: "1000m"
+        limits:
+          memory: "4Gi"
+          cpu: "2000m"
+    
+    # Enable scanner component
+    scannerComponent: Enabled
+    
+    # Scanner DB persistence
+    db:
+      persistence:
+        persistentVolumeClaim:
+          claimName: scanner-db
+          size: 50Gi
+  
+  # Monitoring
+  monitoring:
+    openshift:
+      enabled: true
+  
+  # TLS configuration (automatic with OpenShift routes)
+  tls:
+    additionalCAs:
+    - name: custom-ca
+      content: ""  # Add custom CA if needed
+

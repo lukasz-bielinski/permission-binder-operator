@@ -1,0 +1,73 @@
+{
+  "id": "",
+  "name": "Permission Binder Operator - Signature Verification",
+  "description": "Enforce Cosign signature verification for all permission-binder-operator images deployed in the cluster. Images must be signed by GitHub Actions workflow.",
+  "rationale": "Ensures supply chain security by verifying that only officially built and signed images from the GitHub Actions CI/CD pipeline are deployed.",
+  "remediation": "Deploy only signed images from docker.io/lukaszbielinski/permission-binder-operator with valid Cosign signatures verified by GitHub Actions.",
+  "disabled": false,
+  "categories": [
+    "Security Best Practices",
+    "Supply Chain Security"
+  ],
+  "lifecycleStages": [
+    "DEPLOY"
+  ],
+  "eventSource": "DEPLOYMENT_EVENT",
+  "exclusions": [],
+  "scope": [
+    {
+      "namespace": "permissions-binder-operator"
+    }
+  ],
+  "severity": "HIGH_SEVERITY",
+  "enforcementActions": [
+    "FAIL_KUBE_REQUEST_ENFORCEMENT"
+  ],
+  "notifiers": [],
+  "SORTName": "",
+  "SORTLifecycleStage": "",
+  "SORTEnforcement": true,
+  "policyVersion": "1.1",
+  "policySections": [
+    {
+      "sectionName": "Image Signature Verification",
+      "policyGroups": [
+        {
+          "fieldName": "Image Signature Verified By",
+          "booleanOperator": "OR",
+          "negate": false,
+          "values": [
+            {
+              "value": "GitHub Actions Cosign"
+            }
+          ]
+        },
+        {
+          "fieldName": "Image Remote",
+          "booleanOperator": "OR",
+          "negate": false,
+          "values": [
+            {
+              "value": "r/docker.io/lukaszbielinski/permission-binder-operator"
+            },
+            {
+              "value": "r/index.docker.io/lukaszbielinski/permission-binder-operator"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "mitreAttackVectors": [
+    {
+      "tactic": "TA0001",
+      "techniques": [
+        "T1190"
+      ]
+    }
+  ],
+  "criteriaLocked": false,
+  "mitreVectorsLocked": false,
+  "isDefault": false
+}
+
