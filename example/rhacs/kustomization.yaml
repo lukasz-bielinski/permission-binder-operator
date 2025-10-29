@@ -1,0 +1,41 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: rhacs-setup
+  annotations:
+    description: "RHACS deployment for Permission Binder Operator signature verification"
+
+namespace: stackrox
+
+resources:
+  # RHACS Operator installation
+  - 01-namespace.yaml
+  - 02-operator-group.yaml
+  - 03-subscription.yaml
+  
+  # RHACS Central deployment
+  - 04-central.yaml
+  
+  # RHACS Secured Cluster (Admission Controller)
+  - 05-secured-cluster.yaml
+  
+  # Configuration (for reference, apply manually or via scripts)
+  # - cosign-integration-config.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: rhacs
+      app.kubernetes.io/part-of: permission-binder-operator-security
+      app.kubernetes.io/managed-by: kustomize
+
+# Deployment order
+# 1. Apply operator: kustomize build . | oc apply -f -
+# 2. Wait for operator to be ready
+# 3. Apply Central
+# 4. Wait for Central to be ready (5-10 min)
+# 5. Apply SecuredCluster
+# 6. Configure Cosign integration via UI or scripts
+# 7. Apply policies via scripts
+

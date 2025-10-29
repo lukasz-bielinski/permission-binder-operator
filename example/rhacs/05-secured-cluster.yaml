@@ -1,0 +1,111 @@
+---
+apiVersion: platform.stackrox.io/v1alpha1
+kind: SecuredCluster
+metadata:
+  name: stackrox-secured-cluster-services
+  namespace: stackrox
+  labels:
+    app.kubernetes.io/name: secured-cluster
+    app.kubernetes.io/part-of: rhacs
+spec:
+  # Cluster name (will appear in RHACS UI)
+  clusterName: production-cluster
+  
+  # Central endpoint (automatically discovered from Central service)
+  centralEndpoint: central.stackrox.svc:443
+  
+  # Admission control webhook configuration
+  admissionControl:
+    # Enable admission controller
+    listenOnCreates: true
+    listenOnUpdates: true
+    listenOnEvents: true
+    
+    # Timeout for admission decisions (in seconds)
+    timeoutSeconds: 20
+    
+    # Contact central even when cached policy data is available
+    contactImageScanners: ScanIfMissing
+    
+    # Bypass admission control for these namespaces
+    bypass:
+      scope:
+        namespaces:
+        - kube-system
+        - kube-public
+        - stackrox
+        - rhacs-operator
+        - openshift-*
+    
+    # Admission controller resources
+    resources:
+      requests:
+        memory: "100Mi"
+        cpu: "50m"
+      limits:
+        memory: "500Mi"
+        cpu: "500m"
+    
+    # Replicas for HA
+    replicas: 3
+  
+  # Sensor configuration (collects data from cluster)
+  sensor:
+    resources:
+      requests:
+        memory: "500Mi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+  
+  # Per-node collector (runtime data)
+  perNode:
+    collector:
+      collection: KernelModule  # or EBPF for newer kernels
+      
+      resources:
+        requests:
+          memory: "320Mi"
+          cpu: "50m"
+        limits:
+          memory: "1Gi"
+          cpu: "750m"
+    
+    # Node tainting for collector (optional)
+    taintToleration: TolerateTaints
+  
+  # Scanner configuration (local scanner on cluster)
+  scanner:
+    analyzer:
+      scaling:
+        autoScaling: Enabled
+        maxReplicas: 5
+        minReplicas: 2
+        replicas: 3
+      
+      resources:
+        requests:
+          memory: "2500Mi"
+          cpu: "1000m"
+        limits:
+          memory: "4Gi"
+          cpu: "2000m"
+    
+    scannerComponent: AutoSense
+  
+  # Monitoring
+  monitoring:
+    openshift:
+      enabled: true
+  
+  # TLS configuration
+  tls:
+    additionalCAs:
+    - name: custom-ca
+      content: ""  # Add custom CA if needed
+  
+  # Audit logs
+  auditLogs:
+    collection: Auto
+

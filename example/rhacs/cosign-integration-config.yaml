@@ -1,0 +1,65 @@
+---
+# Cosign Integration Configuration for RHACS
+# This file documents the configuration to be applied via RHACS UI or API
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cosign-integration-config
+  namespace: stackrox
+  annotations:
+    description: "Configuration for Cosign signature integration - Apply via RHACS UI or API"
+data:
+  integration-name: "GitHub Actions Cosign"
+  
+  integration-type: "cosign"
+  
+  # Keyless signing configuration (GitHub Actions)
+  cosign-config: |
+    {
+      "cosignCertificates": [
+        {
+          "certificateOidcIssuer": "https://token.actions.githubusercontent.com",
+          "certificateIdentity": "https://github.com/lukasz-bielinski/permission-binder-operator/.github/workflows/docker-build-push.yml@refs/tags/v1.4.0"
+        }
+      ],
+      "cosignCertificateChainValidation": {
+        "certificateChainJsonPathExpression": ".[]"
+      }
+    }
+  
+  # Alternative: Certificate Identity with regex (more flexible)
+  cosign-config-regex: |
+    {
+      "cosignCertificates": [
+        {
+          "certificateOidcIssuer": "https://token.actions.githubusercontent.com",
+          "certificateIdentityRegex": "^https://github\\.com/lukasz-bielinski/permission-binder-operator/.*"
+        }
+      ]
+    }
+  
+  # Rekor (transparency log) configuration
+  rekor-url: "https://rekor.sigstore.dev"
+  
+  # Notes for manual configuration via UI:
+  notes: |
+    To configure this integration in RHACS UI:
+    
+    1. Login to RHACS Central: https://<central-route>
+    2. Navigate to: Platform Configuration → Integrations
+    3. Click: Signature Integrations → New Integration
+    4. Select: Cosign
+    5. Configure:
+       - Integration Name: GitHub Actions Cosign
+       - Public Key: (leave empty for keyless)
+       - Certificate OIDC Issuer: https://token.actions.githubusercontent.com
+       - Certificate Identity (regex): ^https://github\.com/lukasz-bielinski/permission-binder-operator/.*
+       - Rekor Public Key: (use default)
+    6. Click: Test (should show success)
+    7. Click: Save
+    
+    To verify the integration works:
+    - Test image: docker.io/lukaszbielinski/permission-binder-operator:1.4.0
+    - Should show "Signature Verified" in image details
+
