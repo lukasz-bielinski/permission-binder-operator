@@ -488,20 +488,32 @@ spec:
         # Production: use specific version (v1.2.1)
         # Development: use latest
         image: lukaszbielinski/permission-binder-operator:1.5.0-rc1
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
+        startupProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 1
+          periodSeconds: 1
+          timeoutSeconds: 1
+          failureThreshold: 10
         livenessProbe:
           httpGet:
             path: /healthz
             port: 8081
-          initialDelaySeconds: 15
-          periodSeconds: 20
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 3
         name: manager
         readinessProbe:
           httpGet:
             path: /readyz
             port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          initialDelaySeconds: 0
+          periodSeconds: 2
+          timeoutSeconds: 1
+          failureThreshold: 3
         resources:
           limits:
             cpu: 1000m
