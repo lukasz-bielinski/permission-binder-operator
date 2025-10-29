@@ -243,6 +243,13 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
+	// Re-fetch PermissionBinder to ensure we have the latest excludeList
+	// This prevents race conditions when excludeList and ConfigMap are updated concurrently
+	if err := r.Get(ctx, req.NamespacedName, &permissionBinder); err != nil {
+		logger.Error(err, "Failed to re-fetch PermissionBinder")
+		return ctrl.Result{}, err
+	}
+
 	// Fetch the ConfigMap
 	var configMap corev1.ConfigMap
 	configMapKey := types.NamespacedName{
