@@ -47,3 +47,6 @@ CONVERSATION_SUMMARY.md
 PROJECT_STATUS.md
 QUICK_START.md
 .session-state-*.md
+
+# Temporary directory
+temp/
