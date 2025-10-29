@@ -788,26 +788,11 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 		return fmt.Errorf("failed to get managed role bindings: %w", err)
 	}
 
-	// Check each namespace for missing role bindings
-	for _, namespace := range managedNamespaces {
-		for role := range permissionBinder.Spec.RoleMapping {
-			roleBindingName := fmt.Sprintf("%s-%s", namespace, role)
-
-			// Check if role binding exists
-			var existing rbacv1.RoleBinding
-			err := r.Get(ctx, types.NamespacedName{Name: roleBindingName, Namespace: namespace}, &existing)
-			if err != nil {
-				if errors.IsNotFound(err) {
-					// Role binding doesn't exist, create it
-					// It will be recreated on next reconciliation from ConfigMap data
-					logger.Info("RoleBinding missing - will be recreated on next reconciliation",
-						"namespace", namespace, "role", role)
-				} else {
-					logger.Error(err, "Failed to check RoleBinding", "namespace", namespace, "role", role)
-				}
-			}
-		}
-	}
+	// Note: We intentionally do NOT check for missing RoleBindings here
+	// RoleBindings are created by processConfigMap() which respects excludeList
+	// Missing RoleBindings could be intentional (excluded CNs) or will be recreated
+	// on next ConfigMap reconciliation
+	logger.V(1).Info("Managed namespaces found", "count", len(managedNamespaces))
 
 	// Remove role bindings for roles that no longer exist in mapping
 	for _, roleBinding := range managedRoleBindings {
