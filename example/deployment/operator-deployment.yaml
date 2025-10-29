@@ -516,7 +516,7 @@ spec:
         # Available tags: v1.2.1, v1.1.0, v1.0.0, latest
         # Production: use specific version (v1.2.1)
         # Development: use latest
-        image: lukaszbielinski/permission-binder-operator:1.5.0
+        image: lukaszbielinski/permission-binder-operator:latest
         imagePullPolicy: IfNotPresent
         startupProbe:
           httpGet:
