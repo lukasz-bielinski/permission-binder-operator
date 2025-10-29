@@ -37,6 +37,11 @@ spec:
     # High availability (optional)
     # replicas: 3
     
+    # Default admin user configuration
+    # Initial setup uses admin user, then configure OIDC
+    defaultTLSSecret:
+      name: central-default-tls-cert
+  
   # Egress/Internet connectivity
   egress:
     connectivityPolicy: Online

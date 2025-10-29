@@ -1,0 +1,86 @@
+---
+# OpenShift OAuth Integration for RHACS Central
+# This configuration enables SSO via OpenShift OAuth server
+
+# Note: This file documents the OAuth configuration.
+# OAuth integration must be configured via RHACS UI after Central deployment.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rhacs-openshift-oauth-config
+  namespace: rhacs-operator
+  annotations:
+    description: "OpenShift OAuth configuration for RHACS - Apply via RHACS UI"
+data:
+  # OAuth Configuration Steps
+  configuration-steps: |
+    1. Login to RHACS Central as admin
+    2. Navigate to: Platform Configuration → Access Control
+    3. Click: Auth Providers → Create Auth Provider
+    4. Select: OpenID Connect
+    5. Configure as shown below
+
+  # OpenShift OAuth Configuration
+  auth-provider-name: "OpenShift"
+  
+  # OpenShift OAuth endpoints (adjust for your cluster)
+  issuer: "https://oauth-openshift.apps.<cluster-domain>"
+  
+  # Client configuration
+  # Note: Client ID and Secret are created automatically by RHACS Operator
+  # when using the OAuthClient integration below
+  client-id: "rhacs-central"
+  
+  # Callback URL (automatically set by RHACS)
+  callback-url: "https://central-rhacs-operator.apps.<cluster-domain>/sso/providers/oidc/callback"
+  
+  # Token endpoint
+  token-endpoint: "https://oauth-openshift.apps.<cluster-domain>/oauth/token"
+  
+  # Authorization endpoint  
+  authorization-endpoint: "https://oauth-openshift.apps.<cluster-domain>/oauth/authorize"
+  
+  # OIDC scopes
+  scopes: "user:full"
+  
+  # User claim mappings
+  claim-mapping: |
+    User ID Path: sub
+    User Name Path: name
+    Preferred Username Path: preferred_username
+    Email Path: email
+    Groups Path: groups
+  
+  # Role mappings (map OpenShift groups to RHACS roles)
+  role-mapping: |
+    OpenShift Group -> RHACS Role:
+    - cluster-admins -> Admin
+    - rhacs-admins -> Admin
+    - developers -> Analyst
+    - viewers -> None (read-only)
+  
+  # Minimum access role
+  minimum-access-role: "None"
+  
+  # Example configuration
+  example-config: |
+    After creating Auth Provider:
+    1. Test with "Test Login" button
+    2. Set as default auth method (optional)
+    3. Disable admin password login (optional, after confirming OAuth works)
+
+---
+# OAuthClient for RHACS (automatically created by RHACS Operator)
+# This is created automatically when you configure OAuth in RHACS UI
+# Documented here for reference
+
+# apiVersion: oauth.openshift.io/v1
+# kind: OAuthClient
+# metadata:
+#   name: rhacs-central
+# grantMethod: auto
+# redirectURIs:
+# - https://central-rhacs-operator.apps.<cluster-domain>/sso/providers/oidc/callback
+# secret: <generated-by-rhacs>
+
