@@ -56,12 +56,12 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Docker image (amd64 only for speed)
+      - name: Build and push Docker image
         id: build-push
         uses: docker/build-push-action@v5
         with:
           context: ./operator
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
