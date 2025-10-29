@@ -527,7 +527,7 @@ Common issues and solutions:
 
 ---
 
-## Test 31: ServiceAccount Creation
+### Test 31: ServiceAccount Creation
 
 **Objective**: Verify basic ServiceAccount creation and RoleBinding
 
@@ -574,7 +574,7 @@ kubectl get rolebinding -n test-namespace-001 | grep "sa-runtime"
 
 ---
 
-## Test 32: ServiceAccount Naming Pattern
+### Test 32: ServiceAccount Naming Pattern
 
 **Objective**: Verify custom naming pattern works correctly
 
@@ -615,7 +615,7 @@ kubectl get sa -n test-namespace-001 sa-test-namespace-001-deploy
 
 ---
 
-## Test 33: ServiceAccount Idempotency
+### Test 33: ServiceAccount Idempotency
 
 **Objective**: Verify ServiceAccount creation is idempotent
 
@@ -646,7 +646,7 @@ fi
 
 ---
 
-## Test 34: ServiceAccount Status Tracking
+### Test 34: ServiceAccount Status Tracking
 
 **Objective**: Verify processed ServiceAccounts tracked in status
 

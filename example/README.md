@@ -9,13 +9,26 @@ example/
 ├── crd/                                    # Custom Resource Definitions
 │   └── permission.permission-binder.io_permissionbinders.yaml
 ├── deployment/                             # Operator deployment
-│   └── operator-deployment.yaml
+│   ├── operator-deployment.yaml
+│   └── servicemonitor.yaml                 # Prometheus metrics
+├── monitoring/                             # Monitoring configuration
+│   ├── servicemonitor.yaml                 # Prometheus ServiceMonitor
+│   └── ...
 ├── configmap/                              # Example ConfigMap
 │   └── permission-config.yaml
 ├── permissionbinder/                       # Example PermissionBinder CR
 │   └── permissionbinder-example.yaml
+├── examples/                               # Feature examples
+│   ├── permissionbinder-with-service-accounts.yaml
+│   ├── permissionbinder-with-ldap.yaml
+│   └── ci-cd-integration-example.yaml
+├── tests/                                  # E2E test suite
+│   ├── run-all-individually.sh
+│   ├── test-runner.sh
+│   └── README.md
 ├── kustomization.yaml                      # Kustomize manifest
 ├── argocd-application.yaml                 # ArgoCD Application
+├── e2e-test-scenarios.md                   # Test documentation (35 scenarios)
 └── README.md                               # This file
 ```
 
