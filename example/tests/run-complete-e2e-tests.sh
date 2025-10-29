@@ -1,6 +1,6 @@
 #!/bin/bash
 # Complete E2E Test Suite for Permission Binder Operator
-# Production-Grade - Tests 1-30 in correct order matching documentation
+# Production-Grade - Tests 1-34 in correct order matching documentation
 
 export KUBECONFIG=$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)
 NAMESPACE="permissions-binder-operator"
@@ -10,7 +10,7 @@ echo "🧪 Permission Binder Operator - Complete E2E Test Suite"
 echo "========================================================"
 echo "Started: $(date)"
 echo "Results will be saved to: $TEST_RESULTS"
-echo "Tests 1-30 in order matching e2e-test-scenarios.md"
+echo "Tests 1-34 in order matching e2e-test-scenarios.md"
 echo ""
 
 # Helper functions
@@ -1083,11 +1083,160 @@ else
 fi
 
 # ============================================================================
+# Test 31: ServiceAccount Creation
+# ============================================================================
+echo "Test 31: ServiceAccount Creation"
+echo "----------------------------------"
+
+# Create PermissionBinder with SA mapping
+cat <<EOF | kubectl_retry kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-basic
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: edit
+    runtime: view
+EOF
+
+sleep 10
+
+# Check if test-namespace-001 exists and has SA
+if kubectl_retry kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    SA_DEPLOY=$(kubectl_retry kubectl get sa -n test-namespace-001 2>/dev/null | grep -c "sa-deploy" || echo "0")
+    SA_RUNTIME=$(kubectl_retry kubectl get sa -n test-namespace-001 2>/dev/null | grep -c "sa-runtime" || echo "0")
+    
+    if [ "$SA_DEPLOY" -gt 0 ] && [ "$SA_RUNTIME" -gt 0 ]; then
+        pass_test "ServiceAccounts created (deploy and runtime)"
+        
+        # Check RoleBindings
+        RB_DEPLOY=$(kubectl_retry kubectl get rolebinding -n test-namespace-001 2>/dev/null | grep -c "sa-deploy" || echo "0")
+        RB_RUNTIME=$(kubectl_retry kubectl get rolebinding -n test-namespace-001 2>/dev/null | grep -c "sa-runtime" || echo "0")
+        
+        if [ "$RB_DEPLOY" -gt 0 ] && [ "$RB_RUNTIME" -gt 0 ]; then
+            pass_test "ServiceAccount RoleBindings created"
+        else
+            fail_test "ServiceAccount RoleBindings not created"
+        fi
+    else
+        fail_test "ServiceAccounts not created (deploy: $SA_DEPLOY, runtime: $SA_RUNTIME)"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping SA creation test"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 32: ServiceAccount Naming Pattern
+# ============================================================================
+echo "Test 32: ServiceAccount Naming Pattern"
+echo "----------------------------------------"
+
+# Create PermissionBinder with custom pattern
+cat <<EOF | kubectl_retry kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-pattern
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: edit
+  serviceAccountNamingPattern: "sa-{namespace}-{name}"
+EOF
+
+sleep 10
+
+# Check custom naming pattern
+if kubectl_retry kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    if kubectl_retry kubectl get sa sa-test-namespace-001-deploy -n test-namespace-001 >/dev/null 2>&1; then
+        pass_test "Custom naming pattern works (sa-{namespace}-{name})"
+    else
+        fail_test "Custom naming pattern not applied"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping pattern test"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 33: ServiceAccount Idempotency
+# ============================================================================
+echo "Test 33: ServiceAccount Idempotency"
+echo "-------------------------------------"
+
+# Record SA UID if it exists
+if kubectl_retry kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    if kubectl_retry kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 >/dev/null 2>&1; then
+        SA_UID=$(kubectl_retry kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+        
+        # Trigger reconciliation
+        kubectl_retry kubectl annotate configmap permission-config -n $NAMESPACE test-reconcile="$(date +%s)" --overwrite >/dev/null 2>&1
+        sleep 10
+        
+        # Check if UID changed
+        NEW_SA_UID=$(kubectl_retry kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+        
+        if [ "$SA_UID" == "$NEW_SA_UID" ]; then
+            pass_test "ServiceAccount not recreated (idempotent)"
+        else
+            fail_test "ServiceAccount was recreated (UID changed)"
+        fi
+    else
+        info_log "ServiceAccount test-namespace-001-sa-deploy not found for idempotency test"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping idempotency test"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 34: ServiceAccount Status Tracking
+# ============================================================================
+echo "Test 34: ServiceAccount Status Tracking"
+echo "-----------------------------------------"
+
+# Check status tracking
+SA_STATUS=$(kubectl_retry kubectl get permissionbinder test-sa-basic -n $NAMESPACE -o jsonpath='{.status.processedServiceAccounts}' 2>/dev/null)
+
+if [ ! -z "$SA_STATUS" ] && [ "$SA_STATUS" != "null" ]; then
+    SA_COUNT=$(echo "$SA_STATUS" | jq '. | length' 2>/dev/null || echo "0")
+    info_log "Processed ServiceAccounts tracked: $SA_COUNT"
+    
+    if [ "$SA_COUNT" -gt 0 ]; then
+        pass_test "ServiceAccount status tracking works"
+    else
+        fail_test "ServiceAccount status empty"
+    fi
+else
+    info_log "ServiceAccount status field not populated (may need more time)"
+fi
+
+echo ""
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
 echo "=========================================================="
-echo "E2E Test Suite Summary - Tests 1-30 COMPLETED"
+echo "E2E Test Suite Summary - Tests 1-34 COMPLETED"
 echo "=========================================================="
 echo ""
 echo "Test Results:"
