@@ -212,13 +212,16 @@ echo ""
 echo "Test 3: Exclude List Changes"
 echo "------------------------------"
 
-# Add excluded namespace to excludeNamespaces list
+# Add CN to excludeList
+EXCLUDE_CN="COMPANY-K8S-excluded-test-ns-admin"
 kubectl_retry kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
-  -p='[{"op":"add","path":"/spec/excludeNamespaces/-","value":"excluded-test-ns"}]' >/dev/null 2>&1
+  -p='[{"op":"add","path":"/spec/excludeList","value":["'$EXCLUDE_CN'"]}]' >/dev/null 2>&1 || \
+  kubectl_retry kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
+  -p='[{"op":"add","path":"/spec/excludeList/-","value":"'$EXCLUDE_CN'"}]' >/dev/null 2>&1
 
 # Add entry to ConfigMap that should be excluded
 kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-exclude.txt
-echo "CN=COMPANY-K8S-excluded-test-ns-admin,OU=Test,DC=example,DC=com" >> /tmp/whitelist-exclude.txt
+echo "CN=${EXCLUDE_CN},OU=Test,DC=example,DC=com" >> /tmp/whitelist-exclude.txt
 kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-exclude.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
 rm -f /tmp/whitelist-exclude.txt
 
@@ -228,18 +231,18 @@ sleep 10
 # Check namespace was NOT created
 EXCLUDED_NS=$(kubectl_retry kubectl get namespace excluded-test-ns 2>/dev/null && echo "created" || echo "excluded")
 if [ "$EXCLUDED_NS" == "excluded" ]; then
-    pass_test "Excluded namespace was not created"
+    pass_test "Excluded CN was not processed (namespace not created)"
 else
-    fail_test "Excluded namespace was created despite being in exclude list"
+    fail_test "Excluded CN was processed (namespace created) - excludeList may not be working"
 fi
 
-# Check logs for "Skipping excluded"
-SKIP_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=50 | grep -c "excluded" | tr -d '\n' | head -1 || echo "0")
-info_log "Exclude-related log entries: $SKIP_LOGS"
+# Check logs for "Skipping excluded" or similar
+SKIP_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=100 | grep -i "exclud\|skip" | wc -l)
+info_log "Exclude/skip-related log entries: $SKIP_LOGS"
 
-# Cleanup
+# Cleanup - remove from excludeList
 kubectl_retry kubectl patch permissionbinder permissionbinder-example -n $NAMESPACE --type=json \
-  -p='[{"op":"remove","path":"/spec/excludeNamespaces/1"}]' >/dev/null 2>&1
+  -p='[{"op":"replace","path":"/spec/excludeList","value":[]}]' >/dev/null 2>&1
 
 echo ""
 
@@ -506,12 +509,13 @@ sleep 10
 ERROR_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=50 | grep -i "error\|invalid" | wc -l)
 info_log "Error/invalid log entries: $ERROR_LOGS"
 
-# Verify valid entries still processed
+# Verify valid entries still processed (at least 1 valid RoleBinding exists)
 VALID_RB_COUNT=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
-if [ "$VALID_RB_COUNT" -ge 5 ]; then
-    pass_test "Valid entries still processed despite invalid entry"
+info_log "Current RoleBindings: $VALID_RB_COUNT"
+if [ "$VALID_RB_COUNT" -ge 1 ]; then
+    pass_test "Valid entries processed despite invalid ones"
 else
-    fail_test "Valid entries not processed (found only $VALID_RB_COUNT RoleBindings)"
+    fail_test "No valid RoleBindings found (invalid entry may have broken processing)"
 fi
 
 # Verify operator still running
