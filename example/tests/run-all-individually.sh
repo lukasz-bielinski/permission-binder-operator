@@ -70,7 +70,25 @@ for test_id in "${AVAILABLE_TESTS[@]}"; do
     cd $SCRIPT_DIR/..
     kubectl apply -f deployment/ >/dev/null 2>&1
     kubectl wait --for=condition=available --timeout=60s deployment/operator-controller-manager -n permissions-binder-operator >/dev/null 2>&1
-    echo "✅ Operator ready" | tee -a $RESULTS_LOG
+    
+    # 2.1 VERIFY POD IS RUNNING (not ImagePullBackOff)
+    POD_STATUS=$(kubectl get pods -n permissions-binder-operator -l control-plane=controller-manager -o jsonpath='{.items[0].status.phase}' 2>/dev/null)
+    POD_NAME=$(kubectl get pods -n permissions-binder-operator -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    
+    if [ "$POD_STATUS" != "Running" ]; then
+        echo "❌ ERROR: Operator pod is NOT running!" | tee -a $RESULTS_LOG
+        echo "   Pod: $POD_NAME" | tee -a $RESULTS_LOG
+        echo "   Status: $POD_STATUS" | tee -a $RESULTS_LOG
+        echo "" | tee -a $RESULTS_LOG
+        echo "   Checking for image pull issues..." | tee -a $RESULTS_LOG
+        kubectl describe pod -n permissions-binder-operator -l control-plane=controller-manager | grep -A 5 "Events:" | tee -a $RESULTS_LOG
+        echo "" | tee -a $RESULTS_LOG
+        failed=$((failed + 1))
+        results[$test_id]="FAIL"
+        continue
+    fi
+    
+    echo "✅ Operator ready (pod: $POD_NAME, status: $POD_STATUS)" | tee -a $RESULTS_LOG
     echo "" | tee -a $RESULTS_LOG
     
     # Run single test
