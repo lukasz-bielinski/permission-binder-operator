@@ -1,7 +1,7 @@
 # E2E Test Scenarios for Permission Binder Operator
 
 ## Test Suite Overview
-This document contains **31 comprehensive end-to-end test scenarios** (Pre-Test + Tests 1-30) for the Permission Binder Operator to ensure it behaves correctly in all situations.
+This document contains **35 comprehensive end-to-end test scenarios** (Pre-Test + Tests 1-34) for the Permission Binder Operator to ensure it behaves correctly in all situations.
 
 ## Prerequisites
 - K3s cluster with mixed architectures (ARM64 and AMD64)
@@ -524,3 +524,147 @@ Common issues and solutions:
    - Check ServiceAccount RBAC permissions
    - Verify ClusterRoleBinding for operator
    - Check logs for specific permission errors
+
+---
+
+### Test 31: ServiceAccount Creation
+
+**Objective**: Verify basic ServiceAccount creation and RoleBinding
+
+**Setup**:
+```bash
+# Create PermissionBinder with SA mapping
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-basic
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: edit
+    runtime: view
+EOF
+```
+
+**Execution**:
+```bash
+# Wait for reconciliation
+sleep 5
+
+# Verify ServiceAccounts created
+kubectl get sa -n test-namespace-001 | grep "sa-deploy"
+kubectl get sa -n test-namespace-001 | grep "sa-runtime"
+
+# Verify RoleBindings created
+kubectl get rolebinding -n test-namespace-001 | grep "sa-deploy"
+kubectl get rolebinding -n test-namespace-001 | grep "sa-runtime"
+```
+
+**Expected Result**:
+- ServiceAccounts `test-namespace-001-sa-deploy` and `test-namespace-001-sa-runtime` exist
+- RoleBindings created for both ServiceAccounts
+- deploy SA has edit role, runtime SA has view role
+
+---
+
+### Test 32: ServiceAccount Naming Pattern
+
+**Objective**: Verify custom naming pattern works correctly
+
+**Setup**:
+```bash
+# Create PermissionBinder with custom pattern
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-pattern
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: edit
+  serviceAccountNamingPattern: "sa-{namespace}-{name}"
+EOF
+```
+
+**Execution**:
+```bash
+# Wait for reconciliation
+sleep 5
+
+# Verify SA with custom pattern
+kubectl get sa -n test-namespace-001 sa-test-namespace-001-deploy
+```
+
+**Expected Result**:
+- ServiceAccount named `sa-test-namespace-001-deploy` exists
+- Pattern `sa-{namespace}-{name}` correctly applied
+
+---
+
+### Test 33: ServiceAccount Idempotency
+
+**Objective**: Verify ServiceAccount creation is idempotent
+
+**Execution**:
+```bash
+# Record current ServiceAccount UID
+SA_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+
+# Trigger reconciliation by updating ConfigMap
+kubectl annotate configmap permission-config -n permissions-binder-operator test-reconcile="$(date +%s)" --overwrite
+
+# Wait for reconciliation
+sleep 5
+
+# Verify SA UID unchanged (not recreated)
+NEW_SA_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+
+if [ "$SA_UID" == "$NEW_SA_UID" ]; then
+  echo "PASS: ServiceAccount not recreated (idempotent)"
+else
+  echo "FAIL: ServiceAccount was recreated"
+fi
+```
+
+**Expected Result**:
+- ServiceAccount UID unchanged
+- No unnecessary recreation
+
+---
+
+### Test 34: ServiceAccount Status Tracking
+
+**Objective**: Verify processed ServiceAccounts tracked in status
+
+**Execution**:
+```bash
+# Check PermissionBinder status
+kubectl get permissionbinder test-sa-basic -n permissions-binder-operator -o jsonpath='{.status.processedServiceAccounts}' | jq .
+
+# Verify ServiceAccounts listed
+SA_COUNT=$(kubectl get permissionbinder test-sa-basic -n permissions-binder-operator -o jsonpath='{.status.processedServiceAccounts}' | jq '. | length')
+
+echo "Processed ServiceAccounts: $SA_COUNT"
+```
+
+**Expected Result**:
+- Status contains list of processed ServiceAccounts
+- Format: `namespace/sa-name`
+- Example: `["test-namespace-001/test-namespace-001-sa-deploy", "test-namespace-001/test-namespace-001-sa-runtime"]`
+
+---
+

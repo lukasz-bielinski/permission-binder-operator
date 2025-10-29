@@ -1,0 +1,187 @@
+---
+# Complete example: CI/CD Integration with ServiceAccounts
+# This shows how to use permission-binder-operator for automated CI/CD deployments
+
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: cicd-integration-example
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  
+  prefixes:
+    - "COMPANY-K8S"
+  
+  # Role mapping for human users (LDAP groups)
+  roleMapping:
+    admin: cluster-admin      # Full cluster admin
+    developer: edit           # Can deploy, edit resources
+    viewer: view              # Read-only access
+  
+  # ServiceAccount mapping for automation/CI-CD
+  serviceAccountMapping:
+    deploy: edit              # Bamboo/Jenkins deployment SA
+    runtime: view             # Application pod SA
+  
+  serviceAccountNamingPattern: "{namespace}-sa-{name}"
+
+---
+# ConfigMap with whitelist (example)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: permission-config
+  namespace: permissions-binder-operator
+data:
+  whitelist.txt: |
+    # My Application namespace
+    CN=COMPANY-K8S-my-app-developer,OU=Groups,DC=company,DC=com
+    CN=COMPANY-K8S-my-app-admin,OU=Groups,DC=company,DC=com
+
+---
+# After operator processes the above, you'll have:
+#
+# Namespace: my-app
+#   - RoleBinding: my-app-developer (for LDAP group)
+#   - RoleBinding: my-app-admin (for LDAP group)
+#   - ServiceAccount: my-app-sa-deploy (for CI/CD)
+#   - RoleBinding: my-app-sa-deploy-edit (SA → edit role)
+#   - ServiceAccount: my-app-sa-runtime (for app pods)
+#   - RoleBinding: my-app-sa-runtime-view (SA → view role)
+
+---
+# Usage Example 1: Bamboo Deployment Script
+# 
+# #!/bin/bash
+# # Bamboo deployment script using ServiceAccount
+# 
+# NAMESPACE="my-app"
+# SA_NAME="${NAMESPACE}-sa-deploy"
+# 
+# # Get ServiceAccount token
+# echo "Getting token for ServiceAccount: $SA_NAME"
+# TOKEN=$(oc sa get-token $SA_NAME -n $NAMESPACE)
+# 
+# # Login using ServiceAccount
+# oc login --token=$TOKEN --server=https://api.cluster.example.com:6443
+# 
+# # Deploy application
+# echo "Deploying application to $NAMESPACE"
+# oc apply -f deployment.yaml -n $NAMESPACE
+# oc rollout status deployment/my-app -n $NAMESPACE
+# 
+# echo "Deployment complete!"
+
+---
+# Usage Example 2: GitLab CI/CD Pipeline
+#
+# .gitlab-ci.yml:
+# 
+# deploy:
+#   stage: deploy
+#   image: quay.io/openshift/origin-cli:latest
+#   script:
+#     - export NAMESPACE="my-app"
+#     - export SA_TOKEN=$(oc sa get-token ${NAMESPACE}-sa-deploy -n ${NAMESPACE})
+#     - oc login --token=${SA_TOKEN} --server=${OPENSHIFT_SERVER}
+#     - oc apply -f deployment.yaml -n ${NAMESPACE}
+#   only:
+#     - main
+#   environment:
+#     name: production
+#     kubernetes:
+#       namespace: my-app
+
+---
+# Usage Example 3: Application Pod using runtime SA
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-application
+  namespace: my-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-application
+  template:
+    metadata:
+      labels:
+        app: my-application
+    spec:
+      # Use runtime ServiceAccount (created by operator)
+      serviceAccountName: my-app-sa-runtime
+      
+      containers:
+      - name: app
+        image: my-app:latest
+        ports:
+        - containerPort: 8080
+        
+        # Application can now read (view) resources in namespace
+        # Example: List pods, read ConfigMaps, etc.
+        # But CANNOT modify (no edit permissions)
+
+---
+# Usage Example 4: Jenkins Pipeline
+#
+# Jenkinsfile:
+#
+# pipeline {
+#     agent any
+#     
+#     environment {
+#         NAMESPACE = 'my-app'
+#         SA_NAME = "${NAMESPACE}-sa-deploy"
+#         OPENSHIFT_SERVER = 'https://api.cluster.example.com:6443'
+#     }
+#     
+#     stages {
+#         stage('Deploy') {
+#             steps {
+#                 script {
+#                     // Get ServiceAccount token
+#                     def token = sh(
+#                         script: "oc sa get-token ${SA_NAME} -n ${NAMESPACE}",
+#                         returnStdout: true
+#                     ).trim()
+#                     
+#                     // Login and deploy
+#                     sh """
+#                         oc login --token=${token} --server=${OPENSHIFT_SERVER}
+#                         oc apply -f deployment.yaml -n ${NAMESPACE}
+#                         oc rollout status deployment/my-app -n ${NAMESPACE}
+#                     """
+#                 }
+#             }
+#         }
+#     }
+# }
+
+---
+# Security Best Practices:
+#
+# 1. Separate ServiceAccounts for different purposes:
+#    - deploy: For CI/CD pipelines (edit permissions)
+#    - runtime: For application pods (view permissions)
+#    - backup: For backup jobs (custom backup-operator role)
+#
+# 2. Use least privilege:
+#    - runtime SA: Only 'view' role (read-only)
+#    - deploy SA: Only 'edit' role (no cluster-wide access)
+#    - Never use cluster-admin for ServiceAccounts unless absolutely necessary
+#
+# 3. Token rotation:
+#    - OpenShift automatically rotates ServiceAccount tokens
+#    - Fetch fresh token for each CI/CD run (don't cache long-term)
+#
+# 4. Audit logs:
+#    - All ServiceAccount actions are logged
+#    - ServiceAccount names clearly identify source ({namespace}-sa-{type})
+#
+# 5. Namespace isolation:
+#    - Each namespace gets its own ServiceAccounts
+#    - No cross-namespace access by default
+

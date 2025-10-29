@@ -34,6 +34,18 @@ type LdapSecretReference struct {
 	Namespace string `json:"namespace"`
 }
 
+// ServiceAccountRoleRef defines the role reference for a ServiceAccount
+type ServiceAccountRoleRef struct {
+	// Kind of the role (ClusterRole or Role)
+	// +kubebuilder:validation:Enum=ClusterRole;Role
+	// +kubebuilder:default=ClusterRole
+	Kind string `json:"kind,omitempty"`
+
+	// Name of the ClusterRole or Role
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+}
+
 // PermissionBinderSpec defines the desired state of PermissionBinder
 type PermissionBinderSpec struct {
 	// RoleMapping defines mapping of role names to existing ClusterRoles
@@ -73,12 +85,34 @@ type PermissionBinderSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default=true
 	LdapTlsVerify *bool `json:"ldapTlsVerify,omitempty"`
+
+	// ServiceAccountMapping defines mapping of service account names to roles
+	// Creates ServiceAccounts with pattern defined by serviceAccountNamingPattern
+	// Example: "deploy: edit" creates SA with ClusterRole "edit"
+	// Default pattern: {namespace}-sa-{name}
+	// +kubebuilder:validation:Optional
+	ServiceAccountMapping map[string]string `json:"serviceAccountMapping,omitempty"`
+
+	// ServiceAccountNamingPattern defines the naming pattern for ServiceAccounts
+	// Available variables: {namespace}, {name}
+	// Default: {namespace}-sa-{name}
+	// Examples:
+	//   - {namespace}-sa-{name}      -> my-app-sa-deploy
+	//   - sa-{namespace}-{name}      -> sa-my-app-deploy
+	//   - {name}-{namespace}         -> deploy-my-app
+	//   - {namespace}-{name}         -> my-app-deploy
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="{namespace}-sa-{name}"
+	ServiceAccountNamingPattern string `json:"serviceAccountNamingPattern,omitempty"`
 }
 
 // PermissionBinderStatus defines the observed state of PermissionBinder
 type PermissionBinderStatus struct {
 	// ProcessedRoleBindings contains the list of successfully created RoleBindings
 	ProcessedRoleBindings []string `json:"processedRoleBindings,omitempty"`
+
+	// ProcessedServiceAccounts contains the list of successfully created ServiceAccounts
+	ProcessedServiceAccounts []string `json:"processedServiceAccounts,omitempty"`
 
 	// LastProcessedConfigMapVersion tracks the last processed ConfigMap version
 	LastProcessedConfigMapVersion string `json:"lastProcessedConfigMapVersion,omitempty"`

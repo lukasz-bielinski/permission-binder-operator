@@ -76,24 +76,26 @@ fi
 sleep 5
 
 echo ""
-echo "Step 8: Clean up managed namespaces (optional - preserve by default)"
+echo "Step 8: Clean up test namespaces (auto-cleanup for E2E tests)"
 echo "----------------------------------------------------------------------"
-read -p "Delete managed namespaces (project*, tenant*, staging*, test-*)? [y/N]: " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    kubectl get ns | grep -E "(project|tenant|staging|test-)" | awk '{print $1}' | while read ns; do
-        echo "Deleting namespace: $ns"
-        kubectl delete namespace "$ns" --timeout=30s 2>/dev/null || true
-    done
-    
-    # Force delete if stuck
-    sleep 5
-    kubectl get ns | grep -E "(project|tenant|staging|test-)" | grep Terminating | awk '{print $1}' | while read ns; do
-        echo "Force deleting stuck namespace: $ns"
-        kubectl delete namespace "$ns" --force --grace-period=0 2>/dev/null || true
-    done
+# Auto-delete test namespaces without prompt for E2E test isolation
+kubectl get ns 2>/dev/null | grep -E "(project|tenant|staging|test-|excluded-)" | awk '{print $1}' | while read ns; do
+    echo "Deleting test namespace: $ns"
+    kubectl delete namespace "$ns" --timeout=30s 2>/dev/null || true
+done
+
+# Force delete if stuck
+sleep 3
+kubectl get ns 2>/dev/null | grep -E "(project|tenant|staging|test-|excluded-)" | grep Terminating | awk '{print $1}' | while read ns; do
+    echo "Force deleting stuck namespace: $ns"
+    kubectl delete namespace "$ns" --force --grace-period=0 2>/dev/null || true
+done
+
+DELETED_COUNT=$(kubectl get ns 2>/dev/null | grep -E "(project|tenant|staging|test-|excluded-)" | wc -l)
+if [ "$DELETED_COUNT" -eq 0 ]; then
+    echo "✅ All test namespaces cleaned"
 else
-    echo "Skipping managed namespaces cleanup"
+    echo "⚠️  Some test namespaces still exist: $DELETED_COUNT"
 fi
 
 echo ""
