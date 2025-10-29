@@ -92,6 +92,15 @@ spec:
                 description: RoleMapping defines mapping of role names to existing
                   ClusterRoles
                 type: object
+              serviceAccountMapping:
+                additionalProperties:
+                  type: string
+                description: |-
+                  ServiceAccountMapping defines mapping of service account names to roles
+                  Creates ServiceAccounts with pattern: {namespace}-sa-{key}
+                  Example: "deploy: edit" creates "my-ns-sa-deploy" with ClusterRole "edit"
+                  Supports both simple string (ClusterRole name) and complex object (with kind)
+                type: object
             required:
             - configMapName
             - configMapNamespace
@@ -166,6 +175,12 @@ spec:
               processedRoleBindings:
                 description: ProcessedRoleBindings contains the list of successfully
                   created RoleBindings
+                items:
+                  type: string
+                type: array
+              processedServiceAccounts:
+                description: ProcessedServiceAccounts contains the list of successfully
+                  created ServiceAccounts
                 items:
                   type: string
                 type: array
