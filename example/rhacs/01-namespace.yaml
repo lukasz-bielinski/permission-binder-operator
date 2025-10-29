@@ -6,16 +6,6 @@ metadata:
   labels:
     openshift.io/cluster-monitoring: "true"
   annotations:
-    openshift.io/description: "Red Hat Advanced Cluster Security Operator"
-    openshift.io/display-name: "RHACS Operator"
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: stackrox
-  labels:
-    openshift.io/cluster-monitoring: "true"
-  annotations:
-    openshift.io/description: "Red Hat Advanced Cluster Security Services"
-    openshift.io/display-name: "RHACS Services"
+    openshift.io/description: "Red Hat Advanced Cluster Security for Kubernetes"
+    openshift.io/display-name: "RHACS"
 

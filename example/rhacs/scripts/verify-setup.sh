@@ -55,27 +55,27 @@ echo "════════════════════════�
 echo "2. Checking RHACS Central"
 echo "════════════════════════════════════════════════════════════════════════════"
 
-if oc get central stackrox-central-services -n stackrox &>/dev/null; then
+if oc get central rhacs-operator-central-services -n rhacs-operator &>/dev/null; then
     echo "✅ Central resource exists"
     
-    CENTRAL_STATUS=$(oc get central stackrox-central-services -n stackrox -o jsonpath='{.status.conditions[?(@.type=="Deployed")].status}' 2>/dev/null || echo "Unknown")
+    CENTRAL_STATUS=$(oc get central rhacs-operator-central-services -n rhacs-operator -o jsonpath='{.status.conditions[?(@.type=="Deployed")].status}' 2>/dev/null || echo "Unknown")
     echo "   📊 Deployed status: $CENTRAL_STATUS"
     
-    if oc get deployment central -n stackrox &>/dev/null; then
-        CENTRAL_READY=$(oc get deployment central -n stackrox -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-        CENTRAL_DESIRED=$(oc get deployment central -n stackrox -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+    if oc get deployment central -n rhacs-operator &>/dev/null; then
+        CENTRAL_READY=$(oc get deployment central -n rhacs-operator -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+        CENTRAL_DESIRED=$(oc get deployment central -n rhacs-operator -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
         echo "   📊 Ready replicas: ${CENTRAL_READY}/${CENTRAL_DESIRED}"
         
         if [ "$CENTRAL_READY" == "$CENTRAL_DESIRED" ] && [ "$CENTRAL_READY" != "0" ]; then
             echo "   ✅ Central is ready"
             
             # Get route
-            RHACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}' 2>/dev/null)
+            RHACS_ROUTE=$(oc get route central -n rhacs-operator -o jsonpath='{.spec.host}' 2>/dev/null)
             if [ -n "$RHACS_ROUTE" ]; then
                 echo "   🌐 URL: https://${RHACS_ROUTE}"
                 
                 # Get admin password
-                RHACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+                RHACS_PASSWORD=$(oc get secret central-htpasswd -n rhacs-operator -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
                 if [ -n "$RHACS_PASSWORD" ]; then
                     echo "   🔑 Admin password: ${RHACS_PASSWORD}"
                 fi
@@ -95,17 +95,17 @@ echo "════════════════════════�
 echo "3. Checking SecuredCluster (Admission Controller)"
 echo "════════════════════════════════════════════════════════════════════════════"
 
-if oc get securedcluster stackrox-secured-cluster-services -n stackrox &>/dev/null; then
+if oc get securedcluster rhacs-operator-secured-cluster-services -n rhacs-operator &>/dev/null; then
     echo "✅ SecuredCluster resource exists"
     
-    if oc get deployment sensor -n stackrox &>/dev/null; then
-        SENSOR_READY=$(oc get deployment sensor -n stackrox -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    if oc get deployment sensor -n rhacs-operator &>/dev/null; then
+        SENSOR_READY=$(oc get deployment sensor -n rhacs-operator -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
         echo "   📊 Sensor ready replicas: ${SENSOR_READY}"
     fi
     
-    if oc get deployment admission-control -n stackrox &>/dev/null; then
-        AC_READY=$(oc get deployment admission-control -n stackrox -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-        AC_DESIRED=$(oc get deployment admission-control -n stackrox -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+    if oc get deployment admission-control -n rhacs-operator &>/dev/null; then
+        AC_READY=$(oc get deployment admission-control -n rhacs-operator -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+        AC_DESIRED=$(oc get deployment admission-control -n rhacs-operator -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
         echo "   📊 Admission Control ready replicas: ${AC_READY}/${AC_DESIRED}"
         
         if [ "$AC_READY" == "$AC_DESIRED" ] && [ "$AC_READY" != "0" ]; then
@@ -116,7 +116,7 @@ if oc get securedcluster stackrox-secured-cluster-services -n stackrox &>/dev/nu
     fi
     
     # Check ValidatingWebhookConfiguration
-    if oc get validatingwebhookconfigurations | grep -q stackrox; then
+    if oc get validatingwebhookconfigurations | grep -q rhacs-operator; then
         echo "   ✅ Admission webhook is registered"
     else
         echo "   ⚠️  Admission webhook not found"
@@ -131,8 +131,8 @@ echo "════════════════════════�
 echo "4. Checking Scanner"
 echo "════════════════════════════════════════════════════════════════════════════"
 
-if oc get deployment scanner -n stackrox &>/dev/null; then
-    SCANNER_READY=$(oc get deployment scanner -n stackrox -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+if oc get deployment scanner -n rhacs-operator &>/dev/null; then
+    SCANNER_READY=$(oc get deployment scanner -n rhacs-operator -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
     echo "   📊 Scanner ready replicas: ${SCANNER_READY}"
     
     if [ "$SCANNER_READY" != "0" ]; then

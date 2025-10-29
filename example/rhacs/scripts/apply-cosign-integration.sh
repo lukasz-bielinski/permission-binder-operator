@@ -26,11 +26,11 @@ fi
 
 # Get RHACS Central endpoint
 echo "📡 Discovering RHACS Central endpoint..."
-RHACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}' 2>/dev/null)
+RHACS_ROUTE=$(oc get route central -n rhacs-operator -o jsonpath='{.spec.host}' 2>/dev/null)
 
 if [ -z "$RHACS_ROUTE" ]; then
     echo "❌ RHACS Central route not found. Is RHACS installed?"
-    echo "Run: oc get route -n stackrox"
+    echo "Run: oc get route -n rhacs-operator"
     exit 1
 fi
 

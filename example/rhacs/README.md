@@ -18,7 +18,7 @@ This directory contains GitOps-ready configuration for deploying and configuring
 │  ┌────────────────┐         ┌──────────────────┐          │
 │  │   RHACS        │         │  Admission       │          │
 │  │   Central      │◄────────┤  Controller      │          │
-│  │   (stackrox)   │         │  (webhook)       │          │
+│  │   (rhacs-operator)   │         │  (webhook)       │          │
 │  └────────────────┘         └──────────────────┘          │
 │         │                            │                     │
 │         │                            │                     │
@@ -62,11 +62,11 @@ oc apply -f 04-central.yaml
 
 # Wait for Central to be ready (can take 5-10 minutes)
 oc wait --for=condition=Available --timeout=600s \
-  deployment/central -n stackrox
+  deployment/central -n rhacs-operator
 
 # Get Central route and admin password
-export RHACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
-export RHACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
+export RHACS_ROUTE=$(oc get route central -n rhacs-operator -o jsonpath='{.spec.host}')
+export RHACS_PASSWORD=$(oc get secret central-htpasswd -n rhacs-operator -o jsonpath='{.data.password}' | base64 -d)
 
 echo "RHACS Central URL: https://${RHACS_ROUTE}"
 echo "Admin password: ${RHACS_PASSWORD}"
@@ -79,9 +79,9 @@ oc apply -f 05-secured-cluster.yaml
 
 # Wait for sensor and admission controller
 oc wait --for=condition=Available --timeout=300s \
-  deployment/sensor -n stackrox
+  deployment/sensor -n rhacs-operator
 oc wait --for=condition=Available --timeout=300s \
-  deployment/admission-control -n stackrox
+  deployment/admission-control -n rhacs-operator
 ```
 
 ### 4. Configure Cosign Integration
@@ -215,13 +215,13 @@ After setup, you can monitor in RHACS UI:
 
 ```bash
 # Check admission controller logs
-oc logs deployment/admission-control -n stackrox
+oc logs deployment/admission-control -n rhacs-operator
 
 # Verify webhook is registered
-oc get validatingwebhookconfigurations | grep stackrox
+oc get validatingwebhookconfigurations | grep rhacs-operator
 
 # Check policy is enabled
-oc get configmap -n stackrox
+oc get configmap -n rhacs-operator
 ```
 
 ### Cosign Verification Failing
@@ -234,20 +234,20 @@ cosign verify \
   lukaszbielinski/permission-binder-operator:1.4.0
 
 # Check RHACS can reach Rekor
-oc exec -n stackrox deployment/central -- curl -I https://rekor.sigstore.dev
+oc exec -n rhacs-operator deployment/central -- curl -I https://rekor.sigstore.dev
 ```
 
 ### Central Not Starting
 
 ```bash
 # Check events
-oc get events -n stackrox --sort-by='.lastTimestamp'
+oc get events -n rhacs-operator --sort-by='.lastTimestamp'
 
 # Check persistent volume
-oc get pvc -n stackrox
+oc get pvc -n rhacs-operator
 
 # Check resources
-oc describe pod -l app=central -n stackrox
+oc describe pod -l app=central -n rhacs-operator
 ```
 
 ## Maintenance
@@ -268,19 +268,19 @@ oc patch installplan <install-plan-name> -n rhacs-operator \
 
 ```bash
 # Create backup
-oc exec -n stackrox deployment/central -- \
-  /stackrox/central backup --output-file /tmp/backup.zip
+oc exec -n rhacs-operator deployment/central -- \
+  /rhacs-operator/central backup --output-file /tmp/backup.zip
 
 # Copy backup
-oc cp stackrox/central-<pod-id>:/tmp/backup.zip ./rhacs-backup-$(date +%Y%m%d).zip
+oc cp rhacs-operator/central-<pod-id>:/tmp/backup.zip ./rhacs-backup-$(date +%Y%m%d).zip
 ```
 
 ## Additional Resources
 
 - [RHACS Documentation](https://docs.openshift.com/acs/)
 - [Cosign Documentation](https://docs.sigstore.dev/cosign/overview/)
-- [Policy Examples](https://github.com/stackrox/contributions/tree/main/policy-examples)
-- [RHACS Community](https://github.com/stackrox/stackrox)
+- [Policy Examples](https://github.com/rhacs-operator/contributions/tree/main/policy-examples)
+- [RHACS Community](https://github.com/rhacs-operator/rhacs-operator)
 
 ## Support
 

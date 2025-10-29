@@ -7,7 +7,7 @@ metadata:
   annotations:
     description: "RHACS deployment for Permission Binder Operator signature verification"
 
-namespace: stackrox
+namespace: rhacs-operator
 
 resources:
   # RHACS Operator installation
