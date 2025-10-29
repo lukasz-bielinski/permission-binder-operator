@@ -252,3 +252,47 @@ oc logs -l app=central -n rhacs-operator --tail=100
 **Difficulty**: Intermediate  
 **Impact**: High security assurance with zero node restarts! 🎉
 
+
+## 🔐 Optional: Configure OpenShift OAuth (SSO)
+
+For production, use OpenShift OAuth instead of admin password.
+
+### Quick OAuth Setup (5 minutes)
+
+1. **Login as admin first** (from Step 2)
+
+2. **In RHACS UI**:
+   - Go to: **Platform Configuration** → **Access Control**
+   - Click: **Auth Providers** → **Create Auth Provider**
+   - Select: **OpenID Connect**
+
+3. **Configure**:
+   ```
+   Name: OpenShift
+   Issuer: https://oauth-openshift.apps.<your-domain>
+   ```
+   
+   Click **Next** - RHACS will auto-configure the rest!
+
+4. **Map Groups**:
+   ```
+   cluster-admins → Admin
+   developers → Analyst
+   viewers → None (read-only)
+   ```
+
+5. **Test Login** → Should redirect to OpenShift OAuth
+
+6. **Set as Default** (optional)
+
+7. **Disable admin password** (after confirming OAuth works)
+
+### Benefits
+
+- ✅ Single Sign-On with OpenShift
+- ✅ No separate passwords to manage
+- ✅ Group-based access control
+- ✅ Better audit trail
+
+See `README.md` for detailed OAuth configuration.
+

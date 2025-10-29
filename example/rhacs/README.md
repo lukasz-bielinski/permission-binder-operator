@@ -291,3 +291,146 @@ For RHACS support:
 For Permission Binder Operator issues:
 - GitHub Issues: https://github.com/lukasz-bielinski/permission-binder-operator/issues
 
+
+## OpenShift OAuth Integration
+
+RHACS supports authentication via OpenShift OAuth for Single Sign-On (SSO).
+
+### Benefits
+
+- ✅ **No separate passwords** - use OpenShift credentials
+- ✅ **Group-based RBAC** - map OpenShift groups to RHACS roles
+- ✅ **Audit trail** - integrated with OpenShift audit logs
+- ✅ **Better UX** - single login for entire platform
+
+### Configuration
+
+After Central is deployed:
+
+1. **Login as admin** (first time):
+   ```bash
+   export RHACS_ROUTE=$(oc get route central -n rhacs-operator -o jsonpath='{.spec.host}')
+   export RHACS_PASSWORD=$(oc get secret central-htpasswd -n rhacs-operator -o jsonpath='{.data.password}' | base64 -d)
+   
+   echo "URL: https://${RHACS_ROUTE}"
+   echo "Username: admin"
+   echo "Password: ${RHACS_PASSWORD}"
+   ```
+
+2. **Configure OpenShift OAuth**:
+   - Navigate: **Platform Configuration** → **Access Control**
+   - Click: **Auth Providers** → **Create Auth Provider**
+   - Select: **OpenID Connect**
+   
+3. **Fill in configuration**:
+   ```yaml
+   Name: OpenShift
+   Issuer: https://oauth-openshift.apps.<your-cluster-domain>
+   Client ID: rhacs-central
+   Client Secret: <will-be-generated>
+   Callback URL: https://central-rhacs-operator.apps.<your-cluster-domain>/sso/providers/oidc/callback
+   ```
+   
+   RHACS will automatically:
+   - Create `OAuthClient` in OpenShift
+   - Generate and store the client secret
+   - Configure the callback URL
+
+4. **Configure Role Mappings**:
+   - **Admin**: `cluster-admins`, `rhacs-admins`
+   - **Analyst**: `developers`, `security-team`
+   - **Scope Manager**: `namespace-admins`
+   - **Vulnerability Reporter**: `auditors`
+   - **None** (read-only): `viewers`
+
+5. **Test Login**:
+   - Click **Test Login** button
+   - Should redirect to OpenShift OAuth
+   - Login with OpenShift credentials
+   - Verify you're redirected back to RHACS
+
+6. **Set as Default** (optional):
+   - Click **Set as Default Auth Method**
+   - Users will auto-redirect to OpenShift login
+
+7. **Disable Admin Password** (recommended for production):
+   - After confirming OAuth works
+   - Navigate: **Platform Configuration** → **Access Control**
+   - Edit admin user → Disable password authentication
+
+### Automatic OAuthClient
+
+When you configure OAuth in RHACS UI, it automatically creates:
+
+```yaml
+apiVersion: oauth.openshift.io/v1
+kind: OAuthClient
+metadata:
+  name: rhacs-central
+  namespace: rhacs-operator
+grantMethod: auto
+redirectURIs:
+- https://central-rhacs-operator.apps.<cluster-domain>/sso/providers/oidc/callback
+```
+
+Verify:
+```bash
+oc get oauthclient rhacs-central
+```
+
+### Group-Based Access Example
+
+```yaml
+# OpenShift Groups -> RHACS Roles
+
+cluster-admins:
+  - Full admin access to RHACS
+  - Can manage policies, integrations
+  - Can view all namespaces
+
+developers:
+  - Analyst role
+  - Can view violations, risks
+  - Cannot modify policies
+
+viewers:
+  - Read-only access
+  - Can view dashboards
+  - Cannot modify anything
+```
+
+### Troubleshooting OAuth
+
+**Issue**: "Invalid redirect URI"
+```bash
+# Check OAuthClient
+oc get oauthclient rhacs-central -o yaml
+
+# Verify redirect URI matches Central route
+oc get route central -n rhacs-operator -o jsonpath='{.spec.host}'
+```
+
+**Issue**: "User not found"
+```bash
+# Check OpenShift user
+oc whoami
+
+# Check groups
+oc get groups
+
+# Add user to group
+oc adm groups add-users developers <username>
+```
+
+**Issue**: "Insufficient permissions"
+```bash
+# Check role mapping in RHACS UI
+# Platform Configuration → Access Control → Auth Providers → OpenShift
+# Verify group mapping
+```
+
+### References
+
+- See `06-openshift-oauth-config.yaml` for detailed configuration
+- RHACS OAuth docs: https://docs.openshift.com/acs/configuration/configure-authentication.html
+
