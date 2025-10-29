@@ -297,7 +297,9 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		// Don't fail reconciliation on metrics error
 	}
 
-	logger.Info("Successfully processed ConfigMap", "roleBindings", len(processedRoleBindings))
+	logger.Info("Successfully processed ConfigMap",
+		"roleBindings", len(result.ProcessedRoleBindings),
+		"serviceAccounts", len(result.ProcessedServiceAccounts))
 	return ctrl.Result{}, nil
 }
 

@@ -176,8 +176,7 @@ func ProcessServiceAccounts(
 					"role", roleName,
 					"namespace", namespace)
 
-				// Increment metric
-				roleBindingsCreated.WithLabelValues(namespace, roleName).Inc()
+				// Metrics are updated in controller after processing all namespaces
 			} else {
 				logger.Error(err, "Failed to get RoleBinding",
 					"roleBinding", roleBindingName,
