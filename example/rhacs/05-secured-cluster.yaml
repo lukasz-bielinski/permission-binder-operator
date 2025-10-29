@@ -3,7 +3,7 @@ apiVersion: platform.stackrox.io/v1alpha1
 kind: SecuredCluster
 metadata:
   name: stackrox-secured-cluster-services
-  namespace: stackrox
+  namespace: rhacs-operator
   labels:
     app.kubernetes.io/name: secured-cluster
     app.kubernetes.io/part-of: rhacs
@@ -12,7 +12,7 @@ spec:
   clusterName: production-cluster
   
   # Central endpoint (automatically discovered from Central service)
-  centralEndpoint: central.stackrox.svc:443
+  centralEndpoint: central.rhacs-operator.svc:443
   
   # Admission control webhook configuration
   admissionControl:
@@ -33,7 +33,6 @@ spec:
         namespaces:
         - kube-system
         - kube-public
-        - stackrox
         - rhacs-operator
         - openshift-*
     

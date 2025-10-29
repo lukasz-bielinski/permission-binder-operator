@@ -3,7 +3,7 @@ apiVersion: platform.stackrox.io/v1alpha1
 kind: Central
 metadata:
   name: stackrox-central-services
-  namespace: stackrox
+  namespace: rhacs-operator
   labels:
     app.kubernetes.io/name: central
     app.kubernetes.io/part-of: rhacs

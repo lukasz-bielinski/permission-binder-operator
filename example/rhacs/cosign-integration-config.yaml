@@ -6,7 +6,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: cosign-integration-config
-  namespace: stackrox
+  namespace: rhacs-operator
   annotations:
     description: "Configuration for Cosign signature integration - Apply via RHACS UI or API"
 data:

@@ -32,15 +32,15 @@ echo "✅ Operator installed"
 
 ```bash
 # Monitor Central deployment
-watch oc get pods -n stackrox
+watch oc get pods -n rhacs-operator
 
 # Wait for Central to be ready
 oc wait --for=condition=Available --timeout=600s \
-  deployment/central -n stackrox
+  deployment/central -n rhacs-operator
 
 # Get credentials
-export RHACS_ROUTE=$(oc get route central -n stackrox -o jsonpath='{.spec.host}')
-export RHACS_PASSWORD=$(oc get secret central-htpasswd -n stackrox -o jsonpath='{.data.password}' | base64 -d)
+export RHACS_ROUTE=$(oc get route central -n rhacs-operator -o jsonpath='{.spec.host}')
+export RHACS_PASSWORD=$(oc get secret central-htpasswd -n rhacs-operator -o jsonpath='{.data.password}' | base64 -d)
 
 echo ""
 echo "✅ RHACS Central is ready!"
@@ -55,7 +55,7 @@ echo ""
 ```bash
 # Wait for admission control
 oc wait --for=condition=Available --timeout=300s \
-  deployment/admission-control -n stackrox
+  deployment/admission-control -n rhacs-operator
 
 echo "✅ Admission Controller ready"
 ```
@@ -151,7 +151,7 @@ EOF
 **Expected**: Admission webhook denies the request ❌
 
 ```
-Error from server: admission webhook "policyeval.stackrox.io" denied the request: 
+Error from server: admission webhook "policyeval.rhacs-operator.io" denied the request: 
 The deployment violated 1 policy:
 Policy: Permission Binder Operator - Signature Verification
 - Description: Image signature not verified
@@ -174,10 +174,10 @@ Policy: Permission Binder Operator - Signature Verification
 
 ```bash
 # Check admission controller logs
-oc logs -l app=admission-control -n stackrox --tail=50 -f
+oc logs -l app=admission-control -n rhacs-operator --tail=50 -f
 
 # Check for violations
-oc get events -n permissions-binder-operator | grep stackrox
+oc get events -n permissions-binder-operator | grep rhacs-operator
 
 # View RHACS alerts
 roxctl --endpoint "${RHACS_ROUTE}:443" \
@@ -191,10 +191,10 @@ roxctl --endpoint "${RHACS_ROUTE}:443" \
 
 ```bash
 # Check webhook configuration
-oc get validatingwebhookconfigurations | grep stackrox
+oc get validatingwebhookconfigurations | grep rhacs-operator
 
 # Check admission controller logs
-oc logs deployment/admission-control -n stackrox | tail -50
+oc logs deployment/admission-control -n rhacs-operator | tail -50
 
 # Verify policy is enabled
 # RHACS UI → Policy Management → Search for "Permission Binder"
@@ -210,20 +210,20 @@ cosign verify \
   docker.io/lukaszbielinski/permission-binder-operator:1.4.0
 
 # Check RHACS can reach Rekor
-oc exec -n stackrox deployment/central -- curl -I https://rekor.sigstore.dev
+oc exec -n rhacs-operator deployment/central -- curl -I https://rekor.sigstore.dev
 ```
 
 ### Central Not Starting
 
 ```bash
 # Check PVC
-oc get pvc -n stackrox
+oc get pvc -n rhacs-operator
 
 # Check pod events
-oc describe pod -l app=central -n stackrox
+oc describe pod -l app=central -n rhacs-operator
 
 # Check logs
-oc logs -l app=central -n stackrox --tail=100
+oc logs -l app=central -n rhacs-operator --tail=100
 ```
 
 ## 🎯 Next Steps
