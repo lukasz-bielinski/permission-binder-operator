@@ -87,11 +87,23 @@ type PermissionBinderSpec struct {
 	LdapTlsVerify *bool `json:"ldapTlsVerify,omitempty"`
 
 	// ServiceAccountMapping defines mapping of service account names to roles
-	// Creates ServiceAccounts with pattern: {namespace}-sa-{key}
-	// Example: "deploy: edit" creates "my-ns-sa-deploy" with ClusterRole "edit"
-	// Supports both simple string (ClusterRole name) and complex object (with kind)
+	// Creates ServiceAccounts with pattern defined by serviceAccountNamingPattern
+	// Example: "deploy: edit" creates SA with ClusterRole "edit"
+	// Default pattern: {namespace}-sa-{name}
 	// +kubebuilder:validation:Optional
 	ServiceAccountMapping map[string]string `json:"serviceAccountMapping,omitempty"`
+
+	// ServiceAccountNamingPattern defines the naming pattern for ServiceAccounts
+	// Available variables: {namespace}, {name}
+	// Default: {namespace}-sa-{name}
+	// Examples:
+	//   - {namespace}-sa-{name}      -> my-app-sa-deploy
+	//   - sa-{namespace}-{name}      -> sa-my-app-deploy
+	//   - {name}-{namespace}         -> deploy-my-app
+	//   - {namespace}-{name}         -> my-app-deploy
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="{namespace}-sa-{name}"
+	ServiceAccountNamingPattern string `json:"serviceAccountNamingPattern,omitempty"`
 }
 
 // PermissionBinderStatus defines the observed state of PermissionBinder
