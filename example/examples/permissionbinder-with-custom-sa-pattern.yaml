@@ -1,0 +1,68 @@
+---
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: example-custom-sa-pattern
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  
+  prefixes:
+    - "COMPANY-K8S"
+  
+  roleMapping:
+    admin: cluster-admin
+    developer: edit
+    viewer: view
+  
+  # ServiceAccount mapping with custom naming patterns
+  serviceAccountMapping:
+    deploy: edit
+    runtime: view
+    backup: backup-operator
+  
+  # Custom naming pattern examples:
+  
+  # Pattern 1: Default (recommended)
+  serviceAccountNamingPattern: "{namespace}-sa-{name}"
+  # Creates: my-app-sa-deploy, my-app-sa-runtime, my-app-sa-backup
+  
+  # Pattern 2: SA prefix
+  # serviceAccountNamingPattern: "sa-{namespace}-{name}"
+  # Creates: sa-my-app-deploy, sa-my-app-runtime, sa-my-app-backup
+  
+  # Pattern 3: Simple
+  # serviceAccountNamingPattern: "{namespace}-{name}"
+  # Creates: my-app-deploy, my-app-runtime, my-app-backup
+  
+  # Pattern 4: Name first
+  # serviceAccountNamingPattern: "{name}-{namespace}"
+  # Creates: deploy-my-app, runtime-my-app, backup-my-app
+
+---
+# Available variables in naming pattern:
+# - {namespace} - The Kubernetes namespace name
+# - {name}      - The ServiceAccount type name (from mapping key)
+#
+# Recommendations:
+# 1. Include "sa" or "svc" prefix/suffix to clearly identify ServiceAccounts
+# 2. Start with namespace to group resources in sorted lists
+# 3. Keep it consistent across your organization
+# 4. Default pattern ({namespace}-sa-{name}) is production-tested
+
+---
+# Example: Different naming patterns for different use cases
+
+# For multi-tenant environments (Pattern 1 - Default):
+# serviceAccountNamingPattern: "{namespace}-sa-{name}"
+# Benefit: Clear separation, easy to identify in audit logs
+
+# For simple environments (Pattern 3):
+# serviceAccountNamingPattern: "{namespace}-{name}"  
+# Benefit: Shorter names, less typing
+
+# For role-based organization (Pattern 4):
+# serviceAccountNamingPattern: "{name}-{namespace}"
+# Benefit: Groups by role type (all deploy SAs together)
+
