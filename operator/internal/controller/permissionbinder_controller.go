@@ -129,6 +129,23 @@ var (
 		},
 		[]string{"status"}, // success, error
 	)
+
+	// Counter for ServiceAccount creations
+	serviceAccountsCreated = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "permission_binder_service_accounts_created_total",
+			Help: "Total number of ServiceAccounts created",
+		},
+		[]string{"namespace", "sa_type"}, // namespace, deploy/runtime/etc
+	)
+
+	// Gauge for managed ServiceAccounts
+	managedServiceAccountsTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "permission_binder_managed_service_accounts_total",
+			Help: "Current number of ServiceAccounts managed by the operator",
+		},
+	)
 )
 
 func init() {
@@ -141,6 +158,8 @@ func init() {
 		ldapConnectionsTotal,
 		managedRoleBindingsTotal,
 		managedNamespacesTotal,
+		managedServiceAccountsTotal,
+		serviceAccountsCreated,
 		configMapEntriesProcessed,
 	)
 }
@@ -156,6 +175,7 @@ type PermissionBinderReconciler struct {
 // +kubebuilder:rbac:groups=permission.permission-binder.io,resources=permissionbinders/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch
 
@@ -246,14 +266,15 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Process ConfigMap data
-	processedRoleBindings, err := r.processConfigMap(ctx, &permissionBinder, &configMap)
+	result, err := r.processConfigMap(ctx, &permissionBinder, &configMap)
 	if err != nil {
 		logger.Error(err, "Failed to process ConfigMap")
 		return ctrl.Result{}, err
 	}
 
 	// Update status
-	permissionBinder.Status.ProcessedRoleBindings = processedRoleBindings
+	permissionBinder.Status.ProcessedRoleBindings = result.ProcessedRoleBindings
+	permissionBinder.Status.ProcessedServiceAccounts = result.ProcessedServiceAccounts
 	permissionBinder.Status.LastProcessedConfigMapVersion = configMapVersion
 	permissionBinder.Status.Conditions = []metav1.Condition{
 		{
@@ -261,7 +282,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
 			Reason:             "ConfigMapProcessed",
-			Message:            fmt.Sprintf("Successfully processed %d role bindings", len(processedRoleBindings)),
+			Message:            fmt.Sprintf("Successfully processed %d role bindings and %d service accounts", len(result.ProcessedRoleBindings), len(result.ProcessedServiceAccounts)),
 		},
 	}
 
@@ -281,8 +302,15 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 }
 
 // processConfigMap processes the ConfigMap data and creates RoleBindings
-func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permissionBinder *permissionv1.PermissionBinder, configMap *corev1.ConfigMap) ([]string, error) {
+// ProcessConfigMapResult holds the results of processing a ConfigMap
+type ProcessConfigMapResult struct {
+	ProcessedRoleBindings    []string
+	ProcessedServiceAccounts []string
+}
+
+func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permissionBinder *permissionv1.PermissionBinder, configMap *corev1.ConfigMap) (ProcessConfigMapResult, error) {
 	logger := log.FromContext(ctx)
+	result := ProcessConfigMapResult{}
 	var processedRoleBindings []string
 	var validWhitelistEntries []string // For LDAP group creation
 
@@ -290,7 +318,7 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 	whitelistContent, found := configMap.Data["whitelist.txt"]
 	if !found {
 		logger.Info("No whitelist.txt found in ConfigMap, skipping processing")
-		return processedRoleBindings, nil
+		return result, nil
 	}
 
 	// Parse whitelist.txt line by line
@@ -360,7 +388,56 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 		}
 	}
 
-	return processedRoleBindings, nil
+	// Process ServiceAccount creation if configured
+	// ServiceAccounts are created per namespace based on serviceAccountMapping
+	// This happens for each namespace that was processed above
+	var allProcessedSAs []string
+	if len(permissionBinder.Spec.ServiceAccountMapping) > 0 {
+		// Get unique namespaces from processed RoleBindings
+		namespaces := make(map[string]bool)
+		for _, rb := range processedRoleBindings {
+			// RoleBinding format: "namespace/rolebinding-name"
+			parts := strings.Split(rb, "/")
+			if len(parts) == 2 {
+				namespaces[parts[0]] = true
+			}
+		}
+
+		logger.Info("🔑 ServiceAccount mapping configured, creating ServiceAccounts",
+			"mappings", len(permissionBinder.Spec.ServiceAccountMapping),
+			"namespaces", len(namespaces))
+
+		// Process each namespace
+		for namespace := range namespaces {
+			processedSAs, err := ProcessServiceAccounts(
+				ctx,
+				r.Client,
+				namespace,
+				permissionBinder.Spec.ServiceAccountMapping,
+				permissionBinder.Spec.ServiceAccountNamingPattern,
+				permissionBinder.Name,
+			)
+			if err != nil {
+				// Log error but don't fail the entire reconciliation
+				logger.Error(err, "⚠️  ServiceAccount creation failed (non-fatal)",
+					"namespace", namespace)
+			} else {
+				allProcessedSAs = append(allProcessedSAs, processedSAs...)
+				logger.Info("✅ ServiceAccounts processed successfully",
+					"namespace", namespace,
+					"created", len(processedSAs))
+			}
+		}
+
+		// Update managedServiceAccountsTotal metric
+		managedServiceAccountsTotal.Set(float64(len(allProcessedSAs)))
+	}
+
+	// Populate result
+	result.ProcessedRoleBindings = processedRoleBindings
+	result.ProcessedServiceAccounts = allProcessedSAs
+
+	return result, nil
 }
 
 // extractCNFromDN extracts the CN (Common Name) value from an LDAP DN string
