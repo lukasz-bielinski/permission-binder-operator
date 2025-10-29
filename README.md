@@ -17,6 +17,7 @@ A safe, predictable, and auditable Kubernetes operator that automatically manage
 - ✅ **Finalizer Protection** - Proper cleanup sequence prevents cascade failures
 - ✅ **Override Protection** - Enforces desired state (prevents manual tampering)
 - ✅ **Audit Trail** - All operations logged in JSON for SIEM integration
+- ✅ **Image Signing** - Cosign signatures + GitHub Attestations (SLSA provenance)
 
 ### Reliability
 - ✅ **Orphaned Resource Adoption** - Automatic recovery with zero data loss
@@ -72,6 +73,11 @@ spec:
     - "COMPANY-K8S-SYSTEM-admin"
   configMapName: "permission-config"
   configMapNamespace: "permissions-binder-operator"
+  # Optional: Automatic ServiceAccount creation for CI/CD
+  serviceAccountMapping:
+    deploy: edit      # For CI/CD pipelines
+    runtime: view     # For application pods
+  serviceAccountNamingPattern: "{namespace}-sa-{name}"  # Default pattern
 ```
 
 **Multi-Prefix Support** (for multi-tenant environments):
@@ -98,7 +104,9 @@ spec:
 4. **Validation** - Checks ClusterRole exists (logs WARNING if not)
 5. **Namespace Creation** - Creates namespace if doesn't exist (with annotations)
 6. **RoleBinding Creation** - Creates RoleBinding linking LDAP group DN to ClusterRole
-7. **Reconciliation** - Continuously ensures desired state
+7. **ServiceAccount Management** - Optionally creates ServiceAccounts for CI/CD and runtime pods with RoleBindings
+8. **LDAP Group Creation** - Optionally creates LDAP/AD groups automatically (see [LDAP Integration](docs/LDAP_INTEGRATION.md))
+9. **Reconciliation** - Continuously ensures desired state
 
 ### ConfigMap Format
 
@@ -179,8 +187,12 @@ subjects:
 ### For Operations
 - [**Runbook**](docs/RUNBOOK.md) - Operational procedures and troubleshooting
 - [**Backup & Recovery**](docs/BACKUP.md) - DR procedures with Kasten K10
-- [E2E Test Scenarios](example/e2e-test-scenarios.md) - 24 test scenarios
+- [E2E Test Scenarios](example/e2e-test-scenarios.md) - 35 comprehensive test scenarios
 - [Monitoring Guide](example/monitoring/README.md) - Metrics, alerts, dashboards
+
+### For Features
+- [**ServiceAccount Management**](docs/SERVICE_ACCOUNT_MANAGEMENT.md) - Automated ServiceAccount creation for CI/CD
+- [**LDAP Integration**](docs/LDAP_INTEGRATION.md) - Automatic LDAP/AD group creation
 
 ### For Deployment
 - [GitOps Deployment](example/README.md) - ArgoCD integration
@@ -291,10 +303,57 @@ cat example/e2e-test-scenarios.md
 
 ---
 
+## Image Security & Supply Chain
+
+All Docker images are **cryptographically signed** and include **supply chain attestations** for maximum security:
+
+### 🔐 Security Features
+- ✅ **Cosign Signatures** - All images signed with Sigstore Cosign (keyless signing)
+- ✅ **GitHub Attestations** - SLSA provenance for complete build verification
+- ✅ **Multi-Architecture** - AMD64 and ARM64 builds, both signed
+- ✅ **Automated Signing** - GitHub Actions automatically signs every release
+
+### 🔍 Verify Image Authenticity
+
+**Using Cosign (recommended):**
+```bash
+# Verify image signature
+cosign verify \
+  --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  lukaszbielinski/permission-binder-operator:v1.5.0
+```
+
+**Using GitHub CLI (for attestations):**
+```bash
+# Verify GitHub Attestations
+gh attestation verify \
+  oci://lukaszbielinski/permission-binder-operator:v1.5.0 \
+  --owner lukasz-bielinski
+```
+
+**Check SLSA Build Provenance:**
+```bash
+# Verify supply chain provenance
+cosign verify-attestation \
+  --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --type slsaprovenance \
+  lukaszbielinski/permission-binder-operator:v1.5.0 | jq .
+```
+
+### 📋 What's Verified?
+- **Builder Identity** - Confirms image was built by GitHub Actions
+- **Source Repository** - Verifies image comes from this repository
+- **Build Integrity** - Ensures no tampering after build
+- **Dependency Chain** - SLSA provenance tracks all build inputs
+
+---
+
 ## Production Deployment
 
 ### Requirements
-- Single replica (NOT HA) - leader election disabled
+- Single replica (HA-ready with leader election enabled)
 - Namespace: `permissions-binder-operator`
 - RBAC: `cluster-admin` (operator manages cluster-wide RBAC)
 - Memory: 128Mi-512Mi
@@ -443,18 +502,18 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** 1.0.0  
-**Last Updated:** 2025-10-22  
+**Version:** v1.5.0  
+**Last Updated:** 2025-10-29  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes
-- ✅ JSON structured logging
-- ✅ Custom Prometheus metrics (6 metrics)
-- ✅ ClusterRole validation with security warnings
-- ✅ Orphaned resource adoption
-- ✅ Comprehensive monitoring (Loki + Prometheus + Grafana)
-- ✅ Production-grade documentation (Runbook + DR)
-- ✅ E2E test suite (24 scenarios)
+### Recent Changes (v1.5.0)
+- ✅ **ServiceAccount Management** - Automated SA creation for CI/CD pipelines
+- ✅ **Image Signing** - Cosign + GitHub Attestations with SLSA provenance
+- ✅ **Race Condition Fixes** - excludeList processing improvements
+- ✅ **Test Infrastructure** - Modular test runner with 35 scenarios
+- ✅ **Prometheus ServiceMonitor** - Automated metrics collection
+- ✅ **Startup Optimization** - Reduced from ~15s to ~3-5s
+- ✅ **Documentation** - 100% coverage for all features
 
 ---
 

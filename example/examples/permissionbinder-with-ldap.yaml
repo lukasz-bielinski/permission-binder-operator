@@ -39,4 +39,11 @@ spec:
   # TLS certificate verification (default: true)
   # Set to false for self-signed certificates (testing only)
   ldapTlsVerify: false
+  
+  # ServiceAccount mapping (optional - for CI/CD and application pods)
+  # Uncomment to create ServiceAccounts automatically for each namespace
+  # serviceAccountMapping:
+  #   deploy: edit      # For CI/CD deployments (Bamboo, Jenkins, etc.)
+  #   runtime: view     # For application pods (read-only access)
+  # serviceAccountNamingPattern: "{namespace}-sa-{name}"  # Default pattern
 

@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2025-10-29
+
+### Added
+- **ServiceAccount Management**: Automated creation of ServiceAccounts and RoleBindings
+  - Configure ServiceAccount mappings in PermissionBinder CR (`serviceAccountMapping`)
+  - Customizable naming patterns (`serviceAccountNamingPattern`)
+  - Default pattern: `{namespace}-sa-{name}` (e.g., `my-app-sa-deploy`)
+  - Idempotent creation (checks if ServiceAccount exists before creating)
+  - Support for both ClusterRoles and namespace-scoped Roles
+  - Status tracking in `status.processedServiceAccounts`
+  - Prometheus metrics: `permission_binder_serviceaccounts_created_total`
+  - Use cases: CI/CD pipelines, application runtime pods
+  - See [ServiceAccount Management Guide](docs/SERVICE_ACCOUNT_MANAGEMENT.md)
+- **E2E Test Suite Expansion**: 35 comprehensive test scenarios (Pre-Test + Tests 1-34)
+  - Tests 31-34: ServiceAccount creation, naming patterns, idempotency, status tracking
+  - Tests 25-30: Prometheus metrics validation
+  - Test 12: Multi-architecture verification (ARM64 + AMD64)
+  - Modular test runner (`test-runner.sh`) for individual test execution
+  - Full isolation test orchestration (`run-all-individually.sh`)
+  - `--no-cleanup` flag for debugging failed tests
+- **Prometheus ServiceMonitor**: Configured for operator metrics collection
+  - Deployed in `monitoring` namespace
+  - Scrapes `/metrics` endpoint every 30s
+  - Compatible with Prometheus Operator
+
+### Fixed
+- **Race Condition in Exclude List Processing**: Added re-fetch of PermissionBinder before ConfigMap processing
+  - Prevents processing ConfigMap with outdated `excludeList`
+  - Ensures excludeList changes are always respected
+- **Orphaned RoleBinding Creation**: Fixed bug in `reconcileAllManagedResources`
+  - Function now only cleans up obsolete RoleBindings
+  - New RoleBindings are created exclusively by `processConfigMap` (which respects `excludeList`)
+  - Prevents RoleBindings for excluded CNs from being created
+
+### Changed
+- **Operator Deployment Optimization**: Reduced startup time from ~15s to ~3-5s
+  - Optimized `livenessProbe` and `readinessProbe` timings
+  - Added `startupProbe` for faster initialization
+  - Changed `imagePullPolicy` to `IfNotPresent` for test environments
+- **Test Infrastructure**: Complete rewrite for better reliability
+  - Separated test logic from orchestration
+  - Per-test cluster cleanup and operator deployment
+  - Enhanced test output with test names and progress indicators
+
+## [1.4.0] - 2024-10-XX
+
 ### Added
 - **LDAP DN Whitelist Format Support**: Operator now parses LDAP Distinguished Names
   - Extracts CN value from DN entries (e.g., `CN=COMPANY-K8S-project1-engineer,OU=...`)
