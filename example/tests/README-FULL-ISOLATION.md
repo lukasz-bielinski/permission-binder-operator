@@ -2,71 +2,71 @@
 
 ## Problem
 
-Standard `run-all-individually.sh` może nie zawsze zapewniać **prawdziwą** pełną izolację między testami:
-- Ten sam pod operatora przez wszystkie testy
-- Accumulated state w kontrolerze
-- Cache w Kubernetes API
-- Metrics nie są resetowane
+Standard `run-all-individually.sh` may not always provide **true** full isolation between tests:
+- Same operator pod across all tests
+- Accumulated state in controller
+- Kubernetes API cache
+- Metrics are not reset
 
-**Wynik:** Flaky tests - testy przechodzą przy re-run, ale failują w długim biegu.
+**Result:** Flaky tests - tests pass on re-run but fail in long runs.
 
-## Rozwiązanie: `run-tests-full-isolation.sh`
+## Solution: `run-tests-full-isolation.sh`
 
-Nowy skrypt zapewniający **GWARANTOWANĄ** pełną izolację dla każdego testu:
+New script providing **GUARANTEED** full isolation for each test:
 
 ```
 Test 1:
-  1. CLEANUP: Usuń operator + CRD + wszystkie namespaces
-  2. DEPLOY:  Deploy fresh operator (nowy pod!)
-  3. RUN:     Uruchom test
+  1. CLEANUP: Remove operator + CRD + all namespaces
+  2. DEPLOY:  Deploy fresh operator (new pod!)
+  3. RUN:     Execute test
   
 Test 2:
-  1. CLEANUP: Usuń operator + CRD + wszystkie namespaces
-  2. DEPLOY:  Deploy fresh operator (nowy pod!)
-  3. RUN:     Uruchom test
+  1. CLEANUP: Remove operator + CRD + all namespaces
+  2. DEPLOY:  Deploy fresh operator (new pod!)
+  3. RUN:     Execute test
 
-... (repeat dla każdego testu)
+... (repeat for each test)
 ```
 
-## Użycie
+## Usage
 
-### 1. Wszystkie testy (pre + 1-34)
+### 1. All tests (pre + 1-41)
 
 ```bash
 cd example/tests
 ./run-tests-full-isolation.sh
 ```
 
-**Czas trwania:** ~70-90 minut (35 testów × 2-3 min)
+**Duration:** ~80-100 minutes (42 tests × 2-3 min)
 
-### 2. Pojedynczy test
+### 2. Single test
 
 ```bash
 ./run-tests-full-isolation.sh 3
 ```
 
-**Czas trwania:** ~2 minuty
+**Duration:** ~2 minutes
 
-### 3. Wybrane testy
+### 3. Selected tests
 
 ```bash
 ./run-tests-full-isolation.sh 3 7 11 16
 ```
 
-**Czas trwania:** ~8 minut (4 testy × 2 min)
+**Duration:** ~8 minutes (4 tests × 2 min)
 
-### 4. Re-run failed testów
+### 4. Re-run failed tests
 
-Jeśli masz failed testy z poprzedniego runu:
+If you have failed tests from a previous run:
 
 ```bash
-# Z wczorajszego runu failed: 3, 7, 11, 16, 21, 26, 29
+# From yesterday's run, failed: 3, 7, 11, 16, 21, 26, 29
 ./run-tests-full-isolation.sh 3 7 11 16 21 26 29
 ```
 
-**Czas trwania:** ~14 minut (7 testów × 2 min)
+**Duration:** ~14 minutes (7 tests × 2 min)
 
-## Output i Logi
+## Output and Logs
 
 ### Live Output
 
@@ -126,74 +126,74 @@ Completed: Thu Oct 30 05:41:44 AM CET 2025
 
 ### Log Files
 
-Po uruchomieniu znajdziesz logi w `/tmp/`:
+After running, you'll find logs in `/tmp/`:
 
 ```bash
 # Main results log
 /tmp/e2e-full-isolation-20251030-053104.log
 
 # Per-test logs
-/tmp/cleanup-3.log      # Cleanup output dla Test 3
-/tmp/deploy-3.log       # Deploy output dla Test 3
-/tmp/test-3-isolated.log # Test execution output dla Test 3
+/tmp/cleanup-3.log      # Cleanup output for Test 3
+/tmp/deploy-3.log       # Deploy output for Test 3
+/tmp/test-3-isolated.log # Test execution output for Test 3
 
-# (Repeat dla każdego testu)
+# (Repeat for each test)
 ```
 
-## Kiedy używać którego runnera?
+## When to Use Which Runner?
 
-| Runner | Izolacja | Czas | Użycie |
-|--------|----------|------|--------|
-| `test-runner.sh` | Brak | Sekundy | Quick test pojedynczego scenariusza |
-| `run-all-individually.sh` | Średnia | ~40 min | Standard test run (ok dla większości) |
-| `run-tests-full-isolation.sh` | **Pełna** | ~70-90 min | **Pre-release validation, debugging flaky tests** |
+| Runner | Isolation | Time | Use Case |
+|--------|----------|------|----------|
+| `test-runner.sh` | None | Seconds | Quick test of single scenario |
+| `run-all-individually.sh` | Medium | ~40 min | Standard test run (OK for most cases) |
+| `run-tests-full-isolation.sh` | **Full** | ~80-100 min | **Pre-release validation, debugging flaky tests** |
 
-## Kiedy używać Full Isolation?
+## When to Use Full Isolation?
 
-✅ **Używaj gdy:**
-- Debugging flaky tests (testy które czasami failują)
-- Pre-release validation (przed v1.x.0)
-- Testy failowały w nightly run, ale przeszły przy re-run
-- Chcesz mieć 100% pewność że operator działa stabilnie
-- Sprawdzasz czy cleanup działa poprawnie
+✅ **Use when:**
+- Debugging flaky tests (tests that sometimes fail)
+- Pre-release validation (before v1.x.0)
+- Tests failed in nightly run but passed on re-run
+- You want 100% confidence that operator works stably
+- Checking if cleanup works correctly
 
-❌ **Nie używaj gdy:**
+❌ **Don't use when:**
 - Quick development iteration
-- Debugging konkretnego testu (użyj `test-runner.sh <test_id>`)
-- Mało czasu (użyj `run-all-individually.sh`)
+- Debugging specific test (use `test-runner.sh <test_id>`)
+- Limited time (use `run-all-individually.sh`)
 
-## Różnice vs `run-all-individually.sh`
+## Differences vs `run-all-individually.sh`
 
 | Feature | run-all-individually.sh | run-tests-full-isolation.sh |
 |---------|-------------------------|------------------------------|
 | Cleanup per test | ✅ | ✅ |
 | Deploy per test | ✅ | ✅ |
-| **Fresh pod per test** | ⚠️  Może używać cache | ✅ **Gwarantowane** |
+| **Fresh pod per test** | ⚠️  May use cache | ✅ **Guaranteed** |
 | **Verify pod running** | ✅ | ✅ |
 | **Detailed logs per step** | ❌ | ✅ (cleanup, deploy, test) |
-| **Pod name tracking** | ❌ | ✅ W summary |
+| **Pod name tracking** | ❌ | ✅ In summary |
 | **Colored output** | ❌ | ✅ |
-| Czas per test | ~1 min | ~2 min |
+| Time per test | ~1 min | ~2 min |
 | **Use case** | Standard CI/CD | **Pre-release, debugging** |
 
-## Przykłady
+## Examples
 
 ### Example 1: Quick pre-release check
 
 ```bash
-# Sprawdź tylko "problematyczne" testy przed release
+# Check only "problematic" tests before release
 ./run-tests-full-isolation.sh 16 21 26 29
 
-# Testy security + network + metrics (często flaky)
+# Security + network + metrics tests (often flaky)
 ```
 
 ### Example 2: Debug specific failed test
 
 ```bash
-# Test 16 failował wczoraj, sprawdź z pełną izolacją
+# Test 16 failed yesterday, check with full isolation
 ./run-tests-full-isolation.sh 16
 
-# Sprawdź logi jeśli znowu failed
+# Check logs if it fails again
 cat /tmp/cleanup-16.log
 cat /tmp/deploy-16.log
 cat /tmp/test-16-isolated.log
@@ -202,7 +202,7 @@ cat /tmp/test-16-isolated.log
 ### Example 3: Nightly full validation
 
 ```bash
-# Cron job - każdej nocy pełna validacja
+# Cron job - full validation every night
 0 2 * * * cd /path/to/tests && ./run-tests-full-isolation.sh > /var/log/e2e-nightly.log 2>&1
 ```
 
@@ -229,15 +229,15 @@ jobs:
 
 ## Troubleshooting
 
-### Problem: Test failuje tylko w full isolation mode
+### Problem: Test fails only in full isolation mode
 
 **Diagnosis:**
-- Test ma dependency na previous state
-- Test nie czeka na async operations
-- Race condition w teście
+- Test has dependency on previous state
+- Test doesn't wait for async operations
+- Race condition in test
 
 **Fix:**
-Sprawdź test logic - powinien być **idempotent** i **self-contained**.
+Check test logic - should be **idempotent** and **self-contained**.
 
 ### Problem: Cleanup timeout
 
@@ -254,7 +254,7 @@ kubectl delete namespace <ns> --force --grace-period=0
 ### Problem: Deploy fails (ImagePullBackOff)
 
 **Diagnosis:**
-Image nie istnieje lub nie ma multi-arch support.
+Image doesn't exist or lacks multi-arch support.
 
 **Fix:**
 ```bash
@@ -303,19 +303,18 @@ docker manifest inspect lukaszbielinski/permission-binder-operator:1.5.0
 - Test execution: 30-60s
 - **Total per test:** ~2 minutes
 
-**Full suite (35 tests):**
-- Best case: 70 minutes
-- Typical: 80 minutes
-- Worst case: 90 minutes
+**Full suite (42 tests):**
+- Best case: 80 minutes
+- Typical: 90 minutes
+- Worst case: 100 minutes
 
 ## Conclusion
 
-`run-tests-full-isolation.sh` to **gold standard** dla E2E testing:
-- ✅ Gwarantowana pełna izolacja
+`run-tests-full-isolation.sh` is the **gold standard** for E2E testing:
+- ✅ Guaranteed full isolation
 - ✅ Fresh pod per test (no cache!)
 - ✅ Detailed logging
-- ✅ Perfect dla pre-release validation
+- ✅ Perfect for pre-release validation
 
-**Używaj przed każdym release aby mieć 100% pewność że operator działa stabilnie!**
-
+**Use before every release to ensure 100% confidence that the operator works stably!**
 

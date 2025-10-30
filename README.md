@@ -340,14 +340,14 @@ All Docker images are **cryptographically signed** and include **supply chain at
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:v1.5.0
+  lukaszbielinski/permission-binder-operator:1.5.0
 ```
 
 **Using GitHub CLI (for attestations):**
 ```bash
 # Verify GitHub Attestations
 gh attestation verify \
-  oci://lukaszbielinski/permission-binder-operator:v1.5.0 \
+  oci://lukaszbielinski/permission-binder-operator:1.5.0 \
   --owner lukasz-bielinski
 ```
 
@@ -358,7 +358,7 @@ cosign verify-attestation \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   --type slsaprovenance \
-  lukaszbielinski/permission-binder-operator:v1.5.0 | jq .
+  lukaszbielinski/permission-binder-operator:1.5.0 | jq .
 ```
 
 ### 📋 What's Verified?

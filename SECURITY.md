@@ -149,6 +149,6 @@ We appreciate the work of security researchers and will acknowledge contributors
 
 ---
 
-**Last Updated**: October 22, 2025  
-**Next Review**: v1.1.0 release
+**Last Updated**: October 30, 2025  
+**Next Review**: v1.6.0 release
 
