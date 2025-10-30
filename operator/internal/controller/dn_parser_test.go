@@ -182,7 +182,7 @@ func TestExtractCNFromDN(t *testing.T) {
 			name:        "DN with escaped characters (comma in CN value)",
 			dn:          "CN=COMPANY-K8S-app\\,test-admin,OU=Kubernetes,DC=example,DC=com",
 			expectedCN:  "COMPANY-K8S-app\\", // Will split at first comma (not handling escapes)
-			expectError: false,                // Current implementation doesn't handle escaped commas
+			expectError: false,               // Current implementation doesn't handle escaped commas
 		},
 
 		// Real examples from documentation
@@ -306,4 +306,3 @@ func TestExtractCNFromDN_TableDrivenEdgeCases(t *testing.T) {
 		})
 	}
 }
-

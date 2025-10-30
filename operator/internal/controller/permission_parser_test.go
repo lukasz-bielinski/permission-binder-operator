@@ -491,4 +491,3 @@ func BenchmarkParsePermissionStringWithPrefixes(b *testing.B) {
 		_, _, _, _ = r.parsePermissionStringWithPrefixes("MT-K8S-DEV-K8S-staging-app-admin", prefixes, roleMapping)
 	}
 }
-
