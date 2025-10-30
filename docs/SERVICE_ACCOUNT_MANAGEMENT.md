@@ -39,7 +39,7 @@ Create RoleBindings for LDAP Groups (existing logic)
 FOR EACH ServiceAccountMapping entry:
    ├─ Generate SA name: my-app-sa-deploy
    ├─ Create ServiceAccount (if not exists)
-   ├─ Create RoleBinding: my-app-sa-deploy-edit
+   ├─ Create RoleBinding: sa-my-app-deploy
    └─ Track in status.processedServiceAccounts
 ```
 
@@ -539,12 +539,13 @@ Creating ServiceAccount: my-app-sa-deploy in namespace my-app
 kubectl get rolebinding -n my-app | grep sa-deploy
 
 # Describe specific RoleBinding
-kubectl describe rolebinding my-app-sa-deploy-edit -n my-app
+# RoleBinding naming: sa-{namespace}-{sa-key}
+kubectl describe rolebinding sa-my-app-deploy -n my-app
 ```
 
 **Expected output**:
 ```yaml
-Name:         my-app-sa-deploy-edit
+Name:         sa-my-app-deploy
 Namespace:    my-app
 Role:
   Kind:  ClusterRole
@@ -580,7 +581,7 @@ kubectl get sa my-app-sa-deploy -n my-app -o jsonpath='{.secrets[*].name}'
 
 **Check RoleBinding**:
 ```bash
-oc describe rolebinding my-app-sa-deploy-edit -n my-app
+oc describe rolebinding sa-my-app-deploy -n my-app
 ```
 
 **Verify role permissions**:

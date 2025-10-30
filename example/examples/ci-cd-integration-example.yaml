@@ -47,9 +47,9 @@ data:
 #   - RoleBinding: my-app-developer (for LDAP group)
 #   - RoleBinding: my-app-admin (for LDAP group)
 #   - ServiceAccount: my-app-sa-deploy (for CI/CD)
-#   - RoleBinding: my-app-sa-deploy-edit (SA → edit role)
+#   - RoleBinding: sa-my-app-deploy (SA → edit role)
 #   - ServiceAccount: my-app-sa-runtime (for app pods)
-#   - RoleBinding: my-app-sa-runtime-view (SA → view role)
+#   - RoleBinding: sa-my-app-runtime (SA → view role)
 
 ---
 # Usage Example 1: Bamboo Deployment Script
