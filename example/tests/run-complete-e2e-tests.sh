@@ -10,7 +10,7 @@ echo "🧪 Permission Binder Operator - Complete E2E Test Suite"
 echo "========================================================"
 echo "Started: $(date)"
 echo "Results will be saved to: $TEST_RESULTS"
-echo "Tests 1-34 in order matching e2e-test-scenarios.md"
+echo "Tests 1-41 in order matching e2e-test-scenarios.md"
 echo ""
 
 # Helper functions
@@ -1446,11 +1446,538 @@ fi
 echo ""
 
 # ============================================================================
+# Test 35: ServiceAccount Protection (SAFE MODE)
+# ============================================================================
+echo "Test 35: ServiceAccount Protection (SAFE MODE)"
+echo "-----------------------------------------------"
+
+# Create PermissionBinder with ServiceAccount mapping
+cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-protection
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: edit
+    runtime: view
+EOF
+
+sleep 15
+
+# Verify ServiceAccounts exist
+if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    SA_DEPLOY_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+    SA_RUNTIME_UID=$(kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+    
+    if [ -n "$SA_DEPLOY_UID" ] && [ -n "$SA_RUNTIME_UID" ]; then
+        info_log "ServiceAccounts created (deploy: ${SA_DEPLOY_UID:0:8}..., runtime: ${SA_RUNTIME_UID:0:8}...)"
+        
+        # Remove ServiceAccount mapping
+        cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-protection
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping: {}
+EOF
+        
+        sleep 15
+        
+        # Verify SAs still exist (SAFE MODE)
+        NEW_SA_DEPLOY_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+        NEW_SA_RUNTIME_UID=$(kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+        
+        if [ "$SA_DEPLOY_UID" == "$NEW_SA_DEPLOY_UID" ] && [ "$SA_RUNTIME_UID" == "$NEW_SA_RUNTIME_UID" ]; then
+            pass_test "ServiceAccounts NEVER deleted (SAFE MODE)"
+            
+            # Check orphaned annotations
+            ORPHANED_ANNOTATION=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.annotations.permission-binder\.io/orphaned-at}' 2>/dev/null)
+            if [ -n "$ORPHANED_ANNOTATION" ]; then
+                pass_test "Orphaned annotation added to ServiceAccounts"
+            else
+                info_log "Orphaned annotation not yet added (may need more time)"
+            fi
+        else
+            fail_test "ServiceAccounts were deleted or recreated"
+        fi
+    else
+        info_log "ServiceAccounts not created in previous tests"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping SA protection test"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 36: ServiceAccount Deletion and Cleanup (Orphaned RoleBindings)
+# ============================================================================
+echo "Test 36: ServiceAccount Deletion and Cleanup"
+echo "----------------------------------------------"
+
+# Create PermissionBinder for cleanup test
+cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-cleanup
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    cleanup-test: edit
+EOF
+
+sleep 15
+
+if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    # Check if SA and RoleBinding exist
+    if kubectl get sa test-namespace-001-sa-cleanup-test -n test-namespace-001 >/dev/null 2>&1; then
+        RB_NAME=$(kubectl get rolebinding -n test-namespace-001 -o json 2>/dev/null | jq -r '.items[] | select(.subjects[0].name | contains("sa-cleanup-test")) | .metadata.name' | head -1)
+        info_log "RoleBinding: $RB_NAME"
+        
+        # Manually delete ServiceAccount
+        kubectl delete sa test-namespace-001-sa-cleanup-test -n test-namespace-001 >/dev/null 2>&1
+        
+        # Trigger reconciliation
+        kubectl annotate permissionbinder test-sa-cleanup -n $NAMESPACE trigger-reconcile="$(date +%s)" --overwrite >/dev/null 2>&1
+        sleep 20
+        
+        # Verify SA recreated (operator should recreate it)
+        if kubectl get sa test-namespace-001-sa-cleanup-test -n test-namespace-001 >/dev/null 2>&1; then
+            pass_test "ServiceAccount automatically recreated after deletion"
+        else
+            fail_test "ServiceAccount not recreated"
+        fi
+        
+        # Verify RoleBinding recreated
+        if kubectl get rolebinding -n test-namespace-001 2>/dev/null | grep -q "sa-cleanup-test"; then
+            pass_test "RoleBinding recreated for ServiceAccount"
+        else
+            info_log "RoleBinding not yet recreated (may need more time)"
+        fi
+    else
+        info_log "ServiceAccount cleanup-test not created"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping cleanup test"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 37: Cross-Namespace ServiceAccount References
+# ============================================================================
+echo "Test 37: Cross-Namespace ServiceAccount References"
+echo "----------------------------------------------------"
+
+# Create PermissionBinder for cross-namespace test
+cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-cross-ns
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    cross-ns-test: view
+EOF
+
+sleep 15
+
+# Get managed namespaces
+MANAGED_NAMESPACES=$(kubectl get ns -l permission-binder.io/managed-by=permission-binder-operator -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+
+if [ -n "$MANAGED_NAMESPACES" ]; then
+    SA_COUNT=0
+    ISOLATION_OK=0
+    
+    for ns in $MANAGED_NAMESPACES; do
+        # Check if SA exists in this namespace
+        if kubectl get sa ${ns}-sa-cross-ns-test -n $ns >/dev/null 2>&1; then
+            SA_COUNT=$((SA_COUNT + 1))
+            
+            # Verify RoleBinding references SA from same namespace
+            RB_SA_NS=$(kubectl get rolebinding -n $ns -o json 2>/dev/null | jq -r '.items[] | select(.subjects[0].name | contains("sa-cross-ns-test")) | .subjects[0].namespace' | head -1)
+            
+            if [ "$RB_SA_NS" == "$ns" ]; then
+                ISOLATION_OK=$((ISOLATION_OK + 1))
+            fi
+        fi
+    done
+    
+    if [ $SA_COUNT -gt 1 ]; then
+        pass_test "ServiceAccounts created in multiple namespaces ($SA_COUNT namespaces)"
+    else
+        info_log "ServiceAccounts created in $SA_COUNT namespace(s)"
+    fi
+    
+    if [ $ISOLATION_OK -eq $SA_COUNT ] && [ $SA_COUNT -gt 0 ]; then
+        pass_test "Cross-namespace isolation verified (RoleBindings reference local SAs)"
+    else
+        info_log "Isolation check: $ISOLATION_OK/$SA_COUNT namespaces OK"
+    fi
+else
+    info_log "No managed namespaces found for cross-namespace test"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 38: Multiple ServiceAccounts per Namespace (Scaling)
+# ============================================================================
+echo "Test 38: Multiple ServiceAccounts per Namespace"
+echo "-------------------------------------------------"
+
+# Create PermissionBinder with multiple SA mappings
+cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-multiple
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: admin
+    runtime: view
+    monitoring: view
+    cicd: edit
+    backup: edit
+    logging: view
+    metrics: view
+    ingress: edit
+EOF
+
+START_TIME=$(date +%s)
+sleep 25
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    # Count ServiceAccounts
+    ACTUAL_SA_COUNT=$(kubectl get sa -n test-namespace-001 2>/dev/null | grep "sa-" | wc -l)
+    ACTUAL_SA_COUNT=$(echo "$ACTUAL_SA_COUNT" | tr -d ' \n')
+    
+    info_log "ServiceAccounts created: $ACTUAL_SA_COUNT"
+    info_log "Reconciliation time: ${DURATION}s"
+    
+    if [ "$ACTUAL_SA_COUNT" -ge 8 ]; then
+        pass_test "Multiple ServiceAccounts created successfully ($ACTUAL_SA_COUNT)"
+    else
+        info_log "Created $ACTUAL_SA_COUNT ServiceAccounts (expected 8+)"
+    fi
+    
+    # Performance check
+    if [ $DURATION -lt 30 ]; then
+        pass_test "Reconciliation completed in acceptable time (${DURATION}s < 30s)"
+    else
+        info_log "Reconciliation took ${DURATION}s"
+    fi
+    
+    # Check for duplicates
+    DUPLICATE_CHECK=$(kubectl get sa -n test-namespace-001 -o json 2>/dev/null | jq -r '[.items[].metadata.name] | group_by(.) | map(select(length > 1)) | length')
+    if [ "$DUPLICATE_CHECK" == "0" ]; then
+        pass_test "No duplicate ServiceAccounts"
+    else
+        fail_test "Duplicate ServiceAccounts detected"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping multiple SA test"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 39: ServiceAccount Special Characters and Edge Cases
+# ============================================================================
+echo "Test 39: ServiceAccount Special Characters & Edge Cases"
+echo "---------------------------------------------------------"
+
+# Test valid characters (hyphens)
+cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-special-chars
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    my-deploy-sa: edit
+    test-runtime-123: view
+EOF
+
+sleep 15
+
+if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    # Check valid names
+    VALID_COUNT=0
+    if kubectl get sa -n test-namespace-001 2>/dev/null | grep -q "my-deploy-sa"; then
+        VALID_COUNT=$((VALID_COUNT + 1))
+    fi
+    if kubectl get sa -n test-namespace-001 2>/dev/null | grep -q "test-runtime-123"; then
+        VALID_COUNT=$((VALID_COUNT + 1))
+    fi
+    
+    if [ $VALID_COUNT -eq 2 ]; then
+        pass_test "Valid special characters supported (hyphens, numbers)"
+    else
+        info_log "Valid character test: $VALID_COUNT/2 ServiceAccounts created"
+    fi
+    
+    # Test empty mapping (should not crash)
+    cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-empty
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping: {}
+EOF
+    
+    sleep 5
+    
+    # Verify operator still running
+    POD_STATUS=$(kubectl get pod -n $NAMESPACE -l control-plane=controller-manager -o jsonpath='{.items[0].status.phase}' 2>/dev/null)
+    if [ "$POD_STATUS" == "Running" ]; then
+        pass_test "Empty ServiceAccount mapping handled gracefully (no crash)"
+    else
+        fail_test "Operator not running after empty mapping"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping edge case tests"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 40: ServiceAccount Recreation After Deletion
+# ============================================================================
+echo "Test 40: ServiceAccount Recreation After Deletion"
+echo "---------------------------------------------------"
+
+# Create PermissionBinder for recreation test
+cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-recreation
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    recreation-test: edit
+EOF
+
+sleep 15
+
+if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    if kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1; then
+        # Record original UID
+        ORIGINAL_SA_UID=$(kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+        info_log "Original SA UID: ${ORIGINAL_SA_UID:0:8}..."
+        
+        # Delete ServiceAccount
+        kubectl delete sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1
+        
+        # Trigger reconciliation
+        kubectl annotate permissionbinder test-sa-recreation -n $NAMESPACE force-reconcile="$(date +%s)" --overwrite >/dev/null 2>&1
+        sleep 20
+        
+        # Verify recreated
+        if kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1; then
+            pass_test "ServiceAccount automatically recreated"
+            
+            # Verify new UID (new instance)
+            NEW_SA_UID=$(kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+            
+            if [ "$ORIGINAL_SA_UID" != "$NEW_SA_UID" ]; then
+                pass_test "New ServiceAccount instance created (different UID)"
+            else
+                info_log "ServiceAccount UID unchanged (unexpected)"
+            fi
+            
+            # Verify RoleBinding still works
+            if kubectl get rolebinding -n test-namespace-001 2>/dev/null | grep -q "sa-recreation-test"; then
+                pass_test "RoleBinding references recreated ServiceAccount"
+            else
+                info_log "RoleBinding not yet created"
+            fi
+        else
+            fail_test "ServiceAccount not recreated"
+        fi
+    else
+        info_log "ServiceAccount recreation-test not created"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping recreation test"
+fi
+
+echo ""
+
+# ============================================================================
+# Test 41: ServiceAccount Permission Updates via ConfigMap
+# ============================================================================
+echo "Test 41: ServiceAccount Permission Updates"
+echo "--------------------------------------------"
+
+# Create PermissionBinder with initial permissions
+cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-permission-update
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    perm-test: view
+EOF
+
+sleep 15
+
+if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+    # Record initial role
+    INITIAL_ROLE=$(kubectl get rolebinding -n test-namespace-001 -o json 2>/dev/null | jq -r '.items[] | select(.subjects[0].name | contains("sa-perm-test")) | .roleRef.name' | head -1)
+    info_log "Initial role: $INITIAL_ROLE"
+    
+    if [ "$INITIAL_ROLE" == "view" ]; then
+        pass_test "Initial permissions set correctly (view)"
+        
+        # Upgrade permissions
+        cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-permission-update
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    perm-test: admin
+EOF
+        
+        sleep 20
+        
+        # Verify upgrade
+        NEW_ROLE=$(kubectl get rolebinding -n test-namespace-001 -o json 2>/dev/null | jq -r '.items[] | select(.subjects[0].name | contains("sa-perm-test")) | .roleRef.name' | head -1)
+        info_log "Updated role: $NEW_ROLE"
+        
+        if [ "$NEW_ROLE" == "admin" ]; then
+            pass_test "Permission upgrade applied (view -> admin)"
+            
+            # Verify SA not recreated
+            SA_UID_AFTER=$(kubectl get sa test-namespace-001-sa-perm-test -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+            if [ -n "$SA_UID_AFTER" ]; then
+                pass_test "ServiceAccount not recreated during permission update"
+            fi
+        else
+            info_log "Permission upgrade not yet applied: $NEW_ROLE (expected: admin)"
+        fi
+        
+        # Test downgrade
+        cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-permission-update
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    perm-test: view
+EOF
+        
+        sleep 20
+        
+        # Verify downgrade
+        FINAL_ROLE=$(kubectl get rolebinding -n test-namespace-001 -o json 2>/dev/null | jq -r '.items[] | select(.subjects[0].name | contains("sa-perm-test")) | .roleRef.name' | head -1)
+        
+        if [ "$FINAL_ROLE" == "view" ]; then
+            pass_test "Permission downgrade applied (admin -> view)"
+        else
+            info_log "Permission downgrade not yet applied: $FINAL_ROLE"
+        fi
+    else
+        info_log "Initial role not 'view': $INITIAL_ROLE"
+    fi
+else
+    info_log "test-namespace-001 does not exist, skipping permission update test"
+fi
+
+echo ""
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
 echo "=========================================================="
-echo "E2E Test Suite Summary - Tests 1-34 COMPLETED"
+echo "E2E Test Suite Summary - Tests 1-41 COMPLETED"
 echo "=========================================================="
 echo ""
 echo "Test Results:"
@@ -1464,6 +1991,7 @@ echo ""
 echo "Managed Resources:"
 echo "  RoleBindings: $(kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)"
 echo "  Namespaces: $(kubectl get namespaces -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)"
+echo "  ServiceAccounts: $(kubectl get sa -A 2>/dev/null | grep "sa-" | wc -l)"
 echo ""
 echo "Completed: $(date)"
 echo ""

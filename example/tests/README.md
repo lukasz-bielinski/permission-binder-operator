@@ -40,10 +40,10 @@ Modular test runner that allows running individual tests or all tests with prope
 - ✅ **Debug mode (`--no-cleanup`)**: Preserve cluster state after test for manual inspection
 
 #### `run-complete-e2e-tests.sh`
-Complete test suite that runs all tests sequentially without cleanup between tests (faster but less isolated).
+Complete test suite that runs all 41 tests sequentially without cleanup between tests (faster but less isolated).
 
 ```bash
-# Run all tests in sequence
+# Run all tests in sequence (1-41)
 ./run-complete-e2e-tests.sh
 ```
 
@@ -51,6 +51,34 @@ Complete test suite that runs all tests sequentially without cleanup between tes
 - You want to run the full suite quickly
 - Tests build on each other's state
 - You're doing a final validation before release
+
+#### `run-tests-full-isolation.sh` ⭐ **RECOMMENDED FOR CI/CD**
+Runs tests with FULL ISOLATION - each test gets fresh cluster cleanup + fresh operator deployment.
+
+```bash
+# Run all tests with full isolation (pre + 1-41)
+./run-tests-full-isolation.sh
+
+# Run specific tests with full isolation
+./run-tests-full-isolation.sh 35 36 37
+
+# Run all new ServiceAccount tests
+./run-tests-full-isolation.sh 35 36 37 38 39 40 41
+```
+
+**Features:**
+- ✅ Fresh cluster cleanup per test
+- ✅ Fresh operator deployment per test
+- ✅ New pod per test (guaranteed isolation)
+- ✅ Detailed logs per test (cleanup, deploy, test)
+- ✅ Success rate calculation
+- ✅ Colored output for readability
+
+**Use when:**
+- You need guaranteed test isolation
+- Debugging flaky tests
+- Pre-release validation
+- CI/CD pipelines
 
 ### Helper Scripts
 
@@ -92,20 +120,23 @@ Test various whitelist entry formats.
 
 ## Test Coverage
 
-### Current Status: 29/34 Tests Implemented
+### Current Status: 42/42 Tests Implemented ✅
 
-#### ✅ Implemented (29 tests)
+#### ✅ Fully Implemented (42 tests)
 - Pre-Test: Initial State Verification
 - Test 1-25: Core functionality, security, reliability
-- Test 31-34: ServiceAccount management
+- Test 26-30: Prometheus metrics tests
+- Test 31-34: Basic ServiceAccount management
+- **Test 35-41: Advanced ServiceAccount tests (NEW)** ⭐
 
-#### 📋 TODO (5 tests)
-Tests 26-30 are Prometheus metrics tests that need to be added:
-- Test 26: Metrics Update on Role Mapping Changes
-- Test 27: Metrics Update on ConfigMap Changes  
-- Test 28: Orphaned Resources Metrics
-- Test 29: ConfigMap Processing Metrics
-- Test 30: Adoption Events Metrics
+#### 🆕 New ServiceAccount Tests (35-41)
+- **Test 35:** ServiceAccount Protection (SAFE MODE) - Ensures SAs are never deleted, only orphaned
+- **Test 36:** ServiceAccount Deletion and Cleanup - Tests automatic recreation and orphaned RoleBinding cleanup
+- **Test 37:** Cross-Namespace ServiceAccount References - Validates namespace isolation and separate SA instances
+- **Test 38:** Multiple ServiceAccounts per Namespace - Scaling test with 8 SAs per namespace
+- **Test 39:** ServiceAccount Special Characters & Edge Cases - Tests valid chars, invalid chars, empty mappings
+- **Test 40:** ServiceAccount Recreation After Deletion - Tests automatic recreation with new UID
+- **Test 41:** ServiceAccount Permission Updates - Tests dynamic permission changes (upgrade/downgrade)
 
 ## Quick Start
 
@@ -127,7 +158,8 @@ cd /home/pulse/workspace01/permission-binder-operator/example/tests
 # Run a group of related tests
 ./test-runner.sh 1-5    # Configuration tests
 ./test-runner.sh 13-16  # Security tests
-./test-runner.sh 31-34  # ServiceAccount tests
+./test-runner.sh 31-34  # Basic ServiceAccount tests
+./test-runner.sh 35-41  # Advanced ServiceAccount tests (NEW)
 
 # Run everything
 ./test-runner.sh all
@@ -182,11 +214,21 @@ cat /tmp/test-1-output.log
 ### Finalizer Tests (23)
 - Proper cleanup sequence
 
-### ServiceAccount Tests (31-34)
+### ServiceAccount Tests (31-41)
+**Basic Tests (31-34):**
 - Creation and binding
 - Custom naming patterns
 - Idempotency
 - Status tracking
+
+**Advanced Tests (35-41):** ⭐ NEW
+- **Protection (SAFE MODE)**: SAs never deleted, only orphaned
+- **Deletion & Cleanup**: Automatic recreation and orphaned RoleBinding cleanup
+- **Cross-Namespace**: Namespace isolation validation
+- **Scaling**: Multiple SAs per namespace (8 SAs)
+- **Edge Cases**: Special characters, empty mappings
+- **Recreation**: Automatic recreation with new UID tracking
+- **Permission Updates**: Dynamic permission changes (upgrade/downgrade)
 
 ## Best Practices
 
