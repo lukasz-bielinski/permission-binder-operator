@@ -668,3 +668,945 @@ echo "Processed ServiceAccounts: $SA_COUNT"
 
 ---
 
+### Test 35: ServiceAccount Protection (SAFE MODE)
+
+**Objective**: Verify operator NEVER deletes ServiceAccounts it created
+
+**Background**: 
+Similar to namespace protection (Test 7), ServiceAccounts should never be deleted by the operator. This prevents service disruptions and maintains security tokens/secrets. When a ServiceAccount is no longer needed, it should be marked with an annotation, not deleted.
+
+**Setup**:
+```bash
+# Create PermissionBinder with ServiceAccount mapping
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-protection
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: edit
+    runtime: view
+EOF
+
+# Wait for ServiceAccounts to be created
+sleep 10
+
+# Verify ServiceAccounts exist
+kubectl get sa -n test-namespace-001 | grep "sa-deploy"
+kubectl get sa -n test-namespace-001 | grep "sa-runtime"
+```
+
+**Execution**:
+```bash
+# Step 1: Record ServiceAccount UIDs
+SA_DEPLOY_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+SA_RUNTIME_UID=$(kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+
+echo "Deploy SA UID: $SA_DEPLOY_UID"
+echo "Runtime SA UID: $SA_RUNTIME_UID"
+
+# Step 2: Remove ServiceAccount mapping from PermissionBinder
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-protection
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping: {}  # REMOVED ALL ServiceAccounts
+EOF
+
+# Wait for reconciliation
+sleep 10
+
+# Step 3: Verify ServiceAccounts still exist
+kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 || echo "FAIL: SA was deleted!"
+kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 || echo "FAIL: SA was deleted!"
+
+# Step 4: Verify UIDs unchanged (not recreated)
+NEW_SA_DEPLOY_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+NEW_SA_RUNTIME_UID=$(kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+
+if [ "$SA_DEPLOY_UID" == "$NEW_SA_DEPLOY_UID" ]; then
+  echo "PASS: Deploy SA preserved (UID unchanged)"
+else
+  echo "FAIL: Deploy SA was recreated or deleted"
+fi
+
+if [ "$SA_RUNTIME_UID" == "$NEW_SA_RUNTIME_UID" ]; then
+  echo "PASS: Runtime SA preserved (UID unchanged)"
+else
+  echo "FAIL: Runtime SA was recreated or deleted"
+fi
+
+# Step 5: Verify orphaned annotation added
+DEPLOY_ANNOTATION=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.annotations.permission-binder\.io/orphaned-at}')
+RUNTIME_ANNOTATION=$(kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 -o jsonpath='{.metadata.annotations.permission-binder\.io/orphaned-at}')
+
+if [ -n "$DEPLOY_ANNOTATION" ]; then
+  echo "PASS: Deploy SA has orphaned-at annotation: $DEPLOY_ANNOTATION"
+else
+  echo "FAIL: Deploy SA missing orphaned-at annotation"
+fi
+
+if [ -n "$RUNTIME_ANNOTATION" ]; then
+  echo "PASS: Runtime SA has orphaned-at annotation: $RUNTIME_ANNOTATION"
+else
+  echo "FAIL: Runtime SA missing orphaned-at annotation"
+fi
+
+# Step 6: Verify associated RoleBindings removed
+kubectl get rolebinding -n test-namespace-001 | grep "sa-deploy" && echo "WARN: RoleBinding still exists" || echo "PASS: RoleBinding removed"
+kubectl get rolebinding -n test-namespace-001 | grep "sa-runtime" && echo "WARN: RoleBinding still exists" || echo "PASS: RoleBinding removed"
+```
+
+**Expected Result**:
+- ✅ ServiceAccounts NEVER deleted (SAFE MODE)
+- ✅ ServiceAccount UIDs unchanged (not recreated)
+- ✅ Orphaned annotation added: `permission-binder.io/orphaned-at=<timestamp>`
+- ✅ Orphaned annotation added: `permission-binder.io/orphaned-by=<permissionbinder-name>`
+- ✅ Associated RoleBindings removed (only bindings, not SAs)
+- ✅ ServiceAccounts remain functional (tokens/secrets preserved)
+
+**Security Rationale**:
+1. **Token Preservation**: ServiceAccount tokens/secrets must not be invalidated
+2. **Pod Continuity**: Running pods using these SAs should not be disrupted
+3. **Manual Cleanup**: Admin can manually delete SAs when ready
+4. **Audit Trail**: Orphaned annotation provides clear history
+
+**Recovery Test**:
+```bash
+# Step 7: Re-add ServiceAccount mapping
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-protection
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: edit
+    runtime: view
+EOF
+
+# Wait for reconciliation
+sleep 10
+
+# Step 8: Verify orphaned annotation removed (adoption)
+DEPLOY_ANNOTATION=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.annotations.permission-binder\.io/orphaned-at}')
+RUNTIME_ANNOTATION=$(kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 -o jsonpath='{.metadata.annotations.permission-binder\.io/orphaned-at}')
+
+if [ -z "$DEPLOY_ANNOTATION" ]; then
+  echo "PASS: Deploy SA orphaned-at annotation removed (adopted)"
+else
+  echo "FAIL: Deploy SA still has orphaned-at annotation"
+fi
+
+if [ -z "$RUNTIME_ANNOTATION" ]; then
+  echo "PASS: Runtime SA orphaned-at annotation removed (adopted)"
+else
+  echo "FAIL: Runtime SA still has orphaned-at annotation"
+fi
+
+# Step 9: Verify RoleBindings recreated
+kubectl get rolebinding -n test-namespace-001 | grep "sa-deploy" || echo "FAIL: RoleBinding not recreated"
+kubectl get rolebinding -n test-namespace-001 | grep "sa-runtime" || echo "FAIL: RoleBinding not recreated"
+```
+
+**Expected Recovery Result**:
+- ✅ ServiceAccounts automatically adopted (orphaned annotations removed)
+- ✅ RoleBindings recreated
+- ✅ Full functionality restored
+- ✅ Zero downtime for existing pods using these SAs
+
+**Related Tests**:
+- Test 7: Namespace Protection (similar SAFE MODE behavior)
+- Test 8: PermissionBinder Deletion (SAFE MODE for all resources)
+- Test 14: Orphaned Resources Adoption (automatic recovery)
+
+---
+
+### Test 36: ServiceAccount Deletion and Cleanup (Orphaned RoleBindings)
+
+**Objective**: Verify operator cleans up orphaned RoleBindings when ServiceAccount is manually deleted
+
+**Background**:
+When a ServiceAccount is manually deleted (e.g., by admin), any RoleBindings referencing it become orphaned and non-functional. The operator should detect this and clean up orphaned RoleBindings.
+
+**Setup**:
+```bash
+# Create PermissionBinder with ServiceAccount mapping
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-cleanup
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    cleanup-test: edit
+EOF
+
+# Wait for SA and RoleBinding creation
+sleep 10
+
+# Verify SA and RoleBinding exist
+kubectl get sa test-namespace-001-sa-cleanup-test -n test-namespace-001
+kubectl get rolebinding -n test-namespace-001 | grep "sa-cleanup-test"
+```
+
+**Execution**:
+```bash
+# Step 1: Record RoleBinding name
+RB_NAME=$(kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-cleanup-test")) | .metadata.name')
+echo "RoleBinding: $RB_NAME"
+
+# Step 2: Manually delete ServiceAccount (simulating manual cleanup)
+kubectl delete sa test-namespace-001-sa-cleanup-test -n test-namespace-001
+
+# Verify SA deleted
+kubectl get sa test-namespace-001-sa-cleanup-test -n test-namespace-001 2>&1 | grep "NotFound" && echo "SA deleted successfully"
+
+# Step 3: Trigger reconciliation (add annotation to PermissionBinder)
+kubectl annotate permissionbinder test-sa-cleanup -n permissions-binder-operator trigger-reconcile="$(date +%s)" --overwrite
+
+# Wait for operator to reconcile
+sleep 15
+
+# Step 4: Verify orphaned RoleBinding detected and cleaned up
+kubectl get rolebinding $RB_NAME -n test-namespace-001 2>&1 | grep "NotFound" && echo "PASS: Orphaned RoleBinding cleaned up" || echo "FAIL: Orphaned RoleBinding still exists"
+
+# Step 5: Verify operator logs cleanup event
+kubectl logs -n permissions-binder-operator deployment/operator-controller-manager --tail=50 | jq 'select(.message | contains("orphaned") or contains("cleanup"))'
+
+# Step 6: Verify ServiceAccount recreated (operator should recreate it)
+sleep 10
+kubectl get sa test-namespace-001-sa-cleanup-test -n test-namespace-001 && echo "PASS: SA recreated by operator" || echo "FAIL: SA not recreated"
+
+# Step 7: Verify new RoleBinding created
+kubectl get rolebinding -n test-namespace-001 | grep "sa-cleanup-test" && echo "PASS: RoleBinding recreated" || echo "FAIL: RoleBinding not recreated"
+```
+
+**Expected Result**:
+- ✅ Operator detects manually deleted ServiceAccount
+- ✅ Orphaned RoleBinding cleaned up
+- ✅ Operator recreates ServiceAccount (matches desired state)
+- ✅ New RoleBinding created for recreated SA
+- ✅ JSON logs show cleanup action with context
+- ✅ No stuck orphaned resources
+
+**Log Verification**:
+```bash
+# Expected log entry (JSON)
+{
+  "level": "info",
+  "timestamp": "...",
+  "message": "Cleaning up orphaned RoleBinding",
+  "action": "cleanup_orphaned_rolebinding",
+  "namespace": "test-namespace-001",
+  "rolebinding": "...",
+  "reason": "ServiceAccount not found",
+  "serviceAccount": "test-namespace-001-sa-cleanup-test"
+}
+```
+
+---
+
+### Test 37: Cross-Namespace ServiceAccount References
+
+**Objective**: Verify ServiceAccounts are created per-namespace and don't cross namespace boundaries
+
+**Background**:
+Each namespace should have its own ServiceAccount instances. ServiceAccounts from one namespace cannot be referenced in RoleBindings of another namespace. The operator must create separate SAs per namespace.
+
+**Setup**:
+```bash
+# Create PermissionBinder with ServiceAccount mapping
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-cross-ns
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    cross-ns-test: view
+EOF
+
+# Wait for reconciliation
+sleep 10
+```
+
+**Execution**:
+```bash
+# Step 1: Verify SA created in each managed namespace
+MANAGED_NAMESPACES=$(kubectl get ns -l permission-binder.io/managed-by=permission-binder-operator -o jsonpath='{.items[*].metadata.name}')
+
+for ns in $MANAGED_NAMESPACES; do
+  echo "Checking namespace: $ns"
+  
+  # Verify SA exists in this namespace
+  kubectl get sa ${ns}-sa-cross-ns-test -n $ns && echo "  ✓ SA exists" || echo "  ✗ SA missing"
+  
+  # Verify RoleBinding references SA from SAME namespace
+  RB_SA=$(kubectl get rolebinding -n $ns -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-cross-ns-test")) | .subjects[0].namespace')
+  
+  if [ "$RB_SA" == "$ns" ]; then
+    echo "  ✓ RoleBinding references SA from same namespace"
+  else
+    echo "  ✗ FAIL: RoleBinding references SA from different namespace: $RB_SA"
+  fi
+done
+
+# Step 2: Verify SA UIDs are different per namespace (separate instances)
+SA_UID_NS1=$(kubectl get sa test-namespace-001-sa-cross-ns-test -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+SA_UID_NS2=$(kubectl get sa test-namespace-002-sa-cross-ns-test -n test-namespace-002 -o jsonpath='{.metadata.uid}')
+
+if [ "$SA_UID_NS1" != "$SA_UID_NS2" ]; then
+  echo "PASS: ServiceAccounts are separate instances per namespace"
+else
+  echo "FAIL: ServiceAccounts have same UID (should be different)"
+fi
+
+# Step 3: Verify tokens are namespace-specific
+TOKEN_NS1=$(kubectl get sa test-namespace-001-sa-cross-ns-test -n test-namespace-001 -o jsonpath='{.secrets[0].name}')
+TOKEN_NS2=$(kubectl get sa test-namespace-002-sa-cross-ns-test -n test-namespace-002 -o jsonpath='{.secrets[0].name}')
+
+echo "Token in ns1: $TOKEN_NS1"
+echo "Token in ns2: $TOKEN_NS2"
+
+# Step 4: Verify each SA can only access its own namespace
+# Create test pod using SA from namespace-001
+kubectl run test-pod-sa-ns1 -n test-namespace-001 \
+  --image=bitnami/kubectl:latest \
+  --serviceaccount=test-namespace-001-sa-cross-ns-test \
+  --restart=Never \
+  --command -- sleep 3600
+
+# Wait for pod to be ready
+kubectl wait --for=condition=Ready pod/test-pod-sa-ns1 -n test-namespace-001 --timeout=60s
+
+# Try to access namespace-002 (should fail - no permissions)
+kubectl exec test-pod-sa-ns1 -n test-namespace-001 -- kubectl get pods -n test-namespace-002 2>&1 | grep "Forbidden" && echo "PASS: Cross-namespace access denied" || echo "FAIL: Cross-namespace access allowed"
+
+# Cleanup test pod
+kubectl delete pod test-pod-sa-ns1 -n test-namespace-001 --grace-period=0 --force
+```
+
+**Expected Result**:
+- ✅ ServiceAccount created in each managed namespace
+- ✅ Each SA is a separate instance (different UIDs)
+- ✅ RoleBindings reference SA from same namespace only
+- ✅ Each SA has namespace-specific tokens
+- ✅ Cross-namespace access denied (proper isolation)
+- ✅ No shared ServiceAccounts across namespaces
+
+**Security Validation**:
+- Namespace isolation maintained
+- No privilege escalation across namespaces
+- Each SA has minimal required permissions
+
+---
+
+### Test 38: Multiple ServiceAccounts per Namespace (Scaling)
+
+**Objective**: Verify operator handles multiple ServiceAccounts in same namespace efficiently
+
+**Background**:
+A namespace may need multiple ServiceAccounts for different purposes (deploy, runtime, monitoring, ci/cd). The operator should handle many SAs per namespace without performance degradation.
+
+**Setup**:
+```bash
+# Create PermissionBinder with multiple ServiceAccount mappings
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-multiple
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: admin
+    runtime: view
+    monitoring: view
+    cicd: edit
+    backup: edit
+    logging: view
+    metrics: view
+    ingress: edit
+EOF
+
+# Record start time
+START_TIME=$(date +%s)
+```
+
+**Execution**:
+```bash
+# Wait for reconciliation
+sleep 20
+
+# Record end time
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+echo "Reconciliation duration: ${DURATION}s"
+
+# Step 1: Verify all 8 ServiceAccounts created
+EXPECTED_SA_COUNT=8
+ACTUAL_SA_COUNT=$(kubectl get sa -n test-namespace-001 | grep "sa-" | wc -l)
+
+echo "Expected ServiceAccounts: $EXPECTED_SA_COUNT"
+echo "Actual ServiceAccounts: $ACTUAL_SA_COUNT"
+
+if [ $ACTUAL_SA_COUNT -ge $EXPECTED_SA_COUNT ]; then
+  echo "PASS: All ServiceAccounts created"
+else
+  echo "FAIL: Missing ServiceAccounts (expected $EXPECTED_SA_COUNT, got $ACTUAL_SA_COUNT)"
+fi
+
+# Step 2: Verify all RoleBindings created
+EXPECTED_RB_COUNT=8
+ACTUAL_RB_COUNT=$(kubectl get rolebinding -n test-namespace-001 -o json | jq '[.items[] | select(.subjects[0].kind == "ServiceAccount")] | length')
+
+echo "Expected RoleBindings for SAs: $EXPECTED_RB_COUNT"
+echo "Actual RoleBindings for SAs: $ACTUAL_RB_COUNT"
+
+if [ $ACTUAL_RB_COUNT -ge $EXPECTED_RB_COUNT ]; then
+  echo "PASS: All RoleBindings created"
+else
+  echo "FAIL: Missing RoleBindings (expected $EXPECTED_RB_COUNT, got $ACTUAL_RB_COUNT)"
+fi
+
+# Step 3: Verify each SA has correct role
+kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].kind == "ServiceAccount") | "\(.subjects[0].name) -> \(.roleRef.name)"' | sort
+
+# Step 4: Verify no duplicates
+DUPLICATE_CHECK=$(kubectl get sa -n test-namespace-001 -o json | jq -r '[.items[].metadata.name] | group_by(.) | map(select(length > 1)) | length')
+
+if [ "$DUPLICATE_CHECK" == "0" ]; then
+  echo "PASS: No duplicate ServiceAccounts"
+else
+  echo "FAIL: Duplicate ServiceAccounts detected"
+fi
+
+# Step 5: Performance check - reconciliation should be fast
+if [ $DURATION -lt 30 ]; then
+  echo "PASS: Reconciliation completed in acceptable time (${DURATION}s < 30s)"
+else
+  echo "WARN: Reconciliation took longer than expected (${DURATION}s)"
+fi
+
+# Step 6: Memory usage check
+POD_NAME=$(kubectl get pod -n permissions-binder-operator -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}')
+MEMORY_USAGE=$(kubectl top pod $POD_NAME -n permissions-binder-operator --no-headers | awk '{print $3}')
+
+echo "Operator memory usage: $MEMORY_USAGE"
+
+# Step 7: Verify status tracking
+SA_STATUS_COUNT=$(kubectl get permissionbinder test-sa-multiple -n permissions-binder-operator -o jsonpath='{.status.processedServiceAccounts}' | jq '. | length')
+
+echo "ServiceAccounts tracked in status: $SA_STATUS_COUNT"
+
+if [ $SA_STATUS_COUNT -ge $EXPECTED_SA_COUNT ]; then
+  echo "PASS: All ServiceAccounts tracked in status"
+else
+  echo "FAIL: Status missing ServiceAccounts"
+fi
+```
+
+**Expected Result**:
+- ✅ All 8 ServiceAccounts created successfully
+- ✅ All 8 RoleBindings created with correct roles
+- ✅ No duplicates
+- ✅ Reconciliation < 30 seconds
+- ✅ Memory usage acceptable (< 200Mi)
+- ✅ Status correctly tracks all SAs
+- ✅ No resource conflicts
+
+**Performance Benchmarks**:
+- 8 SAs per namespace: < 30s
+- Expected memory: < 150Mi
+- No errors in logs
+
+---
+
+### Test 39: ServiceAccount Special Characters and Edge Cases
+
+**Objective**: Verify operator handles edge cases in ServiceAccount names and configurations
+
+**Background**:
+Kubernetes has strict naming rules. ServiceAccount names must be valid DNS-1123 subdomain names. The operator should validate names and handle edge cases gracefully.
+
+**Test Cases**:
+
+#### Test 39.1: Valid Special Characters (Hyphens)
+```bash
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-special-chars
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    my-deploy-sa: edit
+    test-runtime-123: view
+    sa-with-many-hyphens: view
+EOF
+
+sleep 10
+
+# Verify valid names accepted
+kubectl get sa -n test-namespace-001 | grep "my-deploy-sa" && echo "PASS: Hyphens supported"
+kubectl get sa -n test-namespace-001 | grep "test-runtime-123" && echo "PASS: Numbers supported"
+kubectl get sa -n test-namespace-001 | grep "sa-with-many-hyphens" && echo "PASS: Multiple hyphens supported"
+```
+
+#### Test 39.2: Invalid Characters (Should be rejected or sanitized)
+```bash
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-invalid
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    "UPPERCASE_SA": edit
+    "sa.with.dots": view
+    "sa_with_underscores": view
+EOF
+
+sleep 10
+
+# Check operator logs for validation errors
+kubectl logs -n permissions-binder-operator deployment/operator-controller-manager --tail=50 | jq 'select(.level=="error" or .level=="warning") | select(.message | contains("invalid") or contains("ServiceAccount"))'
+
+# Verify invalid names rejected (SA not created)
+kubectl get sa -n test-namespace-001 | grep "UPPERCASE_SA" && echo "FAIL: Invalid name accepted" || echo "PASS: Invalid name rejected"
+```
+
+#### Test 39.3: Name Length Limits
+```bash
+# Max length for K8s resource name: 253 characters
+LONG_NAME="sa-$(printf 'a%.0s' {1..250})"
+
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-long-name
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    "${LONG_NAME}": view
+EOF
+
+sleep 10
+
+# Check if operator handles long names
+kubectl logs -n permissions-binder-operator deployment/operator-controller-manager --tail=50 | jq 'select(.message | contains("name too long") or contains("exceeds"))'
+```
+
+#### Test 39.4: Empty ServiceAccount Mapping
+```bash
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-empty
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping: {}
+EOF
+
+sleep 5
+
+# Verify no crash, logs show empty mapping
+kubectl get pod -n permissions-binder-operator -l control-plane=controller-manager -o jsonpath='{.items[0].status.phase}' | grep "Running" && echo "PASS: No crash with empty mapping"
+```
+
+**Expected Result**:
+- ✅ Valid characters (hyphens, numbers) supported
+- ✅ Invalid characters (uppercase, dots, underscores) rejected with clear error
+- ✅ Name length validation (max 253 chars)
+- ✅ Empty mapping handled gracefully
+- ✅ Clear JSON logs for validation errors
+- ✅ No operator crash on invalid input
+- ✅ Valid entries processed even if some are invalid
+
+---
+
+### Test 40: ServiceAccount Recreation After Deletion
+
+**Objective**: Verify operator recreates deleted ServiceAccount and maintains consistency
+
+**Background**:
+If a ServiceAccount is accidentally or intentionally deleted, the operator should detect the deletion and recreate it to match the desired state defined in PermissionBinder.
+
+**Setup**:
+```bash
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-recreation
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    recreation-test: edit
+EOF
+
+sleep 10
+
+# Verify SA created
+kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001
+```
+
+**Execution**:
+```bash
+# Step 1: Record original ServiceAccount details
+ORIGINAL_SA_UID=$(kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+ORIGINAL_SA_SECRET=$(kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 -o jsonpath='{.secrets[0].name}')
+
+echo "Original SA UID: $ORIGINAL_SA_UID"
+echo "Original SA Secret: $ORIGINAL_SA_SECRET"
+
+# Step 2: Delete ServiceAccount
+kubectl delete sa test-namespace-001-sa-recreation-test -n test-namespace-001
+
+# Verify deleted
+kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 2>&1 | grep "NotFound" && echo "SA deleted"
+
+# Step 3: Trigger reconciliation
+kubectl annotate permissionbinder test-sa-recreation -n permissions-binder-operator force-reconcile="$(date +%s)" --overwrite
+
+# Wait for operator to detect and recreate
+sleep 15
+
+# Step 4: Verify SA recreated
+kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 && echo "PASS: SA recreated" || echo "FAIL: SA not recreated"
+
+# Step 5: Verify new UID (new instance)
+NEW_SA_UID=$(kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+
+if [ "$ORIGINAL_SA_UID" != "$NEW_SA_UID" ]; then
+  echo "PASS: New ServiceAccount instance created (different UID)"
+else
+  echo "FAIL: Same UID (should be different after recreation)"
+fi
+
+# Step 6: Verify RoleBinding still works
+RB_SA_NAME=$(kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-recreation-test")) | .subjects[0].name')
+
+echo "RoleBinding references SA: $RB_SA_NAME"
+
+if [ "$RB_SA_NAME" == "test-namespace-001-sa-recreation-test" ]; then
+  echo "PASS: RoleBinding references correct SA"
+else
+  echo "FAIL: RoleBinding reference broken"
+fi
+
+# Step 7: Verify new token created
+NEW_SA_SECRET=$(kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 -o jsonpath='{.secrets[0].name}')
+
+echo "New SA Secret: $NEW_SA_SECRET"
+
+# Step 8: Verify operator logs recreation event
+kubectl logs -n permissions-binder-operator deployment/operator-controller-manager --tail=100 | jq 'select(.message | contains("created") or contains("ServiceAccount")) | select(.namespace=="test-namespace-001")'
+
+# Step 9: Multiple deletion test (stress test)
+echo "Stress test: Multiple rapid deletions"
+for i in {1..3}; do
+  kubectl delete sa test-namespace-001-sa-recreation-test -n test-namespace-001 --ignore-not-found
+  sleep 5
+  kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 && echo "Iteration $i: SA exists" || echo "Iteration $i: SA missing"
+  kubectl annotate permissionbinder test-sa-recreation -n permissions-binder-operator stress-test="iteration-$i" --overwrite
+  sleep 10
+done
+
+# Final verification
+kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 && echo "PASS: SA survives stress test" || echo "FAIL: SA missing after stress test"
+```
+
+**Expected Result**:
+- ✅ Operator detects ServiceAccount deletion
+- ✅ ServiceAccount automatically recreated
+- ✅ New UID confirms new instance
+- ✅ RoleBinding updated to reference new SA
+- ✅ New token/secret created
+- ✅ Recreation logged in JSON logs
+- ✅ Survives multiple rapid deletions
+- ✅ Eventual consistency achieved
+
+**Log Verification**:
+```bash
+# Expected log entries
+{
+  "level": "info",
+  "message": "ServiceAccount not found, creating",
+  "action": "create_serviceaccount",
+  "namespace": "test-namespace-001",
+  "serviceAccount": "test-namespace-001-sa-recreation-test",
+  "reason": "missing_resource"
+}
+```
+
+---
+
+### Test 41: ServiceAccount Permission Updates via ConfigMap
+
+**Objective**: Verify ServiceAccount permissions update when role mapping changes in ConfigMap
+
+**Background**:
+When role assignments change in the PermissionBinder, existing ServiceAccount RoleBindings should be updated to reflect new permissions. This tests dynamic permission management.
+
+**Setup**:
+```bash
+# Create PermissionBinder with initial permissions
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-permission-update
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: view  # Start with view (read-only)
+    runtime: view
+EOF
+
+sleep 10
+
+# Verify initial state
+kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-deploy")) | "SA: \(.subjects[0].name) -> Role: \(.roleRef.name)"'
+```
+
+**Execution**:
+```bash
+# Step 1: Record initial permissions
+INITIAL_ROLE=$(kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-deploy")) | .roleRef.name')
+
+echo "Initial role for deploy SA: $INITIAL_ROLE"
+
+if [ "$INITIAL_ROLE" == "view" ]; then
+  echo "PASS: Initial role is 'view'"
+else
+  echo "FAIL: Initial role should be 'view', got: $INITIAL_ROLE"
+fi
+
+# Step 2: Update ServiceAccount mapping (upgrade permissions)
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-permission-update
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: admin  # UPGRADED: view -> admin
+    runtime: edit  # UPGRADED: view -> edit
+EOF
+
+# Wait for reconciliation
+sleep 15
+
+# Step 3: Verify permissions updated
+NEW_DEPLOY_ROLE=$(kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-deploy")) | .roleRef.name')
+NEW_RUNTIME_ROLE=$(kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-runtime")) | .roleRef.name')
+
+echo "New role for deploy SA: $NEW_DEPLOY_ROLE"
+echo "New role for runtime SA: $NEW_RUNTIME_ROLE"
+
+if [ "$NEW_DEPLOY_ROLE" == "admin" ]; then
+  echo "PASS: Deploy SA upgraded to admin"
+else
+  echo "FAIL: Deploy SA should be admin, got: $NEW_DEPLOY_ROLE"
+fi
+
+if [ "$NEW_RUNTIME_ROLE" == "edit" ]; then
+  echo "PASS: Runtime SA upgraded to edit"
+else
+  echo "FAIL: Runtime SA should be edit, got: $NEW_RUNTIME_ROLE"
+fi
+
+# Step 4: Verify SA UID unchanged (not recreated)
+SA_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}')
+echo "ServiceAccount UID: $SA_UID"
+# (Compare with initial UID from Step 1 if recorded)
+
+# Step 5: Test permission downgrade
+kubectl apply -f - <<EOF
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-permission-update
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    deploy: view  # DOWNGRADED: admin -> view
+    runtime: view  # DOWNGRADED: edit -> view
+EOF
+
+sleep 15
+
+# Step 6: Verify permissions downgraded
+FINAL_DEPLOY_ROLE=$(kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-deploy")) | .roleRef.name')
+FINAL_RUNTIME_ROLE=$(kubectl get rolebinding -n test-namespace-001 -o json | jq -r '.items[] | select(.subjects[0].name | contains("sa-runtime")) | .roleRef.name')
+
+echo "Final role for deploy SA: $FINAL_DEPLOY_ROLE"
+echo "Final role for runtime SA: $FINAL_RUNTIME_ROLE"
+
+if [ "$FINAL_DEPLOY_ROLE" == "view" ]; then
+  echo "PASS: Deploy SA downgraded to view"
+else
+  echo "FAIL: Deploy SA should be view, got: $FINAL_DEPLOY_ROLE"
+fi
+
+if [ "$FINAL_RUNTIME_ROLE" == "view" ]; then
+  echo "PASS: Runtime SA downgraded to view"
+else
+  echo "FAIL: Runtime SA should be view, got: $FINAL_RUNTIME_ROLE"
+fi
+
+# Step 7: Verify operator logs permission changes
+kubectl logs -n permissions-binder-operator deployment/operator-controller-manager --tail=100 | jq 'select(.message | contains("RoleBinding") or contains("updated")) | select(.namespace=="test-namespace-001")'
+
+# Step 8: Functional test - verify actual permissions work
+# Create test pod with deploy SA (now view permissions)
+kubectl run test-pod-sa-perms -n test-namespace-001 \
+  --image=bitnami/kubectl:latest \
+  --serviceaccount=test-namespace-001-sa-deploy \
+  --restart=Never \
+  --command -- sleep 3600
+
+kubectl wait --for=condition=Ready pod/test-pod-sa-perms -n test-namespace-001 --timeout=60s
+
+# Try to create resource (should fail - only view permissions)
+kubectl exec test-pod-sa-perms -n test-namespace-001 -- kubectl create configmap test-cm --from-literal=key=value 2>&1 | grep "Forbidden" && echo "PASS: View permissions enforced" || echo "FAIL: Should not have create permissions"
+
+# Try to list resources (should succeed - view allows list)
+kubectl exec test-pod-sa-perms -n test-namespace-001 -- kubectl get pods && echo "PASS: View permissions allow list" || echo "FAIL: Should have list permissions"
+
+# Cleanup
+kubectl delete pod test-pod-sa-perms -n test-namespace-001 --grace-period=0 --force
+```
+
+**Expected Result**:
+- ✅ Permission upgrade (view -> admin) applied successfully
+- ✅ Permission downgrade (admin -> view) applied successfully
+- ✅ ServiceAccount not recreated (UID unchanged)
+- ✅ RoleBinding updated in-place
+- ✅ Changes logged in JSON format
+- ✅ Actual permissions match configured permissions
+- ✅ Multiple permission changes handled correctly
+- ✅ No service disruption during updates
+
+**Security Considerations**:
+- Permission changes should be audited in logs
+- Downgrade from admin to view should be immediate
+- No temporary privilege escalation during updates
+
+**Log Verification**:
+```bash
+# Expected log entries
+{
+  "level": "info",
+  "message": "Updating RoleBinding permissions",
+  "action": "update_rolebinding",
+  "namespace": "test-namespace-001",
+  "rolebinding": "...",
+  "old_role": "view",
+  "new_role": "admin",
+  "serviceAccount": "test-namespace-001-sa-deploy"
+}
+```
+
+---
+
