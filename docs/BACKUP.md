@@ -403,5 +403,6 @@ echo "DR Drill $(date): SUCCESS" >> dr-drill-log.txt
 
 ## Version History
 
+- **v1.5** (2025-10-30): Updated for ServiceAccount management and comprehensive E2E test suite
 - **v1.0** (2025-10-15): Initial version with Kasten K10 integration
 
