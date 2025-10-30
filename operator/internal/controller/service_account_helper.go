@@ -116,7 +116,9 @@ func ProcessServiceAccounts(
 		}
 
 		// 2. Create or update RoleBinding for ServiceAccount
-		roleBindingName := fmt.Sprintf("%s-%s", fullSAName, roleName)
+		// Use SA key (e.g. "deploy") in name, not ClusterRole name (e.g. "edit")
+		// This matches the convention for LDAP group RoleBindings: namespace-role
+		roleBindingName := fmt.Sprintf("sa-%s-%s", namespace, saName)
 		rb := &rbacv1.RoleBinding{}
 		rbKey := types.NamespacedName{
 			Name:      roleBindingName,
