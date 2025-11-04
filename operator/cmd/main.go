@@ -159,9 +159,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Check if debug mode is enabled via environment variable
+	debugMode := os.Getenv("DEBUG_MODE") == "true" || os.Getenv("DEBUG_MODE") == "1"
+	if debugMode {
+		setupLog.Info("🔍 DEBUG MODE ENABLED - Detailed reconciliation logging will be active")
+	}
+
 	if err = (&controller.PermissionBinderReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		DebugMode: debugMode,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PermissionBinder")
 		os.Exit(1)

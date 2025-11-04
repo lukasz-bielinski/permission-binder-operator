@@ -184,6 +184,11 @@ spec:
                 description: LastProcessedConfigMapVersion tracks the last processed
                   ConfigMap version
                 type: string
+              lastProcessedRoleMappingHash:
+                description: |-
+                  LastProcessedRoleMappingHash tracks the hash of the last processed role mapping
+                  This is used to detect when role mapping changes and trigger reconciliation
+                type: string
               processedRoleBindings:
                 description: ProcessedRoleBindings contains the list of successfully
                   created RoleBindings

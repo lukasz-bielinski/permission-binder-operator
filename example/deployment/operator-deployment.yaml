@@ -518,6 +518,16 @@ spec:
         # Development: use latest
         image: lukaszbielinski/permission-binder-operator:1.5.3
         imagePullPolicy: IfNotPresent
+        env:
+        # Enable debug mode to see detailed reconciliation trigger logging
+        # Set to "true" or "1" to enable, "false" or "0" to disable (default: disabled)
+        # When enabled, logs will show:
+        # - What triggers each reconciliation
+        # - ConfigMap version changes
+        # - Role mapping hash changes
+        # - Reasons for skipping reconciliation
+        - name: DEBUG_MODE
+          value: "false"
         startupProbe:
           httpGet:
             path: /readyz

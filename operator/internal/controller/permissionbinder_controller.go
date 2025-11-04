@@ -18,7 +18,10 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -168,7 +171,8 @@ func init() {
 // PermissionBinderReconciler reconciles a PermissionBinder object
 type PermissionBinderReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	DebugMode bool
 }
 
 // +kubebuilder:rbac:groups=permission.permission-binder.io,resources=permissionbinders,verbs=get;list;watch;create;update;patch;delete
@@ -188,10 +192,21 @@ type PermissionBinderReconciler struct {
 func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
+	// Log reconciliation trigger in debug mode
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: Reconciliation triggered",
+			"trigger", "Reconcile",
+			"request", req.NamespacedName,
+			"timestamp", time.Now().Format(time.RFC3339Nano))
+	}
+
 	// Fetch the PermissionBinder instance
 	var permissionBinder permissionv1.PermissionBinder
 	if err := r.Get(ctx, req.NamespacedName, &permissionBinder); err != nil {
 		if errors.IsNotFound(err) {
+			if r.DebugMode {
+				logger.Info("🔍 DEBUG: PermissionBinder not found (deleted)", "request", req.NamespacedName)
+			}
 			logger.Info("PermissionBinder resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
@@ -231,13 +246,23 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Check if role mapping has changed
-	roleMappingChanged := r.hasRoleMappingChanged(&permissionBinder)
+	roleMappingChanged, currentHash := r.hasRoleMappingChanged(&permissionBinder)
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: Role mapping check",
+			"changed", roleMappingChanged,
+			"currentHash", currentHash,
+			"lastProcessedHash", permissionBinder.Status.LastProcessedRoleMappingHash)
+	}
 	if roleMappingChanged {
-		logger.Info("Role mapping has changed, reconciling all managed resources")
+		logger.Info("Role mapping has changed, reconciling all managed resources",
+			"currentHash", currentHash,
+			"previousHash", permissionBinder.Status.LastProcessedRoleMappingHash)
 		if err := r.reconcileAllManagedResources(ctx, &permissionBinder); err != nil {
 			logger.Error(err, "Failed to reconcile all managed resources")
 			return ctrl.Result{}, err
 		}
+		// Update status with new hash
+		permissionBinder.Status.LastProcessedRoleMappingHash = currentHash
 	}
 
 	// Re-fetch PermissionBinder to ensure we have the latest excludeList
@@ -264,9 +289,33 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Check if ConfigMap has changed
 	configMapVersion := configMap.ResourceVersion
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: ConfigMap version check",
+			"currentVersion", configMapVersion,
+			"lastProcessedVersion", permissionBinder.Status.LastProcessedConfigMapVersion,
+			"roleMappingChanged", roleMappingChanged,
+			"skipReconciliation", permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged)
+	}
 	if permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged {
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Skipping reconciliation - no changes detected",
+				"configMapVersion", configMapVersion,
+				"roleMappingChanged", roleMappingChanged)
+		}
 		logger.Info("ConfigMap and role mapping have not changed, skipping reconciliation")
 		return ctrl.Result{}, nil
+	}
+
+	if r.DebugMode {
+		reason := "Role mapping changed"
+		if permissionBinder.Status.LastProcessedConfigMapVersion != configMapVersion {
+			reason = "ConfigMap version changed"
+		}
+		logger.Info("🔍 DEBUG: Processing ConfigMap",
+			"reason", reason,
+			"configMapVersion", configMapVersion,
+			"configMapName", configMap.Name,
+			"configMapNamespace", configMap.Namespace)
 	}
 
 	// Process ConfigMap data
@@ -280,6 +329,10 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	permissionBinder.Status.ProcessedRoleBindings = result.ProcessedRoleBindings
 	permissionBinder.Status.ProcessedServiceAccounts = result.ProcessedServiceAccounts
 	permissionBinder.Status.LastProcessedConfigMapVersion = configMapVersion
+	// Update role mapping hash if it changed
+	if roleMappingChanged {
+		permissionBinder.Status.LastProcessedRoleMappingHash = currentHash
+	}
 	permissionBinder.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Processed",
@@ -778,12 +831,42 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 	return nil
 }
 
+// calculateRoleMappingHash calculates a hash of the role mapping for change detection
+func (r *PermissionBinderReconciler) calculateRoleMappingHash(roleMapping map[string]string) string {
+	// Sort keys for consistent hashing
+	keys := make([]string, 0, len(roleMapping))
+	for k := range roleMapping {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build deterministic string representation
+	var builder strings.Builder
+	for _, k := range keys {
+		builder.WriteString(k)
+		builder.WriteString("=")
+		builder.WriteString(roleMapping[k])
+		builder.WriteString(";")
+	}
+
+	// Calculate SHA256 hash
+	hash := sha256.Sum256([]byte(builder.String()))
+	return hex.EncodeToString(hash[:])
+}
+
 // hasRoleMappingChanged checks if the role mapping has changed
-func (r *PermissionBinderReconciler) hasRoleMappingChanged(_ *permissionv1.PermissionBinder) bool {
-	// For now, we'll always return true to trigger reconciliation
-	// In a production environment, you might want to store the previous state
-	// and compare it with the current state
-	return true
+// Returns (changed bool, currentHash string)
+func (r *PermissionBinderReconciler) hasRoleMappingChanged(pb *permissionv1.PermissionBinder) (bool, string) {
+	currentHash := r.calculateRoleMappingHash(pb.Spec.RoleMapping)
+	lastHash := pb.Status.LastProcessedRoleMappingHash
+
+	// If no previous hash, consider it changed (first time)
+	if lastHash == "" {
+		return true, currentHash
+	}
+
+	// Compare hashes
+	return currentHash != lastHash, currentHash
 }
 
 // reconcileAllManagedResources reconciles all managed resources when role mapping changes
@@ -1090,10 +1173,22 @@ func (r *PermissionBinderReconciler) updateMetrics(ctx context.Context, permissi
 // mapConfigMapToPermissionBinder maps ConfigMap changes to PermissionBinder reconciliation
 // This ensures operator reacts to ConfigMap changes automatically
 func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.Context, obj *corev1.ConfigMap) []reconcile.Request {
+	logger := log.FromContext(ctx)
+
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: ConfigMap watch triggered reconciliation",
+			"configMapName", obj.Name,
+			"configMapNamespace", obj.Namespace,
+			"configMapResourceVersion", obj.ResourceVersion,
+			"timestamp", time.Now().Format(time.RFC3339Nano))
+	}
 
 	// Get all PermissionBinders that might be using this ConfigMap
 	var permissionBinders permissionv1.PermissionBinderList
 	if err := r.List(ctx, &permissionBinders); err != nil {
+		if r.DebugMode {
+			logger.Error(err, "🔍 DEBUG: Failed to list PermissionBinders for ConfigMap watch")
+		}
 		return []reconcile.Request{}
 	}
 
@@ -1101,6 +1196,11 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 	for _, pb := range permissionBinders.Items {
 		// Check if this ConfigMap is referenced by this PermissionBinder
 		if pb.Spec.ConfigMapName == obj.Name && pb.Spec.ConfigMapNamespace == obj.Namespace {
+			if r.DebugMode {
+				logger.Info("🔍 DEBUG: ConfigMap matches PermissionBinder, triggering reconciliation",
+					"permissionBinder", types.NamespacedName{Name: pb.Name, Namespace: pb.Namespace},
+					"configMap", types.NamespacedName{Name: obj.Name, Namespace: obj.Namespace})
+			}
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      pb.Name,
@@ -1108,6 +1208,12 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 				},
 			})
 		}
+	}
+
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: ConfigMap watch result",
+			"configMap", types.NamespacedName{Name: obj.Name, Namespace: obj.Namespace},
+			"triggeredReconciliations", len(requests))
 	}
 
 	return requests
