@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.7] - 2025-10-30
+
+### Fixed
+- **ResourceVersion Changes**: Prevent unnecessary ResourceVersion changes in PermissionBinder status
+  - Check if status actually changed before updating
+  - Preserve `LastTransitionTime` in Conditions if condition already exists with same status
+  - Only update RoleBindings if they actually changed
+  - Fixes continuous reconciliation loops on clusters with many resources (50+ ServiceAccounts, hundreds of RoleBindings)
+- **Reconciliation Loop Prevention**: Fixed issue where status-only updates were triggering reconciliation
+  - Improved predicate filtering for PermissionBinder and ConfigMap watches
+  - Enhanced hash-based change detection for RoleMapping
+
+### Added
+- **Unit Tests**: Added comprehensive unit tests for status update logic
+  - `findCondition` helper function tests (5 test cases)
+  - Status change detection logic tests (8 test cases)
+
+## [1.5.6] - 2025-10-30
+
+### Fixed
+- **Reconciliation Loops**: Prevent reconciliation on status-only updates
+  - Added predicate to ignore status-only PermissionBinder updates
+  - Fixed role mapping hash update timing
+  - Re-check hash after re-fetch to avoid false positives
+- **ConfigMap Watch**: Only reconcile on ConfigMaps referenced by PermissionBinders
+  - Added indexer for efficient ConfigMap lookup
+  - Custom predicate filters irrelevant ConfigMap events
+
+## [1.5.5] - 2025-10-30
+
+### Fixed
+- **Indexer Syntax**: Fixed compilation errors related to `cache.Indexers` and predicate usage
+- **Predicate Logic**: Corrected predicate UpdateFunc implementation
+
+## [1.5.4] - 2025-10-30
+
+### Added
+- **Debug Mode**: Added `DEBUG_MODE` environment variable for detailed reconciliation trigger logging
+  - Logs show what triggers reconciliation (Generation, ConfigMap, hash changes)
+  - Helps diagnose reconciliation loops in production
+
+### Changed
+- **Status Tracking**: Added `LastProcessedRoleMappingHash` to PermissionBinder status
+  - Hash-based change detection for RoleMapping
+  - Prevents unnecessary reconciliations when role mapping unchanged
+
+## [1.5.3] - 2025-10-30
+
+### Fixed
+- **Invalid Whitelist Entry Handling**: Improved error handling for unparsable strings
+  - Changed `logger.Error()` to `logger.Info()` for non-fatal parsing errors
+  - Enhanced log messages with detailed context (line, content, reason, action)
+  - No stacktraces for non-fatal errors, operator continues processing valid entries
+
+### Added
+- **E2E Test 43**: Test for invalid whitelist entry handling
+  - Verifies graceful handling of various invalid entries
+  - Ensures no crashes or excessive error logs
+
+## [1.5.2] - 2025-10-30
+
+### Fixed
+- **Hyphenated Role Names**: Fixed bug where RoleBindings with hyphenated roles (e.g., "read-only") were incorrectly deleted
+  - Added `AnnotationRole` to store full role name in RoleBindings
+  - New function `extractRoleFromRoleBindingNameWithMapping` correctly handles hyphenated roles
+  - Prioritizes longer role names when matching (e.g., "read-only" before "only")
+
+### Added
+- **E2E Test 42**: Test for RoleBindings with hyphenated roles
+  - Verifies correct creation and preservation of hyphenated role RoleBindings
+  - Tests annotation storage and deletion logic
+
+## [1.5.1] - 2025-10-30
+
+### Fixed
+- **E2E Test 22 (Metrics Endpoint)**: Fixed intermittent failures due to timing issues
+  - Increased `kubectl port-forward` sleep duration from 3s to 10s
+  - Added retry logic (3 attempts with 5s delay)
+  - Added `curl` timeouts (`--connect-timeout 5 --max-time 10`)
+
+### Changed
+- **RoleBinding Naming Convention**: Changed ServiceAccount RoleBinding naming from `{SA-full-name}-{ClusterRole-name}` to `sa-{namespace}-{sa-key}`
+  - Aligns with LDAP group RoleBinding naming convention
+  - Updated examples and documentation
+
 ## [1.5.0] - 2025-10-29
 
 ### Added

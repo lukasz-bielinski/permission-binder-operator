@@ -4,7 +4,7 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.5.0-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.5.7-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
@@ -340,7 +340,7 @@ All Docker images are **cryptographically signed** and include **supply chain at
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:1.5.0
+  lukaszbielinski/permission-binder-operator:1.5.7
 ```
 
 **Using GitHub CLI (for attestations):**
@@ -358,7 +358,7 @@ cosign verify-attestation \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   --type slsaprovenance \
-  lukaszbielinski/permission-binder-operator:1.5.0 | jq .
+  lukaszbielinski/permission-binder-operator:1.5.7 | jq .
 ```
 
 ### 📋 What's Verified?
@@ -521,11 +521,11 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** v1.5.0  
-**Last Updated:** 2025-10-29  
+**Version:** v1.5.7  
+**Last Updated:** 2025-10-30  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes (v1.5.0)
+### Recent Changes (v1.5.7)
 - ✅ **ServiceAccount Management** - Automated SA creation for CI/CD pipelines
 - ✅ **Image Signing** - Cosign + GitHub Attestations with SLSA provenance
 - ✅ **Race Condition Fixes** - excludeList processing improvements
