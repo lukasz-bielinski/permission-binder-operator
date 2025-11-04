@@ -36,7 +36,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -1216,15 +1215,13 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Create an indexer for PermissionBinders by ConfigMap reference
 	// This allows efficient lookup of PermissionBinders that reference a specific ConfigMap
-	indexer := cache.Indexers{
-		"configMapRef": func(obj client.Object) []string {
-			pb, ok := obj.(*permissionv1.PermissionBinder)
-			if !ok {
-				return []string{}
-			}
-			// Index by "namespace/name" format for ConfigMap reference
-			return []string{fmt.Sprintf("%s/%s", pb.Spec.ConfigMapNamespace, pb.Spec.ConfigMapName)}
-		},
+	indexerFunc := func(obj client.Object) []string {
+		pb, ok := obj.(*permissionv1.PermissionBinder)
+		if !ok {
+			return []string{}
+		}
+		// Index by "namespace/name" format for ConfigMap reference
+		return []string{fmt.Sprintf("%s/%s", pb.Spec.ConfigMapNamespace, pb.Spec.ConfigMapName)}
 	}
 
 	// Register the indexer with the cache
@@ -1232,7 +1229,7 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		context.Background(),
 		&permissionv1.PermissionBinder{},
 		"configMapRef",
-		indexer["configMapRef"],
+		indexerFunc,
 	); err != nil {
 		return fmt.Errorf("failed to set up indexer for PermissionBinder: %w", err)
 	}
@@ -1245,7 +1242,8 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			// Only process if ResourceVersion changed (avoid unnecessary reconciliations)
-			if !predicate.ResourceVersionChangedPredicate{}.Update(e) {
+			resourceVersionPredicate := predicate.ResourceVersionChangedPredicate{}
+			if !resourceVersionPredicate.Update(e) {
 				return false
 			}
 			return r.isConfigMapReferenced(mgr.GetClient(), e.ObjectNew)
