@@ -215,6 +215,14 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: PermissionBinder fetched",
+			"generation", permissionBinder.Generation,
+			"resourceVersion", permissionBinder.ResourceVersion,
+			"hasDeletionTimestamp", !permissionBinder.DeletionTimestamp.IsZero(),
+			"finalizers", permissionBinder.Finalizers)
+	}
+
 	// Check if this is a deletion - clean up managed resources
 	if !permissionBinder.DeletionTimestamp.IsZero() {
 		// The object is being deleted
@@ -252,7 +260,8 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		logger.Info("🔍 DEBUG: Role mapping check",
 			"changed", roleMappingChanged,
 			"currentHash", currentHash,
-			"lastProcessedHash", permissionBinder.Status.LastProcessedRoleMappingHash)
+			"lastProcessedHash", permissionBinder.Status.LastProcessedRoleMappingHash,
+			"isFirstTime", permissionBinder.Status.LastProcessedRoleMappingHash == "")
 	}
 	if roleMappingChanged {
 		logger.Info("Role mapping has changed, reconciling all managed resources",
@@ -262,15 +271,29 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			logger.Error(err, "Failed to reconcile all managed resources")
 			return ctrl.Result{}, err
 		}
-		// Update status with new hash
+		// Update status with new hash immediately to prevent re-triggering
+		// This must be done before processing ConfigMap to avoid duplicate reconciliations
 		permissionBinder.Status.LastProcessedRoleMappingHash = currentHash
+		if err := r.Status().Update(ctx, &permissionBinder); err != nil {
+			logger.Error(err, "Failed to update role mapping hash in status")
+			// Continue anyway, but this might cause extra reconciliations
+		}
 	}
 
-	// Re-fetch PermissionBinder to ensure we have the latest excludeList
+	// Re-fetch PermissionBinder to ensure we have the latest excludeList and status
 	// This prevents race conditions when excludeList and ConfigMap are updated concurrently
+	// Note: If we just updated the hash, this will refresh it from the server
 	if err := r.Get(ctx, req.NamespacedName, &permissionBinder); err != nil {
 		logger.Error(err, "Failed to re-fetch PermissionBinder")
 		return ctrl.Result{}, err
+	}
+
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: PermissionBinder re-fetched",
+			"generation", permissionBinder.Generation,
+			"resourceVersion", permissionBinder.ResourceVersion,
+			"lastProcessedRoleMappingHash", permissionBinder.Status.LastProcessedRoleMappingHash,
+			"lastProcessedConfigMapVersion", permissionBinder.Status.LastProcessedConfigMapVersion)
 	}
 
 	// Fetch the ConfigMap
@@ -290,11 +313,29 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Check if ConfigMap has changed
 	configMapVersion := configMap.ResourceVersion
+	
+	// Re-check role mapping hash after re-fetch (in case it was updated)
+	// This ensures we don't incorrectly think role mapping changed when it didn't
+	roleMappingChangedAfterRefetch, currentHashAfterRefetch := r.hasRoleMappingChanged(&permissionBinder)
+	if roleMappingChanged && !roleMappingChangedAfterRefetch {
+		// Hash was just updated, so now it should match
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Role mapping hash was updated, re-checking",
+				"previousCheck", roleMappingChanged,
+				"afterRefetch", roleMappingChangedAfterRefetch,
+				"currentHash", currentHashAfterRefetch,
+				"lastHashAfterRefetch", permissionBinder.Status.LastProcessedRoleMappingHash)
+		}
+		roleMappingChanged = false
+		currentHash = currentHashAfterRefetch
+	}
+	
 	if r.DebugMode {
 		logger.Info("🔍 DEBUG: ConfigMap version check",
 			"currentVersion", configMapVersion,
 			"lastProcessedVersion", permissionBinder.Status.LastProcessedConfigMapVersion,
 			"roleMappingChanged", roleMappingChanged,
+			"roleMappingChangedAfterRefetch", roleMappingChangedAfterRefetch,
 			"skipReconciliation", permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged)
 	}
 	if permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged {
@@ -330,7 +371,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	permissionBinder.Status.ProcessedRoleBindings = result.ProcessedRoleBindings
 	permissionBinder.Status.ProcessedServiceAccounts = result.ProcessedServiceAccounts
 	permissionBinder.Status.LastProcessedConfigMapVersion = configMapVersion
-	// Update role mapping hash if it changed
+	// Update role mapping hash if it changed (should already be updated above, but ensure it's set)
 	if roleMappingChanged {
 		permissionBinder.Status.LastProcessedRoleMappingHash = currentHash
 	}
@@ -1242,10 +1283,17 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			// Only process if ResourceVersion changed (avoid unnecessary reconciliations)
-			resourceVersionPredicate := predicate.ResourceVersionChangedPredicate{}
-			if !resourceVersionPredicate.Update(e) {
+			// This filters out status-only updates on ConfigMaps
+			oldCM := e.ObjectOld.(*corev1.ConfigMap)
+			newCM := e.ObjectNew.(*corev1.ConfigMap)
+			
+			// Only process if data or metadata changed, not just status
+			if oldCM.ResourceVersion == newCM.ResourceVersion {
 				return false
 			}
+			
+			// Check if actual data changed (not just status)
+			// ConfigMaps don't have status subresource, so ResourceVersion change means data changed
 			return r.isConfigMapReferenced(mgr.GetClient(), e.ObjectNew)
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
@@ -1256,8 +1304,45 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		},
 	}
 
+	// Create predicate for PermissionBinder to ignore status-only updates
+	// This prevents reconciliation loops caused by status updates
+	permissionBinderPredicate := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return true
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// Only reconcile if spec or metadata changed, not status-only changes
+			oldObj := e.ObjectOld.(*permissionv1.PermissionBinder)
+			newObj := e.ObjectNew.(*permissionv1.PermissionBinder)
+			
+			// Check if spec changed
+			if oldObj.Generation != newObj.Generation {
+				return true
+			}
+			
+			// Check if deletion timestamp changed (object is being deleted)
+			if oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero() {
+				return true
+			}
+			
+			// Check if finalizers changed
+			if len(oldObj.Finalizers) != len(newObj.Finalizers) {
+				return true
+			}
+			
+			// Ignore status-only updates
+			return false
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return true
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return true
+		},
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&permissionv1.PermissionBinder{}).
+		For(&permissionv1.PermissionBinder{}, builder.WithPredicates(permissionBinderPredicate)).
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
