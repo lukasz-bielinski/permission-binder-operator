@@ -51,6 +51,16 @@ var _ = Describe("PermissionBinder Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
+					Spec: permissionv1.PermissionBinderSpec{
+						Prefixes: []string{"COMPANY-K8S"},
+						RoleMapping: map[string]string{
+							"admin":    "cluster-admin",
+							"engineer": "edit",
+							"viewer":   "view",
+						},
+						ConfigMapName:      "permission-config",
+						ConfigMapNamespace: "default",
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
