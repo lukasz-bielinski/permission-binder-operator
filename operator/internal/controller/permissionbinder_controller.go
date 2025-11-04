@@ -48,6 +48,7 @@ const (
 	AnnotationManagedBy        = "permission-binder.io/managed-by"
 	AnnotationCreatedAt        = "permission-binder.io/created-at"
 	AnnotationPermissionBinder = "permission-binder.io/permission-binder"
+	AnnotationRole             = "permission-binder.io/role"
 
 	// Label keys
 	LabelManagedBy = "permission-binder.io/managed-by"
@@ -666,7 +667,7 @@ func (r *PermissionBinderReconciler) validateClusterRoleExists(ctx context.Conte
 }
 
 // createRoleBinding creates a RoleBinding in the specified namespace
-func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, namespace, name, _, group, clusterRole string, permissionBinder *permissionv1.PermissionBinder) error {
+func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, namespace, name, role, group, clusterRole string, permissionBinder *permissionv1.PermissionBinder) error {
 	logger := log.FromContext(ctx)
 	now := time.Now().Format(time.RFC3339)
 
@@ -691,6 +692,7 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 				AnnotationManagedBy:        ManagedByValue,
 				AnnotationCreatedAt:        now,
 				AnnotationPermissionBinder: permissionBinder.Name,
+				AnnotationRole:             role, // Store full role name to support roles with hyphens (e.g., "read-only")
 			},
 			Labels: map[string]string{
 				LabelManagedBy: ManagedByValue,
@@ -754,6 +756,7 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 
 		existing.Annotations[AnnotationManagedBy] = ManagedByValue
 		existing.Annotations[AnnotationPermissionBinder] = permissionBinder.Name
+		existing.Annotations[AnnotationRole] = role // Store full role name to support roles with hyphens (e.g., "read-only")
 		if existing.Annotations[AnnotationCreatedAt] == "" {
 			existing.Annotations[AnnotationCreatedAt] = now
 		}
@@ -799,7 +802,17 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 
 	// Remove role bindings for roles that no longer exist in mapping
 	for _, roleBinding := range managedRoleBindings {
-		role := r.extractRoleFromRoleBindingName(roleBinding.Name)
+		// Try to get role from annotation first (supports roles with hyphens like "read-only")
+		role := ""
+		if roleBinding.Annotations != nil {
+			role = roleBinding.Annotations[AnnotationRole]
+		}
+		
+		// Fallback to extracting from name if annotation not present (backward compatibility)
+		if role == "" {
+			role = r.extractRoleFromRoleBindingNameWithMapping(roleBinding.Name, permissionBinder.Spec.RoleMapping)
+		}
+		
 		if role != "" && !r.roleExistsInMapping(role, permissionBinder.Spec.RoleMapping) {
 			if err := r.Delete(ctx, &roleBinding); err != nil {
 				logger.Error(err, "Failed to delete obsolete RoleBinding", "namespace", roleBinding.Namespace, "name", roleBinding.Name)
@@ -969,7 +982,44 @@ func removeString(slice []string, s string) []string {
 }
 
 // extractRoleFromRoleBindingName extracts the role from a role binding name
+// This is a legacy function that only works for single-word roles (e.g., "edit", "view")
+// For roles with hyphens (e.g., "read-only"), use extractRoleFromRoleBindingNameWithMapping
 func (r *PermissionBinderReconciler) extractRoleFromRoleBindingName(name string) string {
+	parts := strings.Split(name, "-")
+	if len(parts) >= 2 {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
+// extractRoleFromRoleBindingNameWithMapping extracts the role from a role binding name
+// by matching suffixes against role mapping keys. This supports roles with hyphens (e.g., "read-only").
+// It tries to match the longest possible role name first to handle cases like "read-only" vs "only".
+func (r *PermissionBinderReconciler) extractRoleFromRoleBindingNameWithMapping(name string, roleMapping map[string]string) string {
+	// Sort role names by length (longest first) to match "read-only" before "only"
+	roleNames := make([]string, 0, len(roleMapping))
+	for roleName := range roleMapping {
+		roleNames = append(roleNames, roleName)
+	}
+	
+	// Simple sort by length (longest first)
+	for i := 0; i < len(roleNames)-1; i++ {
+		for j := i + 1; j < len(roleNames); j++ {
+			if len(roleNames[i]) < len(roleNames[j]) {
+				roleNames[i], roleNames[j] = roleNames[j], roleNames[i]
+			}
+		}
+	}
+	
+	// Try to match each role name as a suffix of the RoleBinding name
+	for _, roleName := range roleNames {
+		suffix := "-" + roleName
+		if strings.HasSuffix(name, suffix) {
+			return roleName
+		}
+	}
+	
+	// Fallback to legacy behavior (last segment after split)
 	parts := strings.Split(name, "-")
 	if len(parts) >= 2 {
 		return parts[len(parts)-1]
