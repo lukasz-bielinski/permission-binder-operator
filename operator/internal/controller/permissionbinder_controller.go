@@ -36,7 +36,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -1172,16 +1174,10 @@ func (r *PermissionBinderReconciler) updateMetrics(ctx context.Context, permissi
 
 // mapConfigMapToPermissionBinder maps ConfigMap changes to PermissionBinder reconciliation
 // This ensures operator reacts to ConfigMap changes automatically
+// Note: This function is only called for ConfigMaps that pass the predicate filter
+// (i.e., ConfigMaps referenced by at least one PermissionBinder)
 func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.Context, obj *corev1.ConfigMap) []reconcile.Request {
 	logger := log.FromContext(ctx)
-
-	if r.DebugMode {
-		logger.Info("🔍 DEBUG: ConfigMap watch triggered reconciliation",
-			"configMapName", obj.Name,
-			"configMapNamespace", obj.Namespace,
-			"configMapResourceVersion", obj.ResourceVersion,
-			"timestamp", time.Now().Format(time.RFC3339Nano))
-	}
 
 	// Get all PermissionBinders that might be using this ConfigMap
 	var permissionBinders permissionv1.PermissionBinderList
@@ -1197,9 +1193,12 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 		// Check if this ConfigMap is referenced by this PermissionBinder
 		if pb.Spec.ConfigMapName == obj.Name && pb.Spec.ConfigMapNamespace == obj.Namespace {
 			if r.DebugMode {
-				logger.Info("🔍 DEBUG: ConfigMap matches PermissionBinder, triggering reconciliation",
+				logger.Info("🔍 DEBUG: ConfigMap watch triggered reconciliation",
+					"configMapName", obj.Name,
+					"configMapNamespace", obj.Namespace,
+					"configMapResourceVersion", obj.ResourceVersion,
 					"permissionBinder", types.NamespacedName{Name: pb.Name, Namespace: pb.Namespace},
-					"configMap", types.NamespacedName{Name: obj.Name, Namespace: obj.Namespace})
+					"timestamp", time.Now().Format(time.RFC3339Nano))
 			}
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -1210,17 +1209,55 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 		}
 	}
 
-	if r.DebugMode {
-		logger.Info("🔍 DEBUG: ConfigMap watch result",
-			"configMap", types.NamespacedName{Name: obj.Name, Namespace: obj.Namespace},
-			"triggeredReconciliations", len(requests))
-	}
-
 	return requests
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Create an indexer for PermissionBinders by ConfigMap reference
+	// This allows efficient lookup of PermissionBinders that reference a specific ConfigMap
+	indexer := cache.Indexers{
+		"configMapRef": func(obj client.Object) []string {
+			pb, ok := obj.(*permissionv1.PermissionBinder)
+			if !ok {
+				return []string{}
+			}
+			// Index by "namespace/name" format for ConfigMap reference
+			return []string{fmt.Sprintf("%s/%s", pb.Spec.ConfigMapNamespace, pb.Spec.ConfigMapName)}
+		},
+	}
+
+	// Register the indexer with the cache
+	if err := mgr.GetCache().IndexField(
+		context.Background(),
+		&permissionv1.PermissionBinder{},
+		"configMapRef",
+		indexer["configMapRef"],
+	); err != nil {
+		return fmt.Errorf("failed to set up indexer for PermissionBinder: %w", err)
+	}
+
+	// Create a predicate that filters ConfigMaps to only those referenced by PermissionBinders
+	// Uses the indexer for efficient lookup instead of listing all PermissionBinders
+	configMapPredicate := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return r.isConfigMapReferenced(mgr.GetClient(), e.Object)
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// Only process if ResourceVersion changed (avoid unnecessary reconciliations)
+			if !predicate.ResourceVersionChangedPredicate{}.Update(e) {
+				return false
+			}
+			return r.isConfigMapReferenced(mgr.GetClient(), e.ObjectNew)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return r.isConfigMapReferenced(mgr.GetClient(), e.Object)
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return r.isConfigMapReferenced(mgr.GetClient(), e.Object)
+		},
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&permissionv1.PermissionBinder{}).
 		Watches(
@@ -1232,7 +1269,30 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 				return r.mapConfigMapToPermissionBinder(ctx, configMap)
 			}),
-			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+			builder.WithPredicates(configMapPredicate),
 		).
 		Complete(r)
+}
+
+// isConfigMapReferenced checks if a ConfigMap is referenced by any PermissionBinder
+// Uses indexer for efficient lookup instead of listing all PermissionBinders
+func (r *PermissionBinderReconciler) isConfigMapReferenced(c client.Client, obj client.Object) bool {
+	configMap, ok := obj.(*corev1.ConfigMap)
+	if !ok {
+		return false
+	}
+
+	ctx := context.Background()
+	var permissionBinders permissionv1.PermissionBinderList
+	
+	// Use indexer to find PermissionBinders that reference this ConfigMap
+	indexKey := fmt.Sprintf("%s/%s", configMap.Namespace, configMap.Name)
+	if err := c.List(ctx, &permissionBinders, client.MatchingFields{"configMapRef": indexKey}); err != nil {
+		// If indexer lookup fails, fallback to allowing the event through (safer)
+		// This ensures we don't miss events if there's a temporary cache/indexer issue
+		return true
+	}
+
+	// If any PermissionBinders reference this ConfigMap, return true
+	return len(permissionBinders.Items) > 0
 }
