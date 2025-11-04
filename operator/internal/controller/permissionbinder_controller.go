@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -271,18 +272,13 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			logger.Error(err, "Failed to reconcile all managed resources")
 			return ctrl.Result{}, err
 		}
-		// Update status with new hash immediately to prevent re-triggering
-		// This must be done before processing ConfigMap to avoid duplicate reconciliations
-		permissionBinder.Status.LastProcessedRoleMappingHash = currentHash
-		if err := r.Status().Update(ctx, &permissionBinder); err != nil {
-			logger.Error(err, "Failed to update role mapping hash in status")
-			// Continue anyway, but this might cause extra reconciliations
-		}
+		// Note: We don't update status here to avoid multiple Status().Update() calls
+		// The hash will be updated in the final status update at the end of reconciliation
+		// The predicate will filter out status-only updates, so this won't cause loops
 	}
 
 	// Re-fetch PermissionBinder to ensure we have the latest excludeList and status
 	// This prevents race conditions when excludeList and ConfigMap are updated concurrently
-	// Note: If we just updated the hash, this will refresh it from the server
 	if err := r.Get(ctx, req.NamespacedName, &permissionBinder); err != nil {
 		logger.Error(err, "Failed to re-fetch PermissionBinder")
 		return ctrl.Result{}, err
@@ -367,27 +363,102 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Update status
-	permissionBinder.Status.ProcessedRoleBindings = result.ProcessedRoleBindings
-	permissionBinder.Status.ProcessedServiceAccounts = result.ProcessedServiceAccounts
-	permissionBinder.Status.LastProcessedConfigMapVersion = configMapVersion
-	// Update role mapping hash if it changed (should already be updated above, but ensure it's set)
+	// Prepare new status values
+	newProcessedRoleBindings := result.ProcessedRoleBindings
+	newProcessedServiceAccounts := result.ProcessedServiceAccounts
+	newConfigMapVersion := configMapVersion
+	newRoleMappingHash := permissionBinder.Status.LastProcessedRoleMappingHash
 	if roleMappingChanged {
-		permissionBinder.Status.LastProcessedRoleMappingHash = currentHash
-	}
-	permissionBinder.Status.Conditions = []metav1.Condition{
-		{
-			Type:               "Processed",
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
-			Reason:             "ConfigMapProcessed",
-			Message:            fmt.Sprintf("Successfully processed %d role bindings and %d service accounts", len(result.ProcessedRoleBindings), len(result.ProcessedServiceAccounts)),
-		},
+		newRoleMappingHash = currentHash
 	}
 
-	if err := r.Status().Update(ctx, &permissionBinder); err != nil {
-		logger.Error(err, "Failed to update PermissionBinder status")
-		return ctrl.Result{}, err
+	// Check if status actually changed before updating
+	// This prevents unnecessary ResourceVersion changes
+	statusChanged := false
+	
+	// Compare ProcessedRoleBindings
+	if !reflect.DeepEqual(permissionBinder.Status.ProcessedRoleBindings, newProcessedRoleBindings) {
+		statusChanged = true
+	}
+	
+	// Compare ProcessedServiceAccounts
+	if !reflect.DeepEqual(permissionBinder.Status.ProcessedServiceAccounts, newProcessedServiceAccounts) {
+		statusChanged = true
+	}
+	
+	// Compare ConfigMap version
+	if permissionBinder.Status.LastProcessedConfigMapVersion != newConfigMapVersion {
+		statusChanged = true
+	}
+	
+	// Compare role mapping hash
+	if permissionBinder.Status.LastProcessedRoleMappingHash != newRoleMappingHash {
+		statusChanged = true
+	}
+	
+	// Check if Conditions need update (only update LastTransitionTime if status changed)
+	conditionMessage := fmt.Sprintf("Successfully processed %d role bindings and %d service accounts", len(newProcessedRoleBindings), len(newProcessedServiceAccounts))
+	existingCondition := findCondition(permissionBinder.Status.Conditions, "Processed")
+	if existingCondition == nil || existingCondition.Status != metav1.ConditionTrue || existingCondition.Message != conditionMessage {
+		statusChanged = true
+	}
+
+	// Only update status if something actually changed
+	if !statusChanged {
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Status unchanged, skipping status update",
+				"configMapVersion", configMapVersion,
+				"roleBindingsCount", len(newProcessedRoleBindings),
+				"serviceAccountsCount", len(newProcessedServiceAccounts))
+		}
+		logger.Info("Status unchanged, skipping status update")
+	} else {
+		// Update status - do this in a single update to avoid multiple ResourceVersion changes
+		permissionBinder.Status.ProcessedRoleBindings = newProcessedRoleBindings
+		permissionBinder.Status.ProcessedServiceAccounts = newProcessedServiceAccounts
+		permissionBinder.Status.LastProcessedConfigMapVersion = newConfigMapVersion
+		permissionBinder.Status.LastProcessedRoleMappingHash = newRoleMappingHash
+		
+		// Update Conditions - preserve LastTransitionTime if condition already exists with same status
+		now := metav1.Now()
+		if existingCondition != nil && existingCondition.Status == metav1.ConditionTrue && existingCondition.Message == conditionMessage {
+			// Condition already exists with same status, preserve LastTransitionTime
+			permissionBinder.Status.Conditions = []metav1.Condition{
+				{
+					Type:               "Processed",
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: existingCondition.LastTransitionTime, // Preserve original time
+					Reason:             "ConfigMapProcessed",
+					Message:            conditionMessage,
+					ObservedGeneration: permissionBinder.Generation,
+				},
+			}
+		} else {
+			// New condition or status changed, use current time
+			permissionBinder.Status.Conditions = []metav1.Condition{
+				{
+					Type:               "Processed",
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: now,
+					Reason:             "ConfigMapProcessed",
+					Message:            conditionMessage,
+					ObservedGeneration: permissionBinder.Generation,
+				},
+			}
+		}
+
+		if err := r.Status().Update(ctx, &permissionBinder); err != nil {
+			logger.Error(err, "Failed to update PermissionBinder status")
+			return ctrl.Result{}, err
+		}
+		
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Status updated",
+				"configMapVersion", configMapVersion,
+				"roleBindingsCount", len(newProcessedRoleBindings),
+				"serviceAccountsCount", len(newProcessedServiceAccounts),
+				"roleMappingHashChanged", roleMappingChanged)
+		}
 	}
 
 	// Update Prometheus metrics for monitoring
@@ -827,22 +898,66 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 			return fmt.Errorf("failed to get RoleBinding %s/%s: %w", namespace, name, err)
 		}
 	} else {
+		// Check if RoleBinding needs update - avoid unnecessary updates that change ResourceVersion
+		needsUpdate := false
+		hasOrphanedAnnotation := existing.Annotations["permission-binder.io/orphaned-at"] != ""
+
+		// Check if RoleRef changed
+		if existing.RoleRef != roleBinding.RoleRef {
+			needsUpdate = true
+		}
+
+		// Check if Subjects changed
+		if !reflect.DeepEqual(existing.Subjects, roleBinding.Subjects) {
+			needsUpdate = true
+		}
+
+		// Check if annotations need update
+		if existing.Annotations == nil {
+			existing.Annotations = make(map[string]string)
+			needsUpdate = true
+		}
+		if existing.Labels == nil {
+			existing.Labels = make(map[string]string)
+			needsUpdate = true
+		}
+
+		// Check if managed-by annotation changed
+		if existing.Annotations[AnnotationManagedBy] != ManagedByValue {
+			needsUpdate = true
+		}
+		if existing.Annotations[AnnotationPermissionBinder] != permissionBinder.Name {
+			needsUpdate = true
+		}
+		if existing.Annotations[AnnotationRole] != role {
+			needsUpdate = true
+		}
+		if existing.Annotations[AnnotationCreatedAt] == "" {
+			needsUpdate = true
+		}
+		if existing.Labels[LabelManagedBy] != ManagedByValue {
+			needsUpdate = true
+		}
+
+		// Always update if orphaned annotation exists (adoption logic)
+		if hasOrphanedAnnotation {
+			needsUpdate = true
+		}
+
+		// Only update if something actually changed - this prevents unnecessary ResourceVersion changes
+		if !needsUpdate {
+			// RoleBinding is already up-to-date, no update needed
+			return nil
+		}
+
 		// Update existing RoleBinding - OVERRIDE any manual changes
 		// This ensures consistency and predictability in production environments
 		existing.Subjects = roleBinding.Subjects
 		existing.RoleRef = roleBinding.RoleRef
 
-		// Update annotations and labels
-		if existing.Annotations == nil {
-			existing.Annotations = make(map[string]string)
-		}
-		if existing.Labels == nil {
-			existing.Labels = make(map[string]string)
-		}
-
 		// ADOPTION LOGIC: Remove orphaned annotations if present
 		// This allows automatic recovery when PermissionBinder is recreated
-		if existing.Annotations["permission-binder.io/orphaned-at"] != "" {
+		if hasOrphanedAnnotation {
 			delete(existing.Annotations, "permission-binder.io/orphaned-at")
 			delete(existing.Annotations, "permission-binder.io/orphaned-by")
 
@@ -1250,6 +1365,16 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 	}
 
 	return requests
+}
+
+// findCondition finds a condition by type in the conditions slice
+func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
