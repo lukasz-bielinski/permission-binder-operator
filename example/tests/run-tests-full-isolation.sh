@@ -22,8 +22,8 @@ NC='\033[0m' # No Color
 
 # Get test list
 if [ $# -eq 0 ]; then
-    # Run all tests (pre + 1-41)
-    TEST_LIST=(pre $(seq 1 41))
+    # Run all tests (pre + 1-43)
+    TEST_LIST=(pre $(seq 1 43))
 else
     # Run specified tests
     TEST_LIST=("$@")

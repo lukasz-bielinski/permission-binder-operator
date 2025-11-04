@@ -117,6 +117,10 @@ type PermissionBinderStatus struct {
 	// LastProcessedConfigMapVersion tracks the last processed ConfigMap version
 	LastProcessedConfigMapVersion string `json:"lastProcessedConfigMapVersion,omitempty"`
 
+	// LastProcessedRoleMappingHash tracks the hash of the last processed role mapping
+	// This is used to detect when role mapping changes and trigger reconciliation
+	LastProcessedRoleMappingHash string `json:"lastProcessedRoleMappingHash,omitempty"`
+
 	// Conditions represent the latest available observations of the PermissionBinder's state
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }

@@ -18,7 +18,11 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,6 +38,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -48,6 +53,7 @@ const (
 	AnnotationManagedBy        = "permission-binder.io/managed-by"
 	AnnotationCreatedAt        = "permission-binder.io/created-at"
 	AnnotationPermissionBinder = "permission-binder.io/permission-binder"
+	AnnotationRole             = "permission-binder.io/role"
 
 	// Label keys
 	LabelManagedBy = "permission-binder.io/managed-by"
@@ -167,7 +173,8 @@ func init() {
 // PermissionBinderReconciler reconciles a PermissionBinder object
 type PermissionBinderReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	DebugMode bool
 }
 
 // +kubebuilder:rbac:groups=permission.permission-binder.io,resources=permissionbinders,verbs=get;list;watch;create;update;patch;delete
@@ -187,15 +194,34 @@ type PermissionBinderReconciler struct {
 func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
+	// Log reconciliation trigger in debug mode
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: Reconciliation triggered",
+			"trigger", "Reconcile",
+			"request", req.NamespacedName,
+			"timestamp", time.Now().Format(time.RFC3339Nano))
+	}
+
 	// Fetch the PermissionBinder instance
 	var permissionBinder permissionv1.PermissionBinder
 	if err := r.Get(ctx, req.NamespacedName, &permissionBinder); err != nil {
 		if errors.IsNotFound(err) {
+			if r.DebugMode {
+				logger.Info("🔍 DEBUG: PermissionBinder not found (deleted)", "request", req.NamespacedName)
+			}
 			logger.Info("PermissionBinder resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
 		logger.Error(err, "Failed to get PermissionBinder")
 		return ctrl.Result{}, err
+	}
+
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: PermissionBinder fetched",
+			"generation", permissionBinder.Generation,
+			"resourceVersion", permissionBinder.ResourceVersion,
+			"hasDeletionTimestamp", !permissionBinder.DeletionTimestamp.IsZero(),
+			"finalizers", permissionBinder.Finalizers)
 	}
 
 	// Check if this is a deletion - clean up managed resources
@@ -230,20 +256,40 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Check if role mapping has changed
-	roleMappingChanged := r.hasRoleMappingChanged(&permissionBinder)
+	roleMappingChanged, currentHash := r.hasRoleMappingChanged(&permissionBinder)
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: Role mapping check",
+			"changed", roleMappingChanged,
+			"currentHash", currentHash,
+			"lastProcessedHash", permissionBinder.Status.LastProcessedRoleMappingHash,
+			"isFirstTime", permissionBinder.Status.LastProcessedRoleMappingHash == "")
+	}
 	if roleMappingChanged {
-		logger.Info("Role mapping has changed, reconciling all managed resources")
+		logger.Info("Role mapping has changed, reconciling all managed resources",
+			"currentHash", currentHash,
+			"previousHash", permissionBinder.Status.LastProcessedRoleMappingHash)
 		if err := r.reconcileAllManagedResources(ctx, &permissionBinder); err != nil {
 			logger.Error(err, "Failed to reconcile all managed resources")
 			return ctrl.Result{}, err
 		}
+		// Note: We don't update status here to avoid multiple Status().Update() calls
+		// The hash will be updated in the final status update at the end of reconciliation
+		// The predicate will filter out status-only updates, so this won't cause loops
 	}
 
-	// Re-fetch PermissionBinder to ensure we have the latest excludeList
+	// Re-fetch PermissionBinder to ensure we have the latest excludeList and status
 	// This prevents race conditions when excludeList and ConfigMap are updated concurrently
 	if err := r.Get(ctx, req.NamespacedName, &permissionBinder); err != nil {
 		logger.Error(err, "Failed to re-fetch PermissionBinder")
 		return ctrl.Result{}, err
+	}
+
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: PermissionBinder re-fetched",
+			"generation", permissionBinder.Generation,
+			"resourceVersion", permissionBinder.ResourceVersion,
+			"lastProcessedRoleMappingHash", permissionBinder.Status.LastProcessedRoleMappingHash,
+			"lastProcessedConfigMapVersion", permissionBinder.Status.LastProcessedConfigMapVersion)
 	}
 
 	// Fetch the ConfigMap
@@ -263,9 +309,51 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Check if ConfigMap has changed
 	configMapVersion := configMap.ResourceVersion
+	
+	// Re-check role mapping hash after re-fetch (in case it was updated)
+	// This ensures we don't incorrectly think role mapping changed when it didn't
+	roleMappingChangedAfterRefetch, currentHashAfterRefetch := r.hasRoleMappingChanged(&permissionBinder)
+	if roleMappingChanged && !roleMappingChangedAfterRefetch {
+		// Hash was just updated, so now it should match
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Role mapping hash was updated, re-checking",
+				"previousCheck", roleMappingChanged,
+				"afterRefetch", roleMappingChangedAfterRefetch,
+				"currentHash", currentHashAfterRefetch,
+				"lastHashAfterRefetch", permissionBinder.Status.LastProcessedRoleMappingHash)
+		}
+		roleMappingChanged = false
+		currentHash = currentHashAfterRefetch
+	}
+	
+	if r.DebugMode {
+		logger.Info("🔍 DEBUG: ConfigMap version check",
+			"currentVersion", configMapVersion,
+			"lastProcessedVersion", permissionBinder.Status.LastProcessedConfigMapVersion,
+			"roleMappingChanged", roleMappingChanged,
+			"roleMappingChangedAfterRefetch", roleMappingChangedAfterRefetch,
+			"skipReconciliation", permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged)
+	}
 	if permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged {
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Skipping reconciliation - no changes detected",
+				"configMapVersion", configMapVersion,
+				"roleMappingChanged", roleMappingChanged)
+		}
 		logger.Info("ConfigMap and role mapping have not changed, skipping reconciliation")
 		return ctrl.Result{}, nil
+	}
+
+	if r.DebugMode {
+		reason := "Role mapping changed"
+		if permissionBinder.Status.LastProcessedConfigMapVersion != configMapVersion {
+			reason = "ConfigMap version changed"
+		}
+		logger.Info("🔍 DEBUG: Processing ConfigMap",
+			"reason", reason,
+			"configMapVersion", configMapVersion,
+			"configMapName", configMap.Name,
+			"configMapNamespace", configMap.Namespace)
 	}
 
 	// Process ConfigMap data
@@ -275,23 +363,102 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Update status
-	permissionBinder.Status.ProcessedRoleBindings = result.ProcessedRoleBindings
-	permissionBinder.Status.ProcessedServiceAccounts = result.ProcessedServiceAccounts
-	permissionBinder.Status.LastProcessedConfigMapVersion = configMapVersion
-	permissionBinder.Status.Conditions = []metav1.Condition{
-		{
-			Type:               "Processed",
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
-			Reason:             "ConfigMapProcessed",
-			Message:            fmt.Sprintf("Successfully processed %d role bindings and %d service accounts", len(result.ProcessedRoleBindings), len(result.ProcessedServiceAccounts)),
-		},
+	// Prepare new status values
+	newProcessedRoleBindings := result.ProcessedRoleBindings
+	newProcessedServiceAccounts := result.ProcessedServiceAccounts
+	newConfigMapVersion := configMapVersion
+	newRoleMappingHash := permissionBinder.Status.LastProcessedRoleMappingHash
+	if roleMappingChanged {
+		newRoleMappingHash = currentHash
 	}
 
-	if err := r.Status().Update(ctx, &permissionBinder); err != nil {
-		logger.Error(err, "Failed to update PermissionBinder status")
-		return ctrl.Result{}, err
+	// Check if status actually changed before updating
+	// This prevents unnecessary ResourceVersion changes
+	statusChanged := false
+	
+	// Compare ProcessedRoleBindings
+	if !reflect.DeepEqual(permissionBinder.Status.ProcessedRoleBindings, newProcessedRoleBindings) {
+		statusChanged = true
+	}
+	
+	// Compare ProcessedServiceAccounts
+	if !reflect.DeepEqual(permissionBinder.Status.ProcessedServiceAccounts, newProcessedServiceAccounts) {
+		statusChanged = true
+	}
+	
+	// Compare ConfigMap version
+	if permissionBinder.Status.LastProcessedConfigMapVersion != newConfigMapVersion {
+		statusChanged = true
+	}
+	
+	// Compare role mapping hash
+	if permissionBinder.Status.LastProcessedRoleMappingHash != newRoleMappingHash {
+		statusChanged = true
+	}
+	
+	// Check if Conditions need update (only update LastTransitionTime if status changed)
+	conditionMessage := fmt.Sprintf("Successfully processed %d role bindings and %d service accounts", len(newProcessedRoleBindings), len(newProcessedServiceAccounts))
+	existingCondition := findCondition(permissionBinder.Status.Conditions, "Processed")
+	if existingCondition == nil || existingCondition.Status != metav1.ConditionTrue || existingCondition.Message != conditionMessage {
+		statusChanged = true
+	}
+
+	// Only update status if something actually changed
+	if !statusChanged {
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Status unchanged, skipping status update",
+				"configMapVersion", configMapVersion,
+				"roleBindingsCount", len(newProcessedRoleBindings),
+				"serviceAccountsCount", len(newProcessedServiceAccounts))
+		}
+		logger.Info("Status unchanged, skipping status update")
+	} else {
+		// Update status - do this in a single update to avoid multiple ResourceVersion changes
+		permissionBinder.Status.ProcessedRoleBindings = newProcessedRoleBindings
+		permissionBinder.Status.ProcessedServiceAccounts = newProcessedServiceAccounts
+		permissionBinder.Status.LastProcessedConfigMapVersion = newConfigMapVersion
+		permissionBinder.Status.LastProcessedRoleMappingHash = newRoleMappingHash
+		
+		// Update Conditions - preserve LastTransitionTime if condition already exists with same status
+		now := metav1.Now()
+		if existingCondition != nil && existingCondition.Status == metav1.ConditionTrue && existingCondition.Message == conditionMessage {
+			// Condition already exists with same status, preserve LastTransitionTime
+			permissionBinder.Status.Conditions = []metav1.Condition{
+				{
+					Type:               "Processed",
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: existingCondition.LastTransitionTime, // Preserve original time
+					Reason:             "ConfigMapProcessed",
+					Message:            conditionMessage,
+					ObservedGeneration: permissionBinder.Generation,
+				},
+			}
+		} else {
+			// New condition or status changed, use current time
+			permissionBinder.Status.Conditions = []metav1.Condition{
+				{
+					Type:               "Processed",
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: now,
+					Reason:             "ConfigMapProcessed",
+					Message:            conditionMessage,
+					ObservedGeneration: permissionBinder.Generation,
+				},
+			}
+		}
+
+		if err := r.Status().Update(ctx, &permissionBinder); err != nil {
+			logger.Error(err, "Failed to update PermissionBinder status")
+			return ctrl.Result{}, err
+		}
+		
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Status updated",
+				"configMapVersion", configMapVersion,
+				"roleBindingsCount", len(newProcessedRoleBindings),
+				"serviceAccountsCount", len(newProcessedServiceAccounts),
+				"roleMappingHashChanged", roleMappingChanged)
+		}
 	}
 
 	// Update Prometheus metrics for monitoring
@@ -341,7 +508,11 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 		cnValue, err := r.extractCNFromDN(line)
 		if err != nil {
 			configMapEntriesProcessed.WithLabelValues("error").Inc()
-			logger.Error(err, "Failed to extract CN from LDAP DN", "line", lineNum+1, "content", line)
+			logger.Info("Skipping invalid LDAP DN entry - cannot extract CN",
+				"line", lineNum+1,
+				"content", line,
+				"reason", err.Error(),
+				"action", "skip")
 			continue
 		}
 
@@ -356,7 +527,11 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 		namespace, role, matchedPrefix, err := r.parsePermissionStringWithPrefixes(cnValue, permissionBinder.Spec.Prefixes, permissionBinder.Spec.RoleMapping)
 		if err != nil {
 			configMapEntriesProcessed.WithLabelValues("error").Inc()
-			logger.Error(err, "Failed to parse permission string", "cn", cnValue, "line", lineNum+1)
+			logger.Info("Skipping invalid permission string - cannot parse CN value",
+				"line", lineNum+1,
+				"cn", cnValue,
+				"reason", err.Error(),
+				"action", "skip")
 			continue
 		}
 
@@ -666,7 +841,7 @@ func (r *PermissionBinderReconciler) validateClusterRoleExists(ctx context.Conte
 }
 
 // createRoleBinding creates a RoleBinding in the specified namespace
-func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, namespace, name, _, group, clusterRole string, permissionBinder *permissionv1.PermissionBinder) error {
+func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, namespace, name, role, group, clusterRole string, permissionBinder *permissionv1.PermissionBinder) error {
 	logger := log.FromContext(ctx)
 	now := time.Now().Format(time.RFC3339)
 
@@ -691,6 +866,7 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 				AnnotationManagedBy:        ManagedByValue,
 				AnnotationCreatedAt:        now,
 				AnnotationPermissionBinder: permissionBinder.Name,
+				AnnotationRole:             role, // Store full role name to support roles with hyphens (e.g., "read-only")
 			},
 			Labels: map[string]string{
 				LabelManagedBy: ManagedByValue,
@@ -722,22 +898,66 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 			return fmt.Errorf("failed to get RoleBinding %s/%s: %w", namespace, name, err)
 		}
 	} else {
+		// Check if RoleBinding needs update - avoid unnecessary updates that change ResourceVersion
+		needsUpdate := false
+		hasOrphanedAnnotation := existing.Annotations["permission-binder.io/orphaned-at"] != ""
+
+		// Check if RoleRef changed
+		if existing.RoleRef != roleBinding.RoleRef {
+			needsUpdate = true
+		}
+
+		// Check if Subjects changed
+		if !reflect.DeepEqual(existing.Subjects, roleBinding.Subjects) {
+			needsUpdate = true
+		}
+
+		// Check if annotations need update
+		if existing.Annotations == nil {
+			existing.Annotations = make(map[string]string)
+			needsUpdate = true
+		}
+		if existing.Labels == nil {
+			existing.Labels = make(map[string]string)
+			needsUpdate = true
+		}
+
+		// Check if managed-by annotation changed
+		if existing.Annotations[AnnotationManagedBy] != ManagedByValue {
+			needsUpdate = true
+		}
+		if existing.Annotations[AnnotationPermissionBinder] != permissionBinder.Name {
+			needsUpdate = true
+		}
+		if existing.Annotations[AnnotationRole] != role {
+			needsUpdate = true
+		}
+		if existing.Annotations[AnnotationCreatedAt] == "" {
+			needsUpdate = true
+		}
+		if existing.Labels[LabelManagedBy] != ManagedByValue {
+			needsUpdate = true
+		}
+
+		// Always update if orphaned annotation exists (adoption logic)
+		if hasOrphanedAnnotation {
+			needsUpdate = true
+		}
+
+		// Only update if something actually changed - this prevents unnecessary ResourceVersion changes
+		if !needsUpdate {
+			// RoleBinding is already up-to-date, no update needed
+			return nil
+		}
+
 		// Update existing RoleBinding - OVERRIDE any manual changes
 		// This ensures consistency and predictability in production environments
 		existing.Subjects = roleBinding.Subjects
 		existing.RoleRef = roleBinding.RoleRef
 
-		// Update annotations and labels
-		if existing.Annotations == nil {
-			existing.Annotations = make(map[string]string)
-		}
-		if existing.Labels == nil {
-			existing.Labels = make(map[string]string)
-		}
-
 		// ADOPTION LOGIC: Remove orphaned annotations if present
 		// This allows automatic recovery when PermissionBinder is recreated
-		if existing.Annotations["permission-binder.io/orphaned-at"] != "" {
+		if hasOrphanedAnnotation {
 			delete(existing.Annotations, "permission-binder.io/orphaned-at")
 			delete(existing.Annotations, "permission-binder.io/orphaned-by")
 
@@ -754,6 +974,7 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 
 		existing.Annotations[AnnotationManagedBy] = ManagedByValue
 		existing.Annotations[AnnotationPermissionBinder] = permissionBinder.Name
+		existing.Annotations[AnnotationRole] = role // Store full role name to support roles with hyphens (e.g., "read-only")
 		if existing.Annotations[AnnotationCreatedAt] == "" {
 			existing.Annotations[AnnotationCreatedAt] = now
 		}
@@ -767,12 +988,42 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 	return nil
 }
 
+// calculateRoleMappingHash calculates a hash of the role mapping for change detection
+func (r *PermissionBinderReconciler) calculateRoleMappingHash(roleMapping map[string]string) string {
+	// Sort keys for consistent hashing
+	keys := make([]string, 0, len(roleMapping))
+	for k := range roleMapping {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build deterministic string representation
+	var builder strings.Builder
+	for _, k := range keys {
+		builder.WriteString(k)
+		builder.WriteString("=")
+		builder.WriteString(roleMapping[k])
+		builder.WriteString(";")
+	}
+
+	// Calculate SHA256 hash
+	hash := sha256.Sum256([]byte(builder.String()))
+	return hex.EncodeToString(hash[:])
+}
+
 // hasRoleMappingChanged checks if the role mapping has changed
-func (r *PermissionBinderReconciler) hasRoleMappingChanged(_ *permissionv1.PermissionBinder) bool {
-	// For now, we'll always return true to trigger reconciliation
-	// In a production environment, you might want to store the previous state
-	// and compare it with the current state
-	return true
+// Returns (changed bool, currentHash string)
+func (r *PermissionBinderReconciler) hasRoleMappingChanged(pb *permissionv1.PermissionBinder) (bool, string) {
+	currentHash := r.calculateRoleMappingHash(pb.Spec.RoleMapping)
+	lastHash := pb.Status.LastProcessedRoleMappingHash
+
+	// If no previous hash, consider it changed (first time)
+	if lastHash == "" {
+		return true, currentHash
+	}
+
+	// Compare hashes
+	return currentHash != lastHash, currentHash
 }
 
 // reconcileAllManagedResources reconciles all managed resources when role mapping changes
@@ -799,7 +1050,17 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 
 	// Remove role bindings for roles that no longer exist in mapping
 	for _, roleBinding := range managedRoleBindings {
-		role := r.extractRoleFromRoleBindingName(roleBinding.Name)
+		// Try to get role from annotation first (supports roles with hyphens like "read-only")
+		role := ""
+		if roleBinding.Annotations != nil {
+			role = roleBinding.Annotations[AnnotationRole]
+		}
+		
+		// Fallback to extracting from name if annotation not present (backward compatibility)
+		if role == "" {
+			role = r.extractRoleFromRoleBindingNameWithMapping(roleBinding.Name, permissionBinder.Spec.RoleMapping)
+		}
+		
 		if role != "" && !r.roleExistsInMapping(role, permissionBinder.Spec.RoleMapping) {
 			if err := r.Delete(ctx, &roleBinding); err != nil {
 				logger.Error(err, "Failed to delete obsolete RoleBinding", "namespace", roleBinding.Namespace, "name", roleBinding.Name)
@@ -969,7 +1230,44 @@ func removeString(slice []string, s string) []string {
 }
 
 // extractRoleFromRoleBindingName extracts the role from a role binding name
+// This is a legacy function that only works for single-word roles (e.g., "edit", "view")
+// For roles with hyphens (e.g., "read-only"), use extractRoleFromRoleBindingNameWithMapping
 func (r *PermissionBinderReconciler) extractRoleFromRoleBindingName(name string) string {
+	parts := strings.Split(name, "-")
+	if len(parts) >= 2 {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
+// extractRoleFromRoleBindingNameWithMapping extracts the role from a role binding name
+// by matching suffixes against role mapping keys. This supports roles with hyphens (e.g., "read-only").
+// It tries to match the longest possible role name first to handle cases like "read-only" vs "only".
+func (r *PermissionBinderReconciler) extractRoleFromRoleBindingNameWithMapping(name string, roleMapping map[string]string) string {
+	// Sort role names by length (longest first) to match "read-only" before "only"
+	roleNames := make([]string, 0, len(roleMapping))
+	for roleName := range roleMapping {
+		roleNames = append(roleNames, roleName)
+	}
+	
+	// Simple sort by length (longest first)
+	for i := 0; i < len(roleNames)-1; i++ {
+		for j := i + 1; j < len(roleNames); j++ {
+			if len(roleNames[i]) < len(roleNames[j]) {
+				roleNames[i], roleNames[j] = roleNames[j], roleNames[i]
+			}
+		}
+	}
+	
+	// Try to match each role name as a suffix of the RoleBinding name
+	for _, roleName := range roleNames {
+		suffix := "-" + roleName
+		if strings.HasSuffix(name, suffix) {
+			return roleName
+		}
+	}
+	
+	// Fallback to legacy behavior (last segment after split)
 	parts := strings.Split(name, "-")
 	if len(parts) >= 2 {
 		return parts[len(parts)-1]
@@ -1031,11 +1329,17 @@ func (r *PermissionBinderReconciler) updateMetrics(ctx context.Context, permissi
 
 // mapConfigMapToPermissionBinder maps ConfigMap changes to PermissionBinder reconciliation
 // This ensures operator reacts to ConfigMap changes automatically
+// Note: This function is only called for ConfigMaps that pass the predicate filter
+// (i.e., ConfigMaps referenced by at least one PermissionBinder)
 func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.Context, obj *corev1.ConfigMap) []reconcile.Request {
+	logger := log.FromContext(ctx)
 
 	// Get all PermissionBinders that might be using this ConfigMap
 	var permissionBinders permissionv1.PermissionBinderList
 	if err := r.List(ctx, &permissionBinders); err != nil {
+		if r.DebugMode {
+			logger.Error(err, "🔍 DEBUG: Failed to list PermissionBinders for ConfigMap watch")
+		}
 		return []reconcile.Request{}
 	}
 
@@ -1043,6 +1347,14 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 	for _, pb := range permissionBinders.Items {
 		// Check if this ConfigMap is referenced by this PermissionBinder
 		if pb.Spec.ConfigMapName == obj.Name && pb.Spec.ConfigMapNamespace == obj.Namespace {
+			if r.DebugMode {
+				logger.Info("🔍 DEBUG: ConfigMap watch triggered reconciliation",
+					"configMapName", obj.Name,
+					"configMapNamespace", obj.Namespace,
+					"configMapResourceVersion", obj.ResourceVersion,
+					"permissionBinder", types.NamespacedName{Name: pb.Name, Namespace: pb.Namespace},
+					"timestamp", time.Now().Format(time.RFC3339Nano))
+			}
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      pb.Name,
@@ -1055,10 +1367,107 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 	return requests
 }
 
+// findCondition finds a condition by type in the conditions slice
+func findCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Create an indexer for PermissionBinders by ConfigMap reference
+	// This allows efficient lookup of PermissionBinders that reference a specific ConfigMap
+	indexerFunc := func(obj client.Object) []string {
+		pb, ok := obj.(*permissionv1.PermissionBinder)
+		if !ok {
+			return []string{}
+		}
+		// Index by "namespace/name" format for ConfigMap reference
+		return []string{fmt.Sprintf("%s/%s", pb.Spec.ConfigMapNamespace, pb.Spec.ConfigMapName)}
+	}
+
+	// Register the indexer with the cache
+	if err := mgr.GetCache().IndexField(
+		context.Background(),
+		&permissionv1.PermissionBinder{},
+		"configMapRef",
+		indexerFunc,
+	); err != nil {
+		return fmt.Errorf("failed to set up indexer for PermissionBinder: %w", err)
+	}
+
+	// Create a predicate that filters ConfigMaps to only those referenced by PermissionBinders
+	// Uses the indexer for efficient lookup instead of listing all PermissionBinders
+	configMapPredicate := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return r.isConfigMapReferenced(mgr.GetClient(), e.Object)
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// Only process if ResourceVersion changed (avoid unnecessary reconciliations)
+			// This filters out status-only updates on ConfigMaps
+			oldCM := e.ObjectOld.(*corev1.ConfigMap)
+			newCM := e.ObjectNew.(*corev1.ConfigMap)
+			
+			// Only process if data or metadata changed, not just status
+			if oldCM.ResourceVersion == newCM.ResourceVersion {
+				return false
+			}
+			
+			// Check if actual data changed (not just status)
+			// ConfigMaps don't have status subresource, so ResourceVersion change means data changed
+			return r.isConfigMapReferenced(mgr.GetClient(), e.ObjectNew)
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return r.isConfigMapReferenced(mgr.GetClient(), e.Object)
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return r.isConfigMapReferenced(mgr.GetClient(), e.Object)
+		},
+	}
+
+	// Create predicate for PermissionBinder to ignore status-only updates
+	// This prevents reconciliation loops caused by status updates
+	permissionBinderPredicate := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return true
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// Only reconcile if spec or metadata changed, not status-only changes
+			oldObj := e.ObjectOld.(*permissionv1.PermissionBinder)
+			newObj := e.ObjectNew.(*permissionv1.PermissionBinder)
+			
+			// Check if spec changed
+			if oldObj.Generation != newObj.Generation {
+				return true
+			}
+			
+			// Check if deletion timestamp changed (object is being deleted)
+			if oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero() {
+				return true
+			}
+			
+			// Check if finalizers changed
+			if len(oldObj.Finalizers) != len(newObj.Finalizers) {
+				return true
+			}
+			
+			// Ignore status-only updates
+			return false
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return true
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return true
+		},
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&permissionv1.PermissionBinder{}).
+		For(&permissionv1.PermissionBinder{}, builder.WithPredicates(permissionBinderPredicate)).
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -1068,7 +1477,30 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				}
 				return r.mapConfigMapToPermissionBinder(ctx, configMap)
 			}),
-			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
+			builder.WithPredicates(configMapPredicate),
 		).
 		Complete(r)
+}
+
+// isConfigMapReferenced checks if a ConfigMap is referenced by any PermissionBinder
+// Uses indexer for efficient lookup instead of listing all PermissionBinders
+func (r *PermissionBinderReconciler) isConfigMapReferenced(c client.Client, obj client.Object) bool {
+	configMap, ok := obj.(*corev1.ConfigMap)
+	if !ok {
+		return false
+	}
+
+	ctx := context.Background()
+	var permissionBinders permissionv1.PermissionBinderList
+	
+	// Use indexer to find PermissionBinders that reference this ConfigMap
+	indexKey := fmt.Sprintf("%s/%s", configMap.Namespace, configMap.Name)
+	if err := c.List(ctx, &permissionBinders, client.MatchingFields{"configMapRef": indexKey}); err != nil {
+		// If indexer lookup fails, fallback to allowing the event through (safer)
+		// This ensures we don't miss events if there's a temporary cache/indexer issue
+		return true
+	}
+
+	// If any PermissionBinders reference this ConfigMap, return true
+	return len(permissionBinders.Items) > 0
 }

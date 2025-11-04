@@ -40,45 +40,67 @@ Modular test runner that allows running individual tests or all tests with prope
 - ✅ **Debug mode (`--no-cleanup`)**: Preserve cluster state after test for manual inspection
 
 #### `run-complete-e2e-tests.sh`
-Complete test suite that runs all 41 tests sequentially without cleanup between tests (faster but less isolated).
+Complete test suite that runs all 43 tests sequentially **without cleanup between tests** (faster but less isolated).
 
 ```bash
-# Run all tests in sequence (1-41)
+# Run all tests in sequence (1-43)
 ./run-complete-e2e-tests.sh
 ```
+
+**Features:**
+- ✅ Single operator deployment for all tests
+- ✅ Tests run sequentially in one execution
+- ✅ Fast execution (no cleanup overhead)
+- ✅ Tests may build on each other's state
+- ✅ Single log file for all tests
 
 **Use when:**
 - You want to run the full suite quickly
 - Tests build on each other's state
 - You're doing a final validation before release
+- Quick smoke testing
+
+**Limitations:**
+- ⚠️ Tests are NOT isolated (may affect each other)
+- ⚠️ Failures in early tests may affect later tests
+- ⚠️ Harder to debug individual test failures
 
 #### `run-tests-full-isolation.sh` ⭐ **RECOMMENDED FOR CI/CD**
-Runs tests with FULL ISOLATION - each test gets fresh cluster cleanup + fresh operator deployment.
+Runs tests with **FULL ISOLATION** - each test gets fresh cluster cleanup + fresh operator deployment.
 
 ```bash
-# Run all tests with full isolation (pre + 1-41)
+# Run all tests with full isolation (pre + 1-43)
 ./run-tests-full-isolation.sh
 
 # Run specific tests with full isolation
 ./run-tests-full-isolation.sh 35 36 37
+
+# Run bug fix tests (42, 43)
+./run-tests-full-isolation.sh 42 43
 
 # Run all new ServiceAccount tests
 ./run-tests-full-isolation.sh 35 36 37 38 39 40 41
 ```
 
 **Features:**
-- ✅ Fresh cluster cleanup per test
-- ✅ Fresh operator deployment per test
-- ✅ New pod per test (guaranteed isolation)
-- ✅ Detailed logs per test (cleanup, deploy, test)
-- ✅ Success rate calculation
-- ✅ Colored output for readability
+- ✅ **Fresh cluster cleanup per test** (via `cleanup-operator.sh`)
+- ✅ **Fresh operator deployment per test**
+- ✅ **New pod per test** (guaranteed isolation)
+- ✅ **Detailed logs per test** (cleanup, deploy, test)
+- ✅ **Success rate calculation**
+- ✅ **Colored output for readability**
+- ✅ **Individual log files** (`/tmp/cleanup-<test_id>.log`, `/tmp/deploy-<test_id>.log`, `/tmp/test-<test_id>-isolated.log`)
 
 **Use when:**
 - You need guaranteed test isolation
 - Debugging flaky tests
 - Pre-release validation
 - CI/CD pipelines
+- Investigating specific test failures
+
+**Trade-offs:**
+- ⏱️ Slower execution (cleanup + deploy overhead per test)
+- 💾 More resource usage (multiple operator pods over time)
 
 ### Helper Scripts
 
