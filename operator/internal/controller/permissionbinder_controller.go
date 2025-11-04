@@ -342,7 +342,11 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 		cnValue, err := r.extractCNFromDN(line)
 		if err != nil {
 			configMapEntriesProcessed.WithLabelValues("error").Inc()
-			logger.Error(err, "Failed to extract CN from LDAP DN", "line", lineNum+1, "content", line)
+			logger.Info("Skipping invalid LDAP DN entry - cannot extract CN",
+				"line", lineNum+1,
+				"content", line,
+				"reason", err.Error(),
+				"action", "skip")
 			continue
 		}
 
@@ -357,7 +361,11 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 		namespace, role, matchedPrefix, err := r.parsePermissionStringWithPrefixes(cnValue, permissionBinder.Spec.Prefixes, permissionBinder.Spec.RoleMapping)
 		if err != nil {
 			configMapEntriesProcessed.WithLabelValues("error").Inc()
-			logger.Error(err, "Failed to parse permission string", "cn", cnValue, "line", lineNum+1)
+			logger.Info("Skipping invalid permission string - cannot parse CN value",
+				"line", lineNum+1,
+				"cn", cnValue,
+				"reason", err.Error(),
+				"action", "skip")
 			continue
 		}
 
