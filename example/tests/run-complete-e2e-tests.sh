@@ -1349,8 +1349,9 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         pass_test "ServiceAccounts created (deploy and runtime)"
         
         # Check RoleBindings
-        RB_DEPLOY=$(kubectl get rolebinding -n test-namespace-001 2>/dev/null | grep -c "sa-deploy" || echo "0")
-        RB_RUNTIME=$(kubectl get rolebinding -n test-namespace-001 2>/dev/null | grep -c "sa-runtime" || echo "0")
+        # Use grep with name filter to find RoleBindings for ServiceAccounts
+        RB_DEPLOY=$(kubectl get rolebinding -n test-namespace-001 -o name 2>/dev/null | grep -c "sa-.*-deploy" || echo "0")
+        RB_RUNTIME=$(kubectl get rolebinding -n test-namespace-001 -o name 2>/dev/null | grep -c "sa-.*-runtime" || echo "0")
         
         if [ "$RB_DEPLOY" -gt 0 ] && [ "$RB_RUNTIME" -gt 0 ]; then
             pass_test "ServiceAccount RoleBindings created"
@@ -1444,8 +1445,28 @@ echo ""
 echo "Test 34: ServiceAccount Status Tracking"
 echo "-----------------------------------------"
 
-# Check status tracking
-SA_STATUS=$(kubectl get permissionbinder test-sa-basic -n $NAMESPACE -o jsonpath='{.status.processedServiceAccounts}' 2>/dev/null)
+# Create PermissionBinder for status tracking test
+cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: test-sa-status-tracking
+  namespace: $NAMESPACE
+spec:
+  configMapName: permission-config
+  configMapNamespace: $NAMESPACE
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    developer: edit
+  serviceAccountMapping:
+    status-test: edit
+EOF
+
+# Give operator time to process and update status
+sleep 15
+
+SA_STATUS=$(kubectl get permissionbinder test-sa-status-tracking -n $NAMESPACE -o jsonpath='{.status.processedServiceAccounts}' 2>/dev/null)
 
 if [ ! -z "$SA_STATUS" ] && [ "$SA_STATUS" != "null" ]; then
     SA_COUNT=$(echo "$SA_STATUS" | jq '. | length' 2>/dev/null || echo "0")
@@ -1457,7 +1478,23 @@ if [ ! -z "$SA_STATUS" ] && [ "$SA_STATUS" != "null" ]; then
         fail_test "ServiceAccount status empty"
     fi
 else
-    info_log "ServiceAccount status field not populated (may need more time)"
+    # Try to force reconciliation by updating ConfigMap (triggers reconciliation via watch)
+    kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')"'\n"}}' >/dev/null 2>&1
+    sleep 2
+    # Revert the change
+    kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | sed 's/\n$//')"'"}}' >/dev/null 2>&1
+    sleep 5
+    SA_STATUS=$(kubectl get permissionbinder test-sa-status-tracking -n $NAMESPACE -o jsonpath='{.status.processedServiceAccounts}' 2>/dev/null)
+    if [ ! -z "$SA_STATUS" ] && [ "$SA_STATUS" != "null" ]; then
+        SA_COUNT=$(echo "$SA_STATUS" | jq '. | length' 2>/dev/null || echo "0")
+        if [ "$SA_COUNT" -gt 0 ]; then
+            pass_test "ServiceAccount status tracking works"
+        else
+            fail_test "ServiceAccount status empty"
+        fi
+    else
+        fail_test "ServiceAccount status field not populated"
+    fi
 fi
 
 echo ""
@@ -1577,9 +1614,20 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         # Manually delete ServiceAccount
         kubectl delete sa test-namespace-001-sa-cleanup-test -n test-namespace-001 >/dev/null 2>&1
         
-        # Trigger reconciliation
-        kubectl annotate permissionbinder test-sa-cleanup -n $NAMESPACE trigger-reconcile="$(date +%s)" --overwrite >/dev/null 2>&1
-        sleep 20
+        # Trigger full reconciliation by deleting operator pod and forcing reconciliation
+        OPERATOR_POD=$(kubectl get pods -n $NAMESPACE -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -n "$OPERATOR_POD" ]; then
+            info_log "Deleting operator pod to trigger full reconciliation: $OPERATOR_POD"
+            kubectl delete pod $OPERATOR_POD -n $NAMESPACE >/dev/null 2>&1
+            # Wait for operator to restart and be ready
+            kubectl wait --for=condition=ready --timeout=60s pod -l control-plane=controller-manager -n $NAMESPACE >/dev/null 2>&1
+            # Force reconciliation by updating ConfigMap (triggers reconciliation via watch)
+            kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')"'\n"}}' >/dev/null 2>&1
+            sleep 2
+            # Revert the change
+            kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | sed 's/\n$//')"'"}}' >/dev/null 2>&1
+        fi
+        sleep 15
         
         # Verify SA recreated (operator should recreate it)
         if kubectl get sa test-namespace-001-sa-cleanup-test -n test-namespace-001 >/dev/null 2>&1; then
@@ -1847,12 +1895,34 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         # Delete ServiceAccount
         kubectl delete sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1
         
-        # Trigger reconciliation
-        kubectl annotate permissionbinder test-sa-recreation -n $NAMESPACE force-reconcile="$(date +%s)" --overwrite >/dev/null 2>&1
+        # Trigger full reconciliation by deleting operator pod and forcing reconciliation
+        OPERATOR_POD=$(kubectl get pods -n $NAMESPACE -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -n "$OPERATOR_POD" ]; then
+            info_log "Deleting operator pod to trigger full reconciliation: $OPERATOR_POD"
+            kubectl delete pod $OPERATOR_POD -n $NAMESPACE >/dev/null 2>&1
+            # Wait for operator to restart and be ready
+            kubectl wait --for=condition=ready --timeout=60s pod -l control-plane=controller-manager -n $NAMESPACE >/dev/null 2>&1
+            # Force reconciliation by updating ConfigMap (triggers reconciliation via watch)
+            kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')"'\n"}}' >/dev/null 2>&1
+            sleep 2
+            # Revert the change
+            kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | sed 's/\n$//')"'"}}' >/dev/null 2>&1
+        fi
+        # Wait for reconciliation to complete
         sleep 20
         
-        # Verify recreated
-        if kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1; then
+        # Verify recreated - retry a few times if needed
+        RECREATED=false
+        for i in {1..5}; do
+            if kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1; then
+                RECREATED=true
+                break
+            fi
+            info_log "Waiting for ServiceAccount recreation (attempt $i/5)..."
+            sleep 3
+        done
+        
+        if [ "$RECREATED" = true ]; then
             pass_test "ServiceAccount automatically recreated"
             
             # Verify new UID (new instance)

@@ -44,6 +44,7 @@ kubeconfig*
 # Internal documentation (not for public repo)
 AUDIT_REPORT.md
 DEEP_AUDIT_REPORT*.md
+FULL_DEEP_AUDIT*.md
 CONVERSATION_SUMMARY.md
 PROJECT_STATUS.md
 QUICK_START.md
