@@ -4,8 +4,29 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.5.7-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.6.0-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![GitHub Release](https://img.shields.io/badge/Release-v1.6.0-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.0)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
+---
+
+## 🚀 What's New in v1.6.0
+
+### 🔒 **SECURITY CRITICAL: Token Leak Prevention**
+- ✅ Binary `git-askpass-helper` prevents credentials in logs/process args
+- ✅ Banking/SOC2/GDPR compliant credential handling
+- ✅ Zero tokens in: `ps aux`, operator logs, error messages
+
+### 🐛 **Bug Fixes**
+- ✅ Race condition in status updates fixed (retry logic with backoff)
+- ✅ Zero `"object has been modified"` errors
+
+### ✨ **Features**
+- ✅ **NetworkPolicy GitOps Management**: Automated PR creation, drift detection, auto-merge
+- ✅ **17 New E2E Tests**: Comprehensive NetworkPolicy testing (Tests 44-60)
+- ✅ **61 Total E2E Scenarios**: All passing ✅
+
+📖 **Full Release Notes**: [v1.6.0 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.0)
 
 ---
 
@@ -106,7 +127,8 @@ spec:
 6. **RoleBinding Creation** - Creates RoleBinding linking LDAP group DN to ClusterRole
 7. **ServiceAccount Management** - Optionally creates ServiceAccounts for CI/CD and runtime pods with RoleBindings
 8. **LDAP Group Creation** - Optionally creates LDAP/AD groups automatically (see [LDAP Integration](docs/LDAP_INTEGRATION.md))
-9. **Reconciliation** - Continuously ensures desired state
+9. **NetworkPolicy GitOps** - Automated NetworkPolicy management via GitHub Pull Requests (template-based, drift detection, auto-merge)
+10. **Reconciliation** - Continuously ensures desired state
 
 ### ConfigMap Format
 
@@ -187,12 +209,13 @@ subjects:
 ### For Operations
 - [**Runbook**](docs/RUNBOOK.md) - Operational procedures and troubleshooting
 - [**Backup & Recovery**](docs/BACKUP.md) - DR procedures with Kasten K10
-- [E2E Test Scenarios](example/e2e-test-scenarios.md) - 48 comprehensive test scenarios (Pre + Tests 1-48)
+- [E2E Test Scenarios](example/tests/scenarios/) - 61 comprehensive test scenarios (Pre + Tests 1-60)
 - [Monitoring Guide](example/monitoring/README.md) - Metrics, alerts, dashboards
 
 ### For Features
 - [**ServiceAccount Management**](docs/SERVICE_ACCOUNT_MANAGEMENT.md) - Automated ServiceAccount creation for CI/CD
 - [**LDAP Integration**](docs/LDAP_INTEGRATION.md) - Automatic LDAP/AD group creation
+- [**NetworkPolicy GitOps**](example/tests/NETWORKPOLICY_TESTING.md) - Automated NetworkPolicy management via GitHub
 
 ### For Deployment
 - [GitOps Deployment](example/README.md) - ArgoCD integration
@@ -288,13 +311,13 @@ make build-static
 
 ### Testing
 
-**Comprehensive E2E Test Suite - 48 Tests** ✅
+**Comprehensive E2E Test Suite - 61 Tests** ✅
 
 ```bash
 cd example/tests
 
-# Run tests with full isolation (fresh pod per test) - RECOMMENDED
-./run-tests-full-isolation.sh              # All tests (pre + 1-48)
+# Run tests with full isolation (fresh operator deployment per test) - RECOMMENDED
+./run-tests-full-isolation.sh              # All tests (pre + 1-60)
 ./run-tests-full-isolation.sh 44 45 46     # Specific tests (e.g., NetworkPolicy)
 
 # Run unit tests
@@ -308,7 +331,9 @@ make test
 - **Metrics & Monitoring (25-30)**: Prometheus metrics, metrics updates
 - **ServiceAccount Management (31-41)**: Creation, protection, updates
 - **Bug Fixes (42-43)**: Regression tests for fixed bugs
-- **NetworkPolicy Management (44-48)**: GitOps-based NetworkPolicy management
+- **NetworkPolicy Management (44-60)**: GitOps-based NetworkPolicy management (17 tests)
+
+See [NetworkPolicy Testing Guide](example/tests/NETWORKPOLICY_TESTING.md) for details.
 
 See detailed scenarios: [example/e2e-test-scenarios.md](example/e2e-test-scenarios.md)
 
