@@ -67,7 +67,7 @@ Each test scenario is documented in a separate file for easy navigation and fast
 - [Test 42: RoleBindings with Hyphenated Roles (Bug Fix v1.5.2)](42-rolebindings-with-hyphenated-roles-bug-fix-v152.md)
 - [Test 43: Invalid Whitelist Entry Handling (Bug Fix v1.5.3)](43-invalid-whitelist-entry-handling-bug-fix-v153.md)
 
-### NetworkPolicy Management (Tests 44-62) {#networkpolicy-management-tests-44-62}
+### NetworkPolicy Management (Tests 44-60) {#networkpolicy-management-tests-44-60}
 - [Test 44: NetworkPolicy - Variant A (New File from Template)](44-networkpolicy---variant-a-new-file-from-template.md)
 - [Test 45: NetworkPolicy - Variant B (Backup Existing Template-based Policy)](45-networkpolicy---variant-b-backup-existing-template-based-policy.md)
 - [Test 46: NetworkPolicy - Drift Detection](46-networkpolicy---drift-detection.md)
@@ -81,10 +81,10 @@ Each test scenario is documented in a separate file for easy navigation and fast
 - [Test 54: NetworkPolicy - PR State Transitions](54-networkpolicy---pr-state-transitions.md)
 - [Test 55: NetworkPolicy - Multiple PermissionBinders Validation](55-networkpolicy---multiple-permissionbinders-validation.md)
 - [Test 56: NetworkPolicy - Template Changes Detection](56-networkpolicy---template-changes-detection.md)
-- [Test 59: NetworkPolicy - Read-Only Repository Access](59-networkpolicy---read-only-repository-access.md)
-- [Test 60: NetworkPolicy - Disabled Mode](60-networkpolicy---disabled-mode.md)
-- [Test 61: NetworkPolicy - Namespace Removal Cleanup](61-networkpolicy---namespace-removal-cleanup.md)
-- [Test 62: NetworkPolicy - High Frequency Reconciliation](62-networkpolicy---high-frequency-reconciliation.md)
+- [Test 57: NetworkPolicy - Read-Only Repository Access](57-networkpolicy---read-only-repository-access.md)
+- [Test 58: NetworkPolicy - Disabled Mode](58-networkpolicy---disabled-mode.md)
+- [Test 59: NetworkPolicy - Namespace Removal Cleanup](59-networkpolicy---namespace-removal-cleanup.md)
+- [Test 60: NetworkPolicy - High Frequency Reconciliation](60-networkpolicy---high-frequency-reconciliation.md)
 
 ## Adding New Tests
 

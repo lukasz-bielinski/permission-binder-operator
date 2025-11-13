@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test 61: NetworkPolicy - Namespace Removal Cleanup
+# Test 59: NetworkPolicy - Namespace Removal Cleanup
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/test-common.sh"
 # ============================================================================
 # ============================================================================
 echo ""
-echo "Test 61: NetworkPolicy - Namespace Removal Cleanup"
+echo "Test 59: NetworkPolicy - Namespace Removal Cleanup"
 echo "--------------------------------------------------"
 
 BINDER_NAME="test-permissionbinder-networkpolicy-removal"

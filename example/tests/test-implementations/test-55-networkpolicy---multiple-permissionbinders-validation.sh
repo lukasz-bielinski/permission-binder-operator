@@ -152,7 +152,7 @@ if ! lsof -Pi :$METRICS_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
     sleep 3
 fi
 
-METRIC_VALUE=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_multiple_crs_networkpolicy_warning_total' | awk '{print $2}' | head -1 || echo "0")
+METRIC_VALUE=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep '^permission_binder_multiple_crs_networkpolicy_warning_total' | awk '{print $2}' | head -1 || echo "0")
 if [ "$METRIC_VALUE" != "0" ]; then
     pass_test "Metric permission_binder_multiple_crs_networkpolicy_warning_total incremented ($METRIC_VALUE)"
 else

@@ -125,8 +125,23 @@ pass_test "PR number found: $pr_number"
 
 # Get PR details from status
 pr_details=$(get_pr_from_status "test-permissionbinder-networkpolicy" "$TEST_NAMESPACE")
-pr_num pr_url pr_branch pr_state
-IFS='|' read -r pr_num pr_url pr_branch pr_state <<< "$pr_details"
+parse_pr_details() {
+    local data="$1"
+    IFS='|' read -r pr_num pr_url pr_branch pr_state <<< "$data"
+    echo "$pr_num|$pr_url|$pr_branch|$pr_state"
+}
+
+IFS='|' read -r pr_num pr_url pr_branch pr_state <<< "$(parse_pr_details "$pr_details")"
+
+# Ensure auto-merge label exists (GH API doesn't attach labels on PR creation)
+if command -v gh &> /dev/null; then
+    info_log "Ensuring auto-merge label is attached to PR $pr_number"
+    if ! gh pr edit "$pr_number" --repo "$GITHUB_REPO" --add-label "auto-merge" >/dev/null 2>&1; then
+        info_log "⚠️  Could not add auto-merge label via gh CLI (may require manual check)"
+    fi
+else
+    info_log "⚠️  gh CLI not available, skipping auto-merge label enforcement"
+fi
 
 info_log "PR Details from status:"
 info_log "  Number: $pr_num"

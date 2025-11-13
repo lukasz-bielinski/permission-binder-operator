@@ -33,9 +33,8 @@ get_test_file() {
     local test_id=$1
     if [ "$test_id" == "pre" ] || [ "$test_id" == "00" ]; then
         echo "test-00-pre-test.sh"
-    elif [ "$test_id" -ge 1 ] && [ "$test_id" -le 48 ] 2>/dev/null; then
-        # Find test file by number
-        printf "test-%02d-*.sh" $test_id
+    elif [[ "$test_id" =~ ^[0-9]+$ ]]; then
+        printf "test-%02d-*.sh" "$test_id"
     else
         echo ""
     fi
@@ -46,21 +45,49 @@ get_test_name() {
     local test_id=$1
     if [ "$test_id" == "pre" ] || [ "$test_id" == "00" ]; then
         echo "Pre-Test: Initial State Verification"
-    else
+    elif [[ "$test_id" =~ ^[0-9]+$ ]]; then
         # Try to get from scenario file
-        scenario_file="$SCRIPT_DIR/scenarios/$(printf "%02d" $test_id)-*.md"
+        scenario_file="$SCRIPT_DIR/scenarios/$(printf "%02d" "$test_id")-*.md"
         if ls $scenario_file 1> /dev/null 2>&1; then
-            grep "^### Test $test_id:" $(ls $scenario_file | head -1) 2>/dev/null | sed "s/^### Test $test_id: //" | head -1
+            grep "^### Test $test_id:" "$(ls $scenario_file | head -1)" 2>/dev/null | sed "s/^### Test $test_id: //" | head -1
         else
             echo "Test $test_id"
         fi
+    else
+        echo "Test $test_id"
     fi
 }
 
+# Discover available numeric tests based on implementation files
+AVAILABLE_NUMERIC_TESTS=()
+for test_path in "$TEST_IMPL_DIR"/test-*-*.sh; do
+    [ -f "$test_path" ] || continue
+    test_filename=$(basename "$test_path")
+    test_number=${test_filename#test-}
+    test_number=${test_number%%-*}
+    if [[ "$test_number" =~ ^[0-9]+$ ]]; then
+        AVAILABLE_NUMERIC_TESTS+=("$test_number")
+    fi
+done
+
+if [ ${#AVAILABLE_NUMERIC_TESTS[@]} -gt 0 ]; then
+    mapfile -t AVAILABLE_NUMERIC_TESTS < <(printf "%s\n" "${AVAILABLE_NUMERIC_TESTS[@]}" | sort -n | uniq)
+fi
+
 # Get test list
 if [ $# -eq 0 ]; then
-    # Run all tests (pre + 1-48)
-    TEST_LIST=(pre $(seq 1 48))
+    TEST_LIST=()
+    if [ -f "$TEST_IMPL_DIR/test-00-pre-test.sh" ]; then
+        TEST_LIST+=(pre)
+    fi
+    for test_id in "${AVAILABLE_NUMERIC_TESTS[@]}"; do
+        (( test_id == 0 )) && continue
+        TEST_LIST+=("$test_id")
+    done
+    if [ ${#TEST_LIST[@]} -eq 0 ]; then
+        echo "❌ No test implementations found in $TEST_IMPL_DIR"
+        exit 1
+    fi
 else
     # Run specified tests
     TEST_LIST=("$@")

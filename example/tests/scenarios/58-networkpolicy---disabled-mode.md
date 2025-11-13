@@ -1,4 +1,4 @@
-### Test 60: NetworkPolicy - Disabled Mode
+### Test 58: NetworkPolicy - Disabled Mode
 
 **Objective**: Verify that when `networkPolicy.enabled` is set to `false`, the operator skips NetworkPolicy reconciliation (no PRs, no status updates, no metrics noise).
 

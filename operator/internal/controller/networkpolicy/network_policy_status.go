@@ -202,48 +202,62 @@ func CleanupStatus(
 
 	cutoffTime := time.Now().AddDate(0, 0, -int(retentionDays))
 
-	// Get fresh copy to avoid race conditions and preserve PR info
-	key := client.ObjectKeyFromObject(permissionBinder)
-	var freshBinder permissionv1.PermissionBinder
-	if err := r.Get(ctx, key, &freshBinder); err != nil {
-		return fmt.Errorf("failed to get fresh PermissionBinder for cleanup: %w", err)
-	}
-
-	var cleanedStatus []permissionv1.NetworkPolicyStatus
-	for _, statusEntry := range freshBinder.Status.NetworkPolicies {
-		// If namespace is in current namespaces - keep it (preserve all fields including PR info)
-		if currentNamespaces[statusEntry.Namespace] {
-			cleanedStatus = append(cleanedStatus, statusEntry)
-			continue
+	// Retry logic to handle race conditions (max 3 attempts)
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Get fresh copy to avoid race conditions and preserve PR info
+		key := client.ObjectKeyFromObject(permissionBinder)
+		var freshBinder permissionv1.PermissionBinder
+		if err := r.Get(ctx, key, &freshBinder); err != nil {
+			if attempt < maxRetries-1 {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("failed to get fresh PermissionBinder for cleanup: %w", err)
 		}
 
-		// Namespace removed - check retention
-		if statusEntry.State == "removed" {
-			removedTime, err := time.Parse(time.RFC3339, statusEntry.RemovedAt)
-			if err == nil && removedTime.After(cutoffTime) {
-				// Still in retention period - keep it (preserve all fields)
+		var cleanedStatus []permissionv1.NetworkPolicyStatus
+		for _, statusEntry := range freshBinder.Status.NetworkPolicies {
+			// If namespace is in current namespaces - keep it (preserve all fields including PR info)
+			if currentNamespaces[statusEntry.Namespace] {
+				cleanedStatus = append(cleanedStatus, statusEntry)
+				continue
+			}
+
+			// Namespace removed - check retention
+			if statusEntry.State == "removed" {
+				removedTime, err := time.Parse(time.RFC3339, statusEntry.RemovedAt)
+				if err == nil && removedTime.After(cutoffTime) {
+					// Still in retention period - keep it (preserve all fields)
+					cleanedStatus = append(cleanedStatus, statusEntry)
+				}
+				// Outside retention period - remove it
+			} else {
+				// Namespace removed but not marked - mark as removed (preserve PR info)
+				statusEntry.State = "removed"
+				statusEntry.RemovedAt = time.Now().Format(time.RFC3339)
+				// Preserve PR info even when marking as removed
 				cleanedStatus = append(cleanedStatus, statusEntry)
 			}
-			// Outside retention period - remove it
-		} else {
-			// Namespace removed but not marked - mark as removed (preserve PR info)
-			statusEntry.State = "removed"
-			statusEntry.RemovedAt = time.Now().Format(time.RFC3339)
-			// Preserve PR info even when marking as removed
-			cleanedStatus = append(cleanedStatus, statusEntry)
 		}
+
+		freshBinder.Status.NetworkPolicies = cleanedStatus
+		if err := r.Status().Update(ctx, &freshBinder); err != nil {
+			if attempt < maxRetries-1 {
+				logger.V(1).Info("Cleanup status conflict, retrying", "attempt", attempt+1)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			logger.Error(err, "Failed to cleanup status after retries")
+			return fmt.Errorf("failed to cleanup status: %w", err)
+		}
+		
+		// Success - update the passed-in permissionBinder to reflect changes
+		*permissionBinder = freshBinder
+		return nil
 	}
 
-	freshBinder.Status.NetworkPolicies = cleanedStatus
-	if err := r.Status().Update(ctx, &freshBinder); err != nil {
-		logger.Error(err, "Failed to cleanup status")
-		return fmt.Errorf("failed to cleanup status: %w", err)
-	}
-	
-	// Update the passed-in permissionBinder to reflect changes
-	*permissionBinder = freshBinder
-
-	return nil
+	return fmt.Errorf("failed to cleanup status after %d attempts", maxRetries)
 }
 
 // checkStalePRs checks for PRs that have been open for too long

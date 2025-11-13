@@ -88,10 +88,10 @@ This document tracks test coverage for all Permission Binder Operator features. 
 - [x] **PR State Transitions** (Test 54)
 - [x] **Multiple PermissionBinders Validation** (Test 55)
 - [x] **Template Changes Detection** (Test 56)
-- [x] **Read-Only Repository Access (Forbidden)** (Test 59)
-- [x] **NetworkPolicy Disabled Mode** (Test 60)
-- [x] **Namespace Removal Cleanup** (Test 61)
-- [x] **High Frequency Reconciliation Stress** (Test 62)
+- [x] **Read-Only Repository Access (Forbidden)** (Test 57)
+- [x] **NetworkPolicy Disabled Mode** (Test 58)
+- [x] **Namespace Removal Cleanup** (Test 59)
+- [x] **High Frequency Reconciliation Stress** (Test 60)
 
 ## Coverage Gaps (Potential Future Tests)
 
@@ -121,7 +121,7 @@ This document tracks test coverage for all Permission Binder Operator features. 
 ## Test Statistics
 
 **Current Coverage**:
-- **Total Tests**: 61 (Pre-Test + Tests 1-62, excluding unassigned numbers)
+- **Total Tests**: 61 (Pre-Test + Tests 1-60)
 - **Test Categories**: 6
 - **Coverage Areas**: 
   - ✅ Core RBAC: 100%

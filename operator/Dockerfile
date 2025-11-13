@@ -13,6 +13,7 @@ RUN go mod download
 
 # Copy the go source
 COPY cmd/main.go cmd/main.go
+COPY cmd/git-askpass-helper/ cmd/git-askpass-helper/
 COPY api/ api/
 COPY internal/controller/ internal/controller/
 
@@ -21,7 +22,8 @@ COPY internal/controller/ internal/controller/
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o git-askpass-helper cmd/git-askpass-helper/main.go
 
 # Use alpine as base image to include git for NetworkPolicy GitOps operations
 # Alpine is minimal and secure, and includes git which is required for cloning repositories
@@ -29,6 +31,7 @@ FROM alpine:3.19
 RUN apk --no-cache add ca-certificates git
 WORKDIR /
 COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/git-askpass-helper /usr/local/bin/git-askpass-helper
 # Create non-root user (65532:65532 matches distroless nonroot user)
 RUN addgroup -g 65532 nonroot && adduser -D -u 65532 -G nonroot nonroot
 USER 65532:65532
