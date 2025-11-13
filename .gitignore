@@ -77,4 +77,5 @@ CURSOR_GUIDE.md
 # Logs
 *.log
 operator/bin/
-operator/mainoperator/git-askpass-helper
+operator/main
+operator/git-askpass-helper
