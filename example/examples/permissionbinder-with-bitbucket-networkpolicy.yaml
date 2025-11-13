@@ -1,0 +1,93 @@
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: permissionbinder-bitbucket-example
+  namespace: permissions-binder-operator
+  labels:
+    app.kubernetes.io/name: permission-binder-operator
+    app.kubernetes.io/instance: bitbucket-example
+spec:
+  # Mapping of roles to existing ClusterRoles
+  roleMapping:
+    engineer: edit
+    admin: admin
+    viewer: view
+    read-only: read-only
+  
+  # Prefixes used to identify permission strings
+  prefixes:
+    - "COMPANY-K8S"
+    - "MT-K8S"
+  
+  # Exclusion list (CN values to exclude from processing)
+  excludeList:
+    - "COMPANY-K8S-HPA-admin"
+    - "MT-K8S-SYSTEM-admin"
+  
+  # ConfigMap configuration
+  configMapName: "permission-config"
+  configMapNamespace: "permissions-binder-operator"
+  
+  # NetworkPolicy Management via GitOps with Bitbucket
+  networkPolicy:
+    enabled: true
+    
+    # Bitbucket Git repository configuration
+    gitRepository:
+      provider: "bitbucket"  # Required for Bitbucket
+      url: "https://bitbucket.org/workspace/network-policies-repo.git"
+      baseBranch: "main"
+      clusterName: "PROD-cluster"  # Used in path: networkpolicies/{clusterName}/...
+      
+      # Optional: Custom API base URL for self-hosted Bitbucket Server
+      # apiBaseURL: "https://bitbucket.example.com/rest/api/1.0"
+      
+      credentialsSecretRef:
+        name: "bitbucket-gitops-credentials"
+        namespace: "permissions-binder-operator"
+    
+    # Template directory in Git repo
+    templateDir: "networkpolicies/templates"
+    
+    # Auto-merge configuration (only for Variant A - new file from template)
+    autoMerge:
+      enabled: true
+      label: "auto-merge"
+    
+    # Global exclude list (blocks ALL NetworkPolicy operations)
+    excludeNamespaces:
+      explicit:
+        - "kube-system"
+        - "kube-public"
+        - "kube-node-lease"
+      patterns:
+        - "^openshift-.*"
+        - "^ocp-.*"
+        - "^kube-.*"
+    
+    # Backup existing NetworkPolicies (optional, default: false)
+    backupExisting: false
+    
+    # Exclude from backup (but still create from templates)
+    excludeBackupForNamespaces:
+      explicit:
+        - "production"
+        - "staging"
+      patterns:
+        - "^prod-.*"
+    
+    # Reconciliation interval (default: 1h)
+    reconciliationInterval: "1h"
+    
+    # Status retention (default: 30 days)
+    statusRetentionDays: 30
+    
+    # Stale PR threshold (default: 30d)
+    stalePRThreshold: "30d"
+    
+    # Batch processing configuration
+    batchProcessing:
+      batchSize: 5
+      sleepBetweenBatches: "60s"
+      sleepBetweenNamespaces: "3s"
+
