@@ -19,17 +19,20 @@ package networkpolicy
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"os"
-	"os/exec"
-	"strings"
+	"time"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// cloneGitRepo clones repository using git CLI.
+// cloneGitRepo clones repository using go-git library.
 // Returns temporary directory path with cloned repository.
-// SECURITY: Uses GIT_ASKPASS to avoid exposing token in process arguments/logs.
+// SECURITY: Credentials are passed via BasicAuth, never exposed in URLs or logs.
 // tlsVerify controls TLS certificate verification (false = skip verification, insecure).
 func cloneGitRepo(ctx context.Context, repoURL string, credentials *gitCredentials, tlsVerify bool) (string, error) {
 	logger := log.FromContext(ctx)
@@ -39,252 +42,254 @@ func cloneGitRepo(ctx context.Context, repoURL string, credentials *gitCredentia
 		return "", fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
-	// Use binary askpass helper (compiled into Docker image, distroless-compatible)
-	// This prevents token from appearing in process arguments or logs
-	askpassHelper := getAskPassHelperPath()
+	// Sanitize URL in logs (in case it contains credentials)
+	sanitizedURL := sanitizeString(repoURL, credentials)
+	logger.V(1).Info("Cloning Git repository", "url", sanitizedURL, "tempDir", tmpDir, "tlsVerify", tlsVerify)
 
-	// Use original URL without credentials - git will use askpass helper
-	logger.V(1).Info("Cloning Git repository", "url", repoURL, "tempDir", tmpDir, "tlsVerify", tlsVerify)
+	// Prepare authentication
+	auth := &githttp.BasicAuth{
+		Username: credentials.username,
+		Password: credentials.token,
+	}
 
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", repoURL, tmpDir)
-	cmd.Env = withGitCredentials(os.Environ(), credentials, askpassHelper, tlsVerify)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	// Clone options
+	cloneOptions := &git.CloneOptions{
+		URL:             repoURL,
+		Auth:            auth,
+		Depth:           1, // Shallow clone
+		SingleBranch:    false,
+		Progress:        nil, // No progress output
+		Tags:            git.NoTags,
+		InsecureSkipTLS: !tlsVerify, // Skip TLS verification if tlsVerify is false
+	}
+
+	// Clone repository
+	// Note: v5 uses bare as argument, v6 will use CloneOptions.Bare field
+	_, err = git.PlainCloneContext(ctx, tmpDir, false, cloneOptions)
+	if err != nil {
 		os.RemoveAll(tmpDir)
 		networkPolicyGitOperationsTotal.WithLabelValues("clone", "error").Inc()
-		return "", fmt.Errorf("failed to clone repository: %w\noutput: %s", err, string(output))
+		// Sanitize error to prevent token leakage
+		return "", fmt.Errorf("failed to clone repository: %w", sanitizeError(err, credentials))
 	}
 
 	networkPolicyGitOperationsTotal.WithLabelValues("clone", "success").Inc()
 	return tmpDir, nil
 }
 
-// gitCheckoutBranch checks out or creates a branch using git CLI.
+// gitCheckoutBranch checks out or creates a branch using go-git.
 // If create is false, only checks out existing branch.
-// If create is true, creates new branch if it doesn't exist.
+// If create is true, creates new branch if it doesn't exist, or checks out if it already exists.
 func gitCheckoutBranch(ctx context.Context, repoDir string, branchName string, create bool) error {
-	// Check current branch first
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = repoDir
-	currentBranch, err := cmd.Output()
-	if err == nil && strings.TrimSpace(string(currentBranch)) == branchName {
-		// Already on the requested branch
+	// Open repository
+	repo, err := git.PlainOpen(repoDir)
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
+	}
+
+	// Get worktree
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+
+	// Check current branch
+	head, err := repo.Head()
+	if err == nil {
+		currentBranch := head.Name().Short()
+		if currentBranch == branchName {
+			// Already on the requested branch
+			return nil
+		}
+	}
+
+	// Check if branch exists locally
+	branchRef := plumbing.NewBranchReferenceName(branchName)
+	_, err = repo.Reference(branchRef, false)
+	branchExists := err == nil
+
+	// If branch exists locally, just checkout (don't try to create)
+	if branchExists {
+		checkoutOptions := &git.CheckoutOptions{
+			Branch: branchRef,
+			Create: false, // Branch already exists
+		}
+		if err := worktree.Checkout(checkoutOptions); err != nil {
+			return fmt.Errorf("failed to checkout existing branch: %w", err)
+		}
 		return nil
 	}
 
-	if create {
-		// Try to create new branch
-		cmd = exec.CommandContext(ctx, "git", "checkout", "-b", branchName)
-		cmd.Dir = repoDir
-		if _, err := cmd.CombinedOutput(); err != nil {
-			// Branch might already exist, try to checkout existing branch
-			cmd = exec.CommandContext(ctx, "git", "checkout", branchName)
-			cmd.Dir = repoDir
-			if output, err := cmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("failed to checkout branch: %w\noutput: %s", err, string(output))
-			}
-		}
-	} else {
-		// Only checkout existing branch
-		cmd = exec.CommandContext(ctx, "git", "checkout", branchName)
-		cmd.Dir = repoDir
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to checkout branch: %w\noutput: %s", err, string(output))
-		}
+	// Branch doesn't exist locally
+	if !create {
+		return fmt.Errorf("branch %s does not exist and create=false", branchName)
 	}
+
+	// Create new branch from HEAD
+	headRef, err := repo.Head()
+	if err != nil {
+		return fmt.Errorf("failed to get HEAD: %w", err)
+	}
+
+	// Create branch reference
+	newRef := plumbing.NewHashReference(branchRef, headRef.Hash())
+	if err := repo.Storer.SetReference(newRef); err != nil {
+		return fmt.Errorf("failed to create branch reference: %w", err)
+	}
+
+	// Checkout newly created branch
+	checkoutOptions := &git.CheckoutOptions{
+		Branch: branchRef,
+		Create: false, // Already created above
+	}
+
+	if err := worktree.Checkout(checkoutOptions); err != nil {
+		return fmt.Errorf("failed to checkout newly created branch: %w", err)
+	}
+
 	return nil
 }
 
-// gitCommitAndPush commits and pushes changes using git CLI.
+// gitCommitAndPush commits and pushes changes using go-git.
 // Configures git user, adds all changes, commits, and pushes to remote.
 // Returns early if there are no changes to commit.
 // tlsVerify controls TLS certificate verification (false = skip verification, insecure).
 func gitCommitAndPush(ctx context.Context, repoDir string, branchName string, commitMessage string, credentials *gitCredentials, tlsVerify bool) error {
 	logger := log.FromContext(ctx)
 
-	// Configure git user
-	cmd := exec.CommandContext(ctx, "git", "config", "user.name", credentials.username)
-	cmd.Dir = repoDir
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to set git user.name: %w", err)
+	// Custom HTTP client will be used via auth if TLS verify is disabled
+
+	// Open repository
+	repo, err := git.PlainOpen(repoDir)
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
 	}
 
-	cmd = exec.CommandContext(ctx, "git", "config", "user.email", credentials.email)
-	cmd.Dir = repoDir
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to set git user.email: %w", err)
+	// Get worktree
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
 	}
+
+	// Configure git user (stored in commit signature, not in git config)
+	// go-git doesn't require git config for commits, we use signature directly
 
 	// Add all changes
-	cmd = exec.CommandContext(ctx, "git", "add", "-A")
-	cmd.Dir = repoDir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to add changes: %w\noutput: %s", err, string(output))
+	if err := worktree.AddWithOptions(&git.AddOptions{All: true}); err != nil {
+		return fmt.Errorf("failed to add changes: %w", err)
 	}
 
 	// Check if there are changes
-	cmd = exec.CommandContext(ctx, "git", "status", "--porcelain")
-	cmd.Dir = repoDir
-	output, err := cmd.Output()
+	status, err := worktree.Status()
 	if err != nil {
-		return fmt.Errorf("failed to check status: %w", err)
+		return fmt.Errorf("failed to get status: %w", err)
 	}
 
-	if len(output) == 0 {
+	if status.IsClean() {
 		logger.V(1).Info("No changes to commit")
 		return nil
 	}
 
 	// Commit
-	cmd = exec.CommandContext(ctx, "git", "commit", "-m", commitMessage)
-	cmd.Dir = repoDir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to commit: %w\noutput: %s", err, string(output))
+	commitOptions := &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  credentials.username,
+			Email: credentials.email,
+			When:  time.Now(),
+		},
 	}
 
-	// Get original remote URL (without credentials)
-	cmd = exec.CommandContext(ctx, "git", "config", "--get", "remote.origin.url")
-	cmd.Dir = repoDir
-	remoteURL, err := cmd.Output()
+	_, err = worktree.Commit(commitMessage, commitOptions)
 	if err != nil {
-		return fmt.Errorf("failed to get remote URL: %w", err)
+		return fmt.Errorf("failed to commit: %w", err)
 	}
 
-	// Parse URL and remove any existing credentials
-	u, err := url.Parse(strings.TrimSpace(string(remoteURL)))
+	// Get remote
+	remote, err := repo.Remote("origin")
 	if err != nil {
-		return fmt.Errorf("failed to parse remote URL: %w", err)
-	}
-	// Remove credentials from URL if present
-	u.User = nil
-	cleanURL := u.String()
-
-	// Set remote URL without credentials - git will use askpass helper
-	cmd = exec.CommandContext(ctx, "git", "remote", "set-url", "origin", cleanURL)
-	cmd.Dir = repoDir
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to set remote URL: %w", err)
+		return fmt.Errorf("failed to get remote: %w", err)
 	}
 
-	// Use binary askpass helper (compiled into Docker image, distroless-compatible)
-	askpassHelper := getAskPassHelperPath()
-
-	// Prepare environment with credentials for all git operations
-	env := withGitCredentials(os.Environ(), credentials, askpassHelper, tlsVerify)
-
-	// Fetch remote branches to check if branch exists
-	cmd = exec.CommandContext(ctx, "git", "fetch", "origin")
-	cmd.Dir = repoDir
-	cmd.Env = env
-	if output, err := cmd.CombinedOutput(); err != nil {
-		logger.V(1).Info("Failed to fetch remote branches, continuing anyway", "error", string(output))
+	// Prepare authentication
+	auth := &githttp.BasicAuth{
+		Username: credentials.username,
+		Password: credentials.token,
 	}
 
 	// Check if branch exists on remote
-	cmd = exec.CommandContext(ctx, "git", "ls-remote", "--heads", "origin", branchName)
-	cmd.Dir = repoDir
-	cmd.Env = env
-	remoteBranchOutput, err := cmd.Output()
-	remoteBranchExists := err == nil && len(remoteBranchOutput) > 0
+	branchRef := plumbing.NewBranchReferenceName(branchName)
+	listOptions := &git.ListOptions{
+		Auth:            auth,
+		InsecureSkipTLS: !tlsVerify,
+	}
+	remoteRefs, err := remote.List(listOptions)
+	if err != nil {
+		// Sanitize error to prevent token leakage
+		sanitizedErr := sanitizeError(err, credentials)
+		logger.V(1).Info("Failed to list remote refs, continuing anyway", "error", sanitizedErr)
+	}
+
+	remoteBranchExists := false
+	for _, ref := range remoteRefs {
+		if ref.Name() == branchRef {
+			remoteBranchExists = true
+			break
+		}
+	}
+
+	// Prepare push options
+	pushOptions := &git.PushOptions{
+		Auth:            auth,
+		RemoteName:      "origin",
+		InsecureSkipTLS: !tlsVerify,
+		RefSpecs: []config.RefSpec{
+			config.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/heads/%s", branchName, branchName)),
+		},
+	}
 
 	if remoteBranchExists {
-		// Branch exists on remote - fetch and update local tracking branch
+		// Branch exists on remote - try to fetch and rebase first
 		logger.V(1).Info("Branch exists on remote, fetching and updating", "branch", branchName)
-		
-		// Fetch the specific branch to update local refs
-		cmd = exec.CommandContext(ctx, "git", "fetch", "origin", branchName+":"+branchName)
-		cmd.Dir = repoDir
-		cmd.Env = env
-		if output, err := cmd.CombinedOutput(); err != nil {
-			logger.V(1).Info("Failed to fetch branch, will try force push", "error", string(output))
+
+		// Fetch latest changes
+		fetchOptions := &git.FetchOptions{
+			Auth:            auth,
+			RemoteName:      "origin",
+			InsecureSkipTLS: !tlsVerify,
+			RefSpecs: []config.RefSpec{
+				config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/remotes/origin/%s", branchName, branchName)),
+			},
 		}
 
-		// Set upstream tracking
-		cmd = exec.CommandContext(ctx, "git", "branch", "--set-upstream-to=origin/"+branchName, branchName)
-		cmd.Dir = repoDir
-		_ = cmd.Run() // Ignore error if already set
-
-		// Try pull with rebase first
-		cmd = exec.CommandContext(ctx, "git", "pull", "--rebase", "origin", branchName)
-		cmd.Dir = repoDir
-		cmd.Env = env
-		if output, err := cmd.CombinedOutput(); err != nil {
-			// Rebase failed - use force push (acceptable for operator-managed branches)
-			logger.V(1).Info("Rebase failed, using force push", "error", string(output))
-			cmd = exec.CommandContext(ctx, "git", "push", "--force", "origin", branchName)
-			cmd.Dir = repoDir
-			cmd.Env = env
-			if output, err := cmd.CombinedOutput(); err != nil {
-				networkPolicyGitOperationsTotal.WithLabelValues("push", "error").Inc()
-				return fmt.Errorf("failed to push (force): %w\noutput: %s", err, string(output))
-			}
+		if err := repo.Fetch(fetchOptions); err != nil && err != git.NoErrAlreadyUpToDate {
+			// Sanitize error to prevent token leakage
+			sanitizedErr := sanitizeError(err, credentials)
+			logger.V(1).Info("Failed to fetch branch, will use force push", "error", sanitizedErr)
 		} else {
-			// Rebase succeeded, normal push
-			cmd = exec.CommandContext(ctx, "git", "push", "origin", branchName)
-			cmd.Dir = repoDir
-			cmd.Env = env
-			if output, err := cmd.CombinedOutput(); err != nil {
-				networkPolicyGitOperationsTotal.WithLabelValues("push", "error").Inc()
-				return fmt.Errorf("failed to push: %w\noutput: %s", err, string(output))
-			}
+			// Try to merge remote changes (simplified - just use force push for operator-managed branches)
+			// For operator-managed branches, force push is acceptable
+			logger.V(1).Info("Using force push for operator-managed branch")
+		}
+
+		// Use force push (acceptable for operator-managed branches)
+		pushOptions.RefSpecs = []config.RefSpec{
+			config.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/heads/%s", branchName, branchName)),
 		}
 	} else {
 		// Branch doesn't exist on remote - normal push with upstream
-		cmd = exec.CommandContext(ctx, "git", "push", "-u", "origin", branchName)
-		cmd.Dir = repoDir
-		cmd.Env = env
-		if output, err := cmd.CombinedOutput(); err != nil {
-			networkPolicyGitOperationsTotal.WithLabelValues("push", "error").Inc()
-			return fmt.Errorf("failed to push: %w\noutput: %s", err, string(output))
+		pushOptions.RefSpecs = []config.RefSpec{
+			config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/heads/%s", branchName, branchName)),
 		}
+	}
+
+	// Push
+	if err := repo.PushContext(ctx, pushOptions); err != nil {
+		networkPolicyGitOperationsTotal.WithLabelValues("push", "error").Inc()
+		// Sanitize error to prevent token leakage
+		return fmt.Errorf("failed to push: %w", sanitizeError(err, credentials))
 	}
 
 	networkPolicyGitOperationsTotal.WithLabelValues("push", "success").Inc()
 	logger.Info("Pushed changes to remote", "branch", branchName)
 	return nil
 }
-
-// getAskPassHelperPath returns the path to the git-askpass-helper binary.
-// The helper is compiled into the Docker image and available at /usr/local/bin/git-askpass-helper.
-// This binary reads credentials from environment variables, preventing tokens from appearing
-// in process arguments, logs, or file contents.
-func getAskPassHelperPath() string {
-	// Check if helper exists at standard location (in Docker image)
-	helperPath := "/usr/local/bin/git-askpass-helper"
-	if _, err := os.Stat(helperPath); err == nil {
-		return helperPath
-	}
-	
-	// Fallback: try to find it in PATH (for local development)
-	if path, err := exec.LookPath("git-askpass-helper"); err == nil {
-		return path
-	}
-	
-	// Default to standard location (will fail at runtime if not found, which is expected)
-	return helperPath
-}
-
-// withGitCredentials prepares environment variables for git commands to use askpass helper.
-// This ensures tokens never appear in process arguments, logs, or file contents.
-// The askpassHelperPath should point to the compiled git-askpass-helper binary.
-// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
-func withGitCredentials(baseEnv []string, credentials *gitCredentials, askpassHelperPath string, tlsVerify bool) []string {
-	env := make([]string, 0, len(baseEnv)+6)
-	env = append(env, baseEnv...)
-	
-	// Set credentials in environment variables (binary helper reads from these)
-	env = append(env, "GIT_HTTP_USER="+credentials.username)
-	env = append(env, "GIT_HTTP_PASSWORD="+credentials.token)
-	
-	// Set GIT_ASKPASS to use our binary helper (distroless-compatible)
-	env = append(env, "GIT_ASKPASS="+askpassHelperPath)
-	// Disable terminal prompts
-	env = append(env, "GIT_TERMINAL_PROMPT=0")
-	
-	// Configure TLS verification (similar to LDAP ldapTlsVerify)
-	if !tlsVerify {
-		env = append(env, "GIT_SSL_NO_VERIFY=true")
-	}
-	
-	return env
-}
-

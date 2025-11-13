@@ -20,10 +20,14 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -95,12 +99,33 @@ func ProcessNetworkPolicyForNamespace(
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Open repository
+	repo, err := git.PlainOpen(tmpDir)
+	if err != nil {
+		return fmt.Errorf("failed to open repository: %w", err)
+	}
+
 	// Fetch latest changes from upstream to ensure fresh state
 	// This is critical for test isolation - always work with latest main branch
-	cmd := exec.CommandContext(ctx, "git", "fetch", "origin", baseBranch)
-	cmd.Dir = tmpDir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		logger.V(1).Info("Failed to fetch latest changes (continuing anyway)", "error", string(output))
+	// Prepare authentication for fetch
+	auth := &githttp.BasicAuth{
+		Username: credentials.username,
+		Password: credentials.token,
+	}
+
+	fetchOptions := &git.FetchOptions{
+		Auth:            auth,
+		RemoteName:      "origin",
+		InsecureSkipTLS: !tlsVerify,
+		RefSpecs: []config.RefSpec{
+			config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/remotes/origin/%s", baseBranch, baseBranch)),
+		},
+	}
+
+	if err := repo.Fetch(fetchOptions); err != nil && err != git.NoErrAlreadyUpToDate {
+		// Sanitize error to prevent token leakage
+		sanitizedErr := sanitizeError(err, credentials)
+		logger.V(1).Info("Failed to fetch latest changes (continuing anyway)", "error", sanitizedErr)
 		// Continue - shallow clone might already have latest
 	}
 
@@ -110,11 +135,28 @@ func ProcessNetworkPolicyForNamespace(
 	}
 
 	// Reset to origin/baseBranch to ensure we're on latest upstream state
-	cmd = exec.CommandContext(ctx, "git", "reset", "--hard", fmt.Sprintf("origin/%s", baseBranch))
-	cmd.Dir = tmpDir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		logger.V(1).Info("Failed to reset to origin (continuing anyway)", "error", string(output))
+	// Get the remote reference
+	remoteRef := plumbing.NewRemoteReferenceName("origin", baseBranch)
+	remoteRefHash, err := repo.Reference(remoteRef, false)
+	if err != nil {
+		// Sanitize error to prevent token leakage
+		sanitizedErr := sanitizeError(err, credentials)
+		logger.V(1).Info("Failed to get remote reference (continuing anyway)", "error", sanitizedErr)
 		// Continue - might already be on correct commit
+	} else {
+		// Reset worktree to match remote reference (hard reset)
+		worktree, err := repo.Worktree()
+		if err == nil {
+			if err := worktree.Reset(&git.ResetOptions{
+				Mode:   git.HardReset,
+				Commit: remoteRefHash.Hash(),
+			}); err != nil {
+				// Sanitize error to prevent token leakage
+				sanitizedErr := sanitizeError(err, credentials)
+				logger.V(1).Info("Failed to reset worktree (continuing anyway)", "error", sanitizedErr)
+				// Continue - might already be on correct commit
+			}
+		}
 	}
 
 	// Get all templates
@@ -358,13 +400,17 @@ func ProcessNetworkPolicyForNamespace(
 				"action", "networkpolicy_rate_limit_exceeded")
 			NetworkPolicyPRCreationErrorsTotal.WithLabelValues(clusterName, namespace, variant, "rate_limit").Inc()
 		}
-		logger.Error(err, "Failed to create PR",
+		// Sanitize error and URLs to prevent token leakage
+		sanitizedErr := sanitizeError(err, credentials)
+		sanitizedRepoURL := sanitizeString(gitRepo.URL, credentials)
+		sanitizedAPIBaseURL := sanitizeString(apiBaseURL, credentials)
+		logger.Error(sanitizedErr, "Failed to create PR",
 			"namespace", namespace,
 			"branch", branchName,
 			"provider", provider,
-			"apiBaseURL", apiBaseURL,
-			"repoURL", gitRepo.URL)
-		return fmt.Errorf("failed to create PR: %w", err)
+			"apiBaseURL", sanitizedAPIBaseURL,
+			"repoURL", sanitizedRepoURL)
+		return fmt.Errorf("failed to create PR: %w", sanitizedErr)
 	}
 
 	// Auto-merge PR if enabled

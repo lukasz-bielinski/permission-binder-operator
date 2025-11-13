@@ -13,7 +13,6 @@ RUN go mod download
 
 # Copy the go source
 COPY cmd/main.go cmd/main.go
-COPY cmd/git-askpass-helper/ cmd/git-askpass-helper/
 COPY api/ api/
 COPY internal/controller/ internal/controller/
 
@@ -22,18 +21,18 @@ COPY internal/controller/ internal/controller/
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
 # the docker BUILDPLATFORM arg will be linux/arm64 when for Apple x86 it will be linux/amd64. Therefore,
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go && \
-    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o git-askpass-helper cmd/git-askpass-helper/main.go
+# Note: git-askpass-helper is no longer needed - go-git uses BasicAuth directly
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
 
-# Use alpine as base image to include git for NetworkPolicy GitOps operations
-# Alpine is minimal and secure, and includes git which is required for cloning repositories
-FROM alpine:3.19
-RUN apk --no-cache add ca-certificates git
+# Use distroless static image - pure Go implementation (go-git) doesn't need git binary
+# distroless/static:nonroot provides maximum security (no shell, no package manager, minimal attack surface)
+# go-git is a pure Go library, so we don't need git binary or any system dependencies
+# Refer to https://github.com/GoogleContainerTools/distroless for more details
+FROM gcr.io/distroless/static:nonroot
 WORKDIR /
+# Copy manager binary (statically linked Go binary)
 COPY --from=builder /workspace/manager .
-COPY --from=builder /workspace/git-askpass-helper /usr/local/bin/git-askpass-helper
-# Create non-root user (65532:65532 matches distroless nonroot user)
-RUN addgroup -g 65532 nonroot && adduser -D -u 65532 -G nonroot nonroot
+# Note: git-askpass-helper is no longer needed - go-git uses BasicAuth directly
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
