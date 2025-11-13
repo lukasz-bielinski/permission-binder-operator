@@ -18,6 +18,7 @@ package networkpolicy
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,7 +31,8 @@ import (
 // gitAPIRequest makes HTTP request to Git provider API.
 // Handles JSON marshaling, request creation, and response parsing.
 // Returns error if status code is not 2xx.
-func gitAPIRequest(ctx context.Context, method, endpoint string, payload interface{}, headers map[string]string) ([]byte, error) {
+// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
+func gitAPIRequest(ctx context.Context, method, endpoint string, payload interface{}, headers map[string]string, tlsVerify bool) ([]byte, error) {
 	var body io.Reader
 	if payload != nil {
 		jsonData, err := json.Marshal(payload)
@@ -49,7 +51,16 @@ func gitAPIRequest(ctx context.Context, method, endpoint string, payload interfa
 		req.Header.Set(k, v)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Configure HTTP client with TLS verification setting
+	transport := &http.Transport{}
+	if !tlsVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
@@ -70,7 +81,8 @@ func gitAPIRequest(ctx context.Context, method, endpoint string, payload interfa
 
 // createPullRequest creates a PR using Git provider API.
 // Supports GitHub, GitLab, and Bitbucket with provider-specific API formats.
-func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branchName, baseBranch, title, description string, labels []string, credentials *gitCredentials) (*pullRequest, error) {
+// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
+func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branchName, baseBranch, title, description string, labels []string, credentials *gitCredentials, tlsVerify bool) (*pullRequest, error) {
 	var endpoint string
 	var payload map[string]interface{}
 	var headers map[string]string
@@ -146,7 +158,7 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 		return nil, fmt.Errorf("unsupported Git provider: %s", provider)
 	}
 
-	body, err := gitAPIRequest(ctx, "POST", endpoint, payload, headers)
+	body, err := gitAPIRequest(ctx, "POST", endpoint, payload, headers, tlsVerify)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +214,8 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 
 // getPRByBranch gets PR by branch name from Git provider.
 // Returns nil if PR not found (not an error).
-func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName string, credentials *gitCredentials) (*pullRequest, error) {
+// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
+func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName string, credentials *gitCredentials, tlsVerify bool) (*pullRequest, error) {
 	var endpoint string
 	var headers map[string]string
 
@@ -247,7 +260,7 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 		return nil, fmt.Errorf("unsupported Git provider: %s", provider)
 	}
 
-	body, err := gitAPIRequest(ctx, "GET", endpoint, nil, headers)
+	body, err := gitAPIRequest(ctx, "GET", endpoint, nil, headers, tlsVerify)
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			return nil, nil // PR not found
@@ -317,7 +330,8 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 
 // mergePullRequest merges a PR using Git provider API.
 // Supports GitHub, GitLab, and Bitbucket merge operations.
-func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string, prNumber int, credentials *gitCredentials) error {
+// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
+func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string, prNumber int, credentials *gitCredentials, tlsVerify bool) error {
 	var endpoint string
 	var payload map[string]interface{}
 	var headers map[string]string
@@ -364,13 +378,14 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 		return fmt.Errorf("unsupported Git provider: %s", provider)
 	}
 
-	_, err = gitAPIRequest(ctx, "PUT", endpoint, payload, headers)
+	_, err = gitAPIRequest(ctx, "PUT", endpoint, payload, headers, tlsVerify)
 	return err
 }
 
 // deleteBranch deletes a branch using Git provider API.
 // Returns nil if branch doesn't exist (404 error).
-func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName string, credentials *gitCredentials) error {
+// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
+func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName string, credentials *gitCredentials, tlsVerify bool) error {
 	var endpoint string
 	var headers map[string]string
 
@@ -413,7 +428,7 @@ func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName
 		return fmt.Errorf("unsupported Git provider: %s", provider)
 	}
 
-	_, err = gitAPIRequest(ctx, "DELETE", endpoint, nil, headers)
+	_, err = gitAPIRequest(ctx, "DELETE", endpoint, nil, headers, tlsVerify)
 	if err != nil && strings.Contains(err.Error(), "404") {
 		return nil // Branch already doesn't exist
 	}

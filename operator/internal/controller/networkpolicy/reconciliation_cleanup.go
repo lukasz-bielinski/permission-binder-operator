@@ -161,7 +161,7 @@ func ProcessRemovedNamespaces(
 		prTitle := fmt.Sprintf("NetworkPolicy: Remove namespace %s", namespace)
 		prDescription := fmt.Sprintf("Cluster: %s\nNamespace: %s (removed from whitelist)\nVariant: removal\nOperator: permission-binder-operator", clusterName, namespace)
 
-		pr, err := createPullRequest(ctx, provider, apiBaseURL, gitRepo.URL, branchName, baseBranch, prTitle, prDescription, nil, credentials)
+		pr, err := createPullRequest(ctx, provider, apiBaseURL, gitRepo.URL, branchName, baseBranch, prTitle, prDescription, nil, credentials, tlsVerify)
 		if err != nil {
 			logger.Error(err, "Failed to create removal PR", "namespace", namespace)
 			os.RemoveAll(tmpDir)
