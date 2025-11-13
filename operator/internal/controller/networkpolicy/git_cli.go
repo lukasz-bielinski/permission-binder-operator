@@ -30,7 +30,8 @@ import (
 // cloneGitRepo clones repository using git CLI.
 // Returns temporary directory path with cloned repository.
 // SECURITY: Uses GIT_ASKPASS to avoid exposing token in process arguments/logs.
-func cloneGitRepo(ctx context.Context, repoURL string, credentials *gitCredentials) (string, error) {
+// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
+func cloneGitRepo(ctx context.Context, repoURL string, credentials *gitCredentials, tlsVerify bool) (string, error) {
 	logger := log.FromContext(ctx)
 
 	tmpDir, err := os.MkdirTemp("", "permission-binder-git-*")
@@ -43,10 +44,10 @@ func cloneGitRepo(ctx context.Context, repoURL string, credentials *gitCredentia
 	askpassHelper := getAskPassHelperPath()
 
 	// Use original URL without credentials - git will use askpass helper
-	logger.V(1).Info("Cloning Git repository", "url", repoURL, "tempDir", tmpDir)
+	logger.V(1).Info("Cloning Git repository", "url", repoURL, "tempDir", tmpDir, "tlsVerify", tlsVerify)
 
 	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", repoURL, tmpDir)
-	cmd.Env = withGitCredentials(os.Environ(), credentials, askpassHelper)
+	cmd.Env = withGitCredentials(os.Environ(), credentials, askpassHelper, tlsVerify)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		os.RemoveAll(tmpDir)
 		networkPolicyGitOperationsTotal.WithLabelValues("clone", "error").Inc()
@@ -96,7 +97,8 @@ func gitCheckoutBranch(ctx context.Context, repoDir string, branchName string, c
 // gitCommitAndPush commits and pushes changes using git CLI.
 // Configures git user, adds all changes, commits, and pushes to remote.
 // Returns early if there are no changes to commit.
-func gitCommitAndPush(ctx context.Context, repoDir string, branchName string, commitMessage string, credentials *gitCredentials) error {
+// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
+func gitCommitAndPush(ctx context.Context, repoDir string, branchName string, commitMessage string, credentials *gitCredentials, tlsVerify bool) error {
 	logger := log.FromContext(ctx)
 
 	// Configure git user
@@ -167,7 +169,7 @@ func gitCommitAndPush(ctx context.Context, repoDir string, branchName string, co
 	askpassHelper := getAskPassHelperPath()
 
 	// Prepare environment with credentials for all git operations
-	env := withGitCredentials(os.Environ(), credentials, askpassHelper)
+	env := withGitCredentials(os.Environ(), credentials, askpassHelper, tlsVerify)
 
 	// Fetch remote branches to check if branch exists
 	cmd = exec.CommandContext(ctx, "git", "fetch", "origin")
@@ -264,8 +266,9 @@ func getAskPassHelperPath() string {
 // withGitCredentials prepares environment variables for git commands to use askpass helper.
 // This ensures tokens never appear in process arguments, logs, or file contents.
 // The askpassHelperPath should point to the compiled git-askpass-helper binary.
-func withGitCredentials(baseEnv []string, credentials *gitCredentials, askpassHelperPath string) []string {
-	env := make([]string, 0, len(baseEnv)+5)
+// tlsVerify controls TLS certificate verification (false = skip verification, insecure).
+func withGitCredentials(baseEnv []string, credentials *gitCredentials, askpassHelperPath string, tlsVerify bool) []string {
+	env := make([]string, 0, len(baseEnv)+6)
 	env = append(env, baseEnv...)
 	
 	// Set credentials in environment variables (binary helper reads from these)
@@ -276,6 +279,11 @@ func withGitCredentials(baseEnv []string, credentials *gitCredentials, askpassHe
 	env = append(env, "GIT_ASKPASS="+askpassHelperPath)
 	// Disable terminal prompts
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
+	
+	// Configure TLS verification (similar to LDAP ldapTlsVerify)
+	if !tlsVerify {
+		env = append(env, "GIT_SSL_NO_VERIFY=true")
+	}
 	
 	return env
 }

@@ -42,6 +42,10 @@ spec:
       # Optional: Custom API base URL for self-hosted Bitbucket Server
       # apiBaseURL: "https://bitbucket.example.com/rest/api/1.0"
       
+      # Optional: TLS certificate verification (default: true)
+      # Set to false to skip certificate verification (insecure, for self-signed certs only)
+      # gitTlsVerify: false
+      
       credentialsSecretRef:
         name: "bitbucket-gitops-credentials"
         namespace: "permissions-binder-operator"

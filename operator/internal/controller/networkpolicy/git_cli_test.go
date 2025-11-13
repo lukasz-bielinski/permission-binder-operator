@@ -107,7 +107,7 @@ func TestWithGitCredentials(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := withGitCredentials(tt.baseEnv, tt.credentials, tt.askpassHelper)
+			env := withGitCredentials(tt.baseEnv, tt.credentials, tt.askpassHelper, true)
 
 			// Check all base env vars are preserved
 			for _, want := range tt.baseEnv {
@@ -137,6 +137,46 @@ func TestWithGitCredentials(t *testing.T) {
 			}
 		})
 	}
+
+	// Test TLS verify: true (default, secure)
+	t.Run("TLS verify enabled", func(t *testing.T) {
+		credentials := &gitCredentials{
+			username: "test-user",
+			token:    "test-token",
+			email:    "test@example.com",
+		}
+		env := withGitCredentials([]string{"PATH=/usr/bin"}, credentials, "/path/to/helper", true)
+		
+		// Should NOT have GIT_SSL_NO_VERIFY
+		hasNoVerify := false
+		for _, envVar := range env {
+			if envVar == "GIT_SSL_NO_VERIFY=true" {
+				hasNoVerify = true
+				break
+			}
+		}
+		assert.False(t, hasNoVerify, "GIT_SSL_NO_VERIFY should not be set when tlsVerify=true")
+	})
+
+	// Test TLS verify: false (insecure, for self-signed certs)
+	t.Run("TLS verify disabled", func(t *testing.T) {
+		credentials := &gitCredentials{
+			username: "test-user",
+			token:    "test-token",
+			email:    "test@example.com",
+		}
+		env := withGitCredentials([]string{"PATH=/usr/bin"}, credentials, "/path/to/helper", false)
+		
+		// Should have GIT_SSL_NO_VERIFY=true
+		hasNoVerify := false
+		for _, envVar := range env {
+			if envVar == "GIT_SSL_NO_VERIFY=true" {
+				hasNoVerify = true
+				break
+			}
+		}
+		assert.True(t, hasNoVerify, "GIT_SSL_NO_VERIFY should be set when tlsVerify=false")
+	})
 }
 
 // TestCloneGitRepo_ErrorHandling tests error scenarios for Git clone
@@ -183,7 +223,7 @@ func TestCloneGitRepo_ErrorHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir, err := cloneGitRepo(ctx, tt.repoURL, tt.credentials)
+			tmpDir, err := cloneGitRepo(ctx, tt.repoURL, tt.credentials, true)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -303,7 +343,7 @@ func TestGitCommitAndPush_NoChanges(t *testing.T) {
 	}
 
 	// Call gitCommitAndPush with no changes
-	err = gitCommitAndPush(ctx, tmpDir, "main", "No changes commit", credentials)
+	err = gitCommitAndPush(ctx, tmpDir, "main", "No changes commit", credentials, true)
 
 	// Should return nil (no error) but also not create a commit
 	assert.NoError(t, err, "should not error on no changes")
@@ -361,7 +401,7 @@ func TestGitCommitAndPush_ErrorHandling(t *testing.T) {
 				}
 			}()
 
-			err := gitCommitAndPush(ctx, repoDir, tt.branchName, tt.message, tt.credentials)
+			err := gitCommitAndPush(ctx, repoDir, tt.branchName, tt.message, tt.credentials, true)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -386,7 +426,7 @@ func TestGitCredentials_Security(t *testing.T) {
 	}
 
 	// Test withGitCredentials doesn't leak secrets
-	env := withGitCredentials([]string{"PATH=/usr/bin"}, credentials, "/path/to/helper")
+	env := withGitCredentials([]string{"PATH=/usr/bin"}, credentials, "/path/to/helper", true)
 
 	// Verify credentials are only in designated env vars
 	for _, envVar := range env {
@@ -399,7 +439,7 @@ func TestGitCredentials_Security(t *testing.T) {
 
 	// Test that error messages don't contain credentials
 	// Simulate a failed clone with invalid URL
-	_, err := cloneGitRepo(ctx, "invalid-url", credentials)
+		_, err := cloneGitRepo(ctx, "invalid-url", credentials, true)
 	require.Error(t, err)
 
 	errMsg := err.Error()
@@ -424,7 +464,7 @@ func BenchmarkWithGitCredentials(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = withGitCredentials(baseEnv, creds, helper)
+		_ = withGitCredentials(baseEnv, creds, helper, true)
 	}
 }
 

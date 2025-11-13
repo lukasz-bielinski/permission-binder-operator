@@ -76,6 +76,12 @@ func ProcessNetworkPolicyForNamespace(
 	baseBranch := gitRepo.BaseBranch
 	backupExisting := permissionBinder.Spec.NetworkPolicy.BackupExisting
 
+	// Get TLS verify setting (default: true for security)
+	tlsVerify := true
+	if gitRepo.GitTlsVerify != nil {
+		tlsVerify = *gitRepo.GitTlsVerify
+	}
+
 	// Get Git credentials
 	credentials, err := getGitCredentials(r, ctx, gitRepo.CredentialsSecretRef)
 	if err != nil {
@@ -83,7 +89,7 @@ func ProcessNetworkPolicyForNamespace(
 	}
 
 	// Clone repo (always fresh clone for self-contained test isolation)
-	tmpDir, err := cloneGitRepo(ctx, gitRepo.URL, credentials)
+	tmpDir, err := cloneGitRepo(ctx, gitRepo.URL, credentials, tlsVerify)
 	if err != nil {
 		return fmt.Errorf("failed to clone repository: %w", err)
 	}
@@ -328,7 +334,7 @@ func ProcessNetworkPolicyForNamespace(
 	commitMessage := fmt.Sprintf("NetworkPolicy: %s for namespace %s", variant, namespace)
 
 	// Commit and push
-	if err := gitCommitAndPush(ctx, tmpDir, branchName, commitMessage, credentials); err != nil {
+	if err := gitCommitAndPush(ctx, tmpDir, branchName, commitMessage, credentials, tlsVerify); err != nil {
 		return fmt.Errorf("failed to commit and push: %w", err)
 	}
 

@@ -81,6 +81,12 @@ func ProcessRemovedNamespaces(
 	clusterName := gitRepo.ClusterName
 	baseBranch := gitRepo.BaseBranch
 
+	// Get TLS verify setting (default: true for security)
+	tlsVerify := true
+	if gitRepo.GitTlsVerify != nil {
+		tlsVerify = *gitRepo.GitTlsVerify
+	}
+
 	// Get Git credentials
 	credentials, err := getGitCredentials(r, ctx, gitRepo.CredentialsSecretRef)
 	if err != nil {
@@ -90,7 +96,7 @@ func ProcessRemovedNamespaces(
 	// Process each removed namespace
 	for _, namespace := range removedNamespaces {
 		// Clone repo
-		tmpDir, err := cloneGitRepo(ctx, gitRepo.URL, credentials)
+		tmpDir, err := cloneGitRepo(ctx, gitRepo.URL, credentials, tlsVerify)
 		if err != nil {
 			logger.Error(err, "Failed to clone repository", "namespace", namespace)
 			continue
@@ -139,7 +145,7 @@ func ProcessRemovedNamespaces(
 
 		// Commit and push
 		commitMessage := fmt.Sprintf("NetworkPolicy: Remove namespace %s", namespace)
-		if err := gitCommitAndPush(ctx, tmpDir, branchName, commitMessage, credentials); err != nil {
+		if err := gitCommitAndPush(ctx, tmpDir, branchName, commitMessage, credentials, tlsVerify); err != nil {
 			logger.Error(err, "Failed to commit and push", "namespace", namespace)
 			continue
 		}

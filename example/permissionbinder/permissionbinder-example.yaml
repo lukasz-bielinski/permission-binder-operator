@@ -54,6 +54,9 @@ spec:
       url: "https://github.com/lukasz-bielinski/tests-network-policies.git"
       baseBranch: "main"
       clusterName: "DEV-cluster"  # Used in path: networkpolicies/{clusterName}/...
+      # Optional: TLS certificate verification (default: true)
+      # Set to false to skip certificate verification (insecure, for self-signed certs only)
+      # gitTlsVerify: false
       credentialsSecretRef:
         name: "github-gitops-credentials"
         namespace: "permissions-binder-operator"
