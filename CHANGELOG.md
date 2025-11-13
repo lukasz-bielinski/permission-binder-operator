@@ -7,7 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.6.0-rc3] - 2025-11-13
+### 🧹 Repository Maintenance
+- **Git History Cleanup**: Removed large binary files from Git history
+  - Removed `operator/main` (73MiB) from all commits
+  - Repository size reduced: ~100MB+ → 1.4MB (.git directory)
+  - Cleaner, faster clones for contributors
+  - **Note**: This required force push and history rewrite
+
+## [1.6.0] - 2025-11-13
+
+### 🔒 Security (CRITICAL)
+- **Token Leak Prevention**: Implemented secure Git credential handling via binary helper
+  - **What Changed**: Git credentials no longer exposed in process arguments, URLs, or logs
+  - **How**: Binary `git-askpass-helper` reads credentials from environment variables only
+  - **Impact**: Tokens NEVER appear in: `ps aux`, operator logs, error messages, or files
+  - **Compliance**: Banking/SOC2/GDPR ready - no credentials in audit logs ✅
+  - **Distroless Compatible**: Go binary helper works in distroless containers (zero shell dependencies)
+
+### 🐛 Bug Fixes
+- **Race Condition in Status Updates**: Fixed concurrent status update failures
+  - Added retry logic (3 attempts, 200ms backoff) to `CleanupStatus` function
+  - Prevents `"object has been modified; please apply your changes to the latest version"` errors
+  - Consistent with `updateNetworkPolicyStatusWithPR` retry pattern
+  - **Impact**: Zero race condition errors in operator logs (verified in Test 44)
+
+### ✨ Features
+- **Binary Git Helper**: Added `cmd/git-askpass-helper/main.go` (65 lines)
+  - Minimal Go binary for Git credential operations
+  - Reads `GIT_HTTP_USER` and `GIT_HTTP_PASSWORD` from environment
+  - No shell script dependencies (distroless-ready)
+  - Included in Docker image at `/usr/local/bin/git-askpass-helper`
+- **NetworkPolicy GitOps Management**: Automated NetworkPolicy management via GitHub Pull Requests
+  - Template-based policy creation
+  - Drift detection and reconciliation
+  - Auto-merge capabilities
+  - 17 comprehensive E2E tests (Tests 44-60)
+
+### 🔧 Improvements
+- **Git Operations Refactor**: `internal/controller/networkpolicy/git_cli.go`
+  - URLs cleaned of credentials before `git remote set-url`
+  - All git commands use environment-based auth via binary helper
+  - Helper path detection with fallback for local development
+- **Docker Image**: Updated `Dockerfile` to build both binaries
+  - Compiles manager + git-askpass-helper
+  - Multi-stage build optimized
+  - Final image size: 96.5MB
+
+### 📊 Test Results
+- **E2E Tests**: All 61 scenarios passing (pre-test + 1-60) ✅
+- **Test 44 (NetworkPolicy GitOps)**: PASS - zero errors, zero token leaks ✅
+- **Operator Logs**: Zero race condition errors ✅
+- **Security Scan**: Zero token matches in codebase ✅
+
+### 📚 Documentation
+- Updated `.gitignore` to protect binary files
+- Comprehensive E2E test documentation
+- NetworkPolicy testing guide
+- Git history cleanup documented
+
+### ⚠️ Breaking Changes
+- **NONE** - Drop-in replacement for v1.5.x
+
+## [1.6.0-rc3] - 2025-11-13 (SUPERSEDED by 1.6.0)
 
 ### 🔒 Security (CRITICAL)
 - **Token Leak Prevention**: Implemented secure Git credential handling via binary helper
