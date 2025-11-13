@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test 62: NetworkPolicy - High Frequency Reconciliation Stress Test
+# Test 60: NetworkPolicy - High Frequency Reconciliation Stress Test
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/test-common.sh"
 # ============================================================================
 # ============================================================================
 echo ""
-echo "Test 62: NetworkPolicy - High Frequency Reconciliation"
+echo "Test 60: NetworkPolicy - High Frequency Reconciliation"
 echo "-------------------------------------------------------"
 
 BINDER_NAME="test-permissionbinder-networkpolicy-hfreq"

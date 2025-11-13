@@ -1,4 +1,4 @@
-### Test 61: NetworkPolicy - Namespace Removal Cleanup
+### Test 59: NetworkPolicy - Namespace Removal Cleanup
 
 **Objective**: Verify operator creates removal PRs and updates status when namespaces are removed from the whitelist.
 

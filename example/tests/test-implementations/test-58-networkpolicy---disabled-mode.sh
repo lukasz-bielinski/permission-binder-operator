@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test 60: NetworkPolicy - Disabled Mode
+# Test 58: NetworkPolicy - Disabled Mode
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/test-common.sh"
 # ============================================================================
 # ============================================================================
 echo ""
-echo "Test 60: NetworkPolicy - Disabled Mode"
+echo "Test 58: NetworkPolicy - Disabled Mode"
 echo "---------------------------------------"
 
 BINDER_NAME="test-permissionbinder-networkpolicy-disabled"

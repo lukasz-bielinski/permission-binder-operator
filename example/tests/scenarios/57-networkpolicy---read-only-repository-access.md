@@ -1,4 +1,4 @@
-### Test 59: NetworkPolicy - Read-Only Repository Access (Forbidden)
+### Test 57: NetworkPolicy - Read-Only Repository Access (Forbidden)
 
 **Objective**: Verify operator handles Git repository write permission errors (HTTP 403/permission denied) without crashing and with clear audit trail.
 

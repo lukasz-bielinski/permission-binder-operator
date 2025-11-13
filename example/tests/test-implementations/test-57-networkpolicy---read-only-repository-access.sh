@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test 59: NetworkPolicy - Read-Only Repository Access (Forbidden)
+# Test 57: NetworkPolicy - Read-Only Repository Access (Forbidden)
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,7 +9,7 @@ source "$SCRIPT_DIR/test-common.sh"
 # ============================================================================
 # ============================================================================
 echo ""
-echo "Test 59: NetworkPolicy - Read-Only Repository Access (Forbidden)"
+echo "Test 57: NetworkPolicy - Read-Only Repository Access (Forbidden)"
 echo "-------------------------------------------------------------------"
 
 BINDER_NAME="test-permissionbinder-networkpolicy-readonly"

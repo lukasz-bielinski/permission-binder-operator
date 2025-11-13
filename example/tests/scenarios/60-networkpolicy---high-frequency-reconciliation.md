@@ -1,4 +1,4 @@
-### Test 62: NetworkPolicy - High Frequency Reconciliation Stress Test
+### Test 60: NetworkPolicy - High Frequency Reconciliation Stress Test
 
 **Objective**: Validate operator stability and status updates when reconciliation interval is very short (`5s`) with frequent ConfigMap changes.
 

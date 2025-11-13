@@ -145,7 +145,7 @@ verify_pr_on_github() {
     fi
     
     # Get PR details
-    local pr_json=$(gh pr view "$pr_number" --repo "$repo" --json number,state,title,headRefName,url 2>/dev/null)
+    local pr_json=$(gh pr view "$pr_number" --repo "$repo" --json number,state,title,headRefName,url,labels 2>/dev/null)
     if [ $? -eq 0 ] && [ -n "$pr_json" ]; then
         echo "$pr_json"
         return 0
