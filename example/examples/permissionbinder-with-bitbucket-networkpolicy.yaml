@@ -40,7 +40,12 @@ spec:
       baseBranch: "main"
       clusterName: "PROD-cluster"  # Used in path: networkpolicies/{clusterName}/...
       
-      # Optional: Custom API base URL for self-hosted Bitbucket Server
+      # ⚠️ REQUIRED for Bitbucket Server: Custom API base URL
+      # How to find your API URL:
+      # 1. Extract base URL from your repo URL: https://bitbucket.example.com
+      # 2. Add API path: /rest/api/1.0
+      # 3. Full URL: https://bitbucket.example.com/rest/api/1.0
+      # Test with: curl -u "USER:TOKEN" https://bitbucket.example.com/rest/api/1.0/repositories
       # apiBaseURL: "https://bitbucket.example.com/rest/api/1.0"
       
       # Optional: TLS certificate verification (default: true)
