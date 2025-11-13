@@ -23,11 +23,14 @@ COPY internal/controller/ internal/controller/
 # by leaving it empty we can ensure that the container and binary shipped on it will have the same platform.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o manager cmd/main.go
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static:nonroot
+# Use alpine as base image to include git for NetworkPolicy GitOps operations
+# Alpine is minimal and secure, and includes git which is required for cloning repositories
+FROM alpine:3.19
+RUN apk --no-cache add ca-certificates git
 WORKDIR /
 COPY --from=builder /workspace/manager .
+# Create non-root user (65532:65532 matches distroless nonroot user)
+RUN addgroup -g 65532 nonroot && adduser -D -u 65532 -G nonroot nonroot
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]

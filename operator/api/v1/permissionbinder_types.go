@@ -104,6 +104,157 @@ type PermissionBinderSpec struct {
 	// +kubebuilder:validation:Optional
 	// +kubebuilder:default="{namespace}-sa-{name}"
 	ServiceAccountNamingPattern string `json:"serviceAccountNamingPattern,omitempty"`
+
+	// NetworkPolicy configuration for GitOps-based Network Policy management
+	// +kubebuilder:validation:Optional
+	NetworkPolicy *NetworkPolicySpec `json:"networkPolicy,omitempty"`
+}
+
+// NetworkPolicySpec defines the Network Policy management configuration
+type NetworkPolicySpec struct {
+	// Enabled enables Network Policy management via GitOps
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled,omitempty"`
+
+	// GitRepository configuration for GitOps repository
+	// +kubebuilder:validation:Optional
+	GitRepository *GitRepositorySpec `json:"gitRepository,omitempty"`
+
+	// TemplateDir is the directory path in Git repository containing Network Policy templates
+	// All .yaml files in this directory are treated as templates
+	// Example: "networkpolicies/templates"
+	// +kubebuilder:validation:Optional
+	TemplateDir string `json:"templateDir,omitempty"`
+
+	// BackupExisting enables backup of existing NetworkPolicies from cluster to Git
+	// Default: false (safe - does not conflict with other GitOps tools)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=false
+	BackupExisting bool `json:"backupExisting,omitempty"`
+
+	// ExcludeNamespaces is a global exclude list that blocks ALL NetworkPolicy operations
+	// If a namespace is in this list, operator will NOT create policies from templates
+	// and will NOT backup existing policies
+	// +kubebuilder:validation:Optional
+	ExcludeNamespaces *NamespaceExcludeList `json:"excludeNamespaces,omitempty"`
+
+	// ExcludeBackupForNamespaces is a per-namespace exclude list for backup operations only
+	// If a namespace is in this list, operator will NOT backup existing policies (Variants B/C)
+	// but will STILL create policies from templates (Variant A)
+	// +kubebuilder:validation:Optional
+	ExcludeBackupForNamespaces *NamespaceExcludeList `json:"excludeBackupForNamespaces,omitempty"`
+
+	// AutoMerge configuration for auto-merge labels
+	// +kubebuilder:validation:Optional
+	AutoMerge *AutoMergeSpec `json:"autoMerge,omitempty"`
+
+	// ReconciliationInterval is the interval for periodic reconciliation (drift detection)
+	// Default: "1h" (can be set to "4h" to avoid overwhelming etcd)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="1h"
+	ReconciliationInterval string `json:"reconciliationInterval,omitempty"`
+
+	// StatusRetentionDays is the number of days to retain status entries for removed namespaces
+	// Default: 30 days
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=30
+	StatusRetentionDays int `json:"statusRetentionDays,omitempty"`
+
+	// StalePRThreshold is the threshold for marking PRs as stale (duration string)
+	// Default: "30d" (30 days)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="30d"
+	StalePRThreshold string `json:"stalePRThreshold,omitempty"`
+
+	// BatchProcessing configuration for batch processing of namespaces
+	// +kubebuilder:validation:Optional
+	BatchProcessing *BatchProcessingSpec `json:"batchProcessing,omitempty"`
+}
+
+// GitRepositorySpec defines Git repository configuration
+type GitRepositorySpec struct {
+	// Provider is the Git provider (bitbucket, github, gitlab)
+	// Optional for public providers (auto-detected from URL)
+	// Required for self-hosted Git servers (e.g., git.cembraintra.ch)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:validation:Enum=bitbucket;github;gitlab
+	Provider string `json:"provider,omitempty"`
+
+	// URL is the Git repository URL (HTTPS)
+	// +kubebuilder:validation:Required
+	URL string `json:"url"`
+
+	// BaseBranch is the base branch for PRs (typically "main" or "master")
+	// +kubebuilder:validation:Required
+	BaseBranch string `json:"baseBranch"`
+
+	// ClusterName is the cluster name used in Git repository paths
+	// Example: "DEV-cluster" -> networkpolicies/DEV-cluster/...
+	// +kubebuilder:validation:Required
+	ClusterName string `json:"clusterName"`
+
+	// CredentialsSecretRef references a Secret containing Git credentials
+	// Required keys: token (and optionally username, email)
+	// +kubebuilder:validation:Required
+	CredentialsSecretRef *LdapSecretReference `json:"credentialsSecretRef"`
+
+	// APIBaseURL is the API base URL for self-hosted Git servers
+	// Optional - auto-detected from URL if not provided
+	// Examples:
+	//   - Bitbucket: https://git.cembraintra.ch/rest/api/1.0
+	//   - GitHub: https://git.cembraintra.ch/api/v3
+	//   - GitLab: https://git.cembraintra.ch/api/v4
+	// +kubebuilder:validation:Optional
+	APIBaseURL string `json:"apiBaseURL,omitempty"`
+}
+
+// AutoMergeSpec defines auto-merge configuration
+type AutoMergeSpec struct {
+	// Enabled enables auto-merge labels
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Label is the label added to PRs for auto-merge
+	// Only added for Variant A (new file from template)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="auto-merge"
+	Label string `json:"label,omitempty"`
+}
+
+// NamespaceExcludeList defines patterns and explicit names for excluding namespaces
+type NamespaceExcludeList struct {
+	// Patterns are regex patterns for excluding namespaces
+	// Example: ["^openshift-.*", "^ocp-.*", "^kube-.*"]
+	// +kubebuilder:validation:Optional
+	Patterns []string `json:"patterns,omitempty"`
+
+	// Explicit is a list of explicit namespace names to exclude
+	// Example: ["default", "kube-system"]
+	// +kubebuilder:validation:Optional
+	Explicit []string `json:"explicit,omitempty"`
+}
+
+// BatchProcessingSpec defines batch processing configuration
+type BatchProcessingSpec struct {
+	// BatchSize is the number of namespaces processed in each batch
+	// Default: 5
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=5
+	BatchSize int `json:"batchSize,omitempty"`
+
+	// SleepBetweenNamespaces is the sleep duration between namespaces within a batch
+	// Default: "3s" (Git API rate limiting)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="3s"
+	SleepBetweenNamespaces string `json:"sleepBetweenNamespaces,omitempty"`
+
+	// SleepBetweenBatches is the sleep duration between batches
+	// Default: "60s" (GitOps sync delay - allows GitOps to apply changes)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default="60s"
+	SleepBetweenBatches string `json:"sleepBetweenBatches,omitempty"`
 }
 
 // PermissionBinderStatus defines the observed state of PermissionBinder
@@ -123,6 +274,60 @@ type PermissionBinderStatus struct {
 
 	// Conditions represent the latest available observations of the PermissionBinder's state
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// NetworkPolicies contains the status of Network Policy management for each namespace
+	// +kubebuilder:validation:Optional
+	NetworkPolicies []NetworkPolicyStatus `json:"networkPolicies,omitempty"`
+
+	// LastNetworkPolicyReconciliation tracks the last time periodic NetworkPolicy reconciliation ran
+	// +kubebuilder:validation:Optional
+	LastNetworkPolicyReconciliation *metav1.Time `json:"lastNetworkPolicyReconciliation,omitempty"`
+}
+
+// NetworkPolicyStatus tracks the status of Network Policy management for a namespace
+type NetworkPolicyStatus struct {
+	// Namespace is the namespace name
+	// +kubebuilder:validation:Required
+	Namespace string `json:"namespace"`
+
+	// State is the current state of Network Policy management
+	// Possible values: "pr-created", "pr-pending", "pr-merged", "pr-conflict", "pr-stale", "pr-removal", "error", "removed"
+	// +kubebuilder:validation:Required
+	State string `json:"state"`
+
+	// PRNumber is the Pull Request number (if applicable)
+	// +kubebuilder:validation:Optional
+	PRNumber *int `json:"prNumber,omitempty"`
+
+	// PRBranch is the branch name for the PR
+	// +kubebuilder:validation:Optional
+	PRBranch string `json:"prBranch,omitempty"`
+
+	// PRURL is the URL to the Pull Request
+	// +kubebuilder:validation:Optional
+	PRURL string `json:"prUrl,omitempty"`
+
+	// CreatedAt is the timestamp when the PR was created
+	// +kubebuilder:validation:Optional
+	CreatedAt string `json:"createdAt,omitempty"`
+
+	// LastProcessedTemplateHash is the hash of the last processed template directory
+	// Used to detect template changes
+	// +kubebuilder:validation:Optional
+	LastProcessedTemplateHash string `json:"lastProcessedTemplateHash,omitempty"`
+
+	// LastTemplateCheckTime is the timestamp when templates were last checked
+	// +kubebuilder:validation:Optional
+	LastTemplateCheckTime *metav1.Time `json:"lastTemplateCheckTime,omitempty"`
+
+	// ErrorMessage contains error details if state is "error"
+	// +kubebuilder:validation:Optional
+	ErrorMessage string `json:"errorMessage,omitempty"`
+
+	// RemovedAt is the timestamp when the namespace was removed from whitelist
+	// Used for status cleanup after retention period
+	// +kubebuilder:validation:Optional
+	RemovedAt string `json:"removedAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

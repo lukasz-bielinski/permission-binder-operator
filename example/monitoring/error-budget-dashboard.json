@@ -1,0 +1,95 @@
+{
+  "dashboard": {
+    "title": "Permission Binder Operator - Error Budget",
+    "tags": ["permission-binder", "slo", "error-budget"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Error Budget Remaining (Minutes)",
+        "type": "gauge",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
+        "targets": [{
+          "expr": "((1 - (rate(controller_runtime_reconcile_errors_total{controller=\"permissionbinder\"}[30d]) / rate(controller_runtime_reconcile_total{controller=\"permissionbinder\"}[30d]))) * 43200) - 43",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "m",
+            "min": -43,
+            "max": 43,
+            "thresholds": {
+              "steps": [
+                {"value": -43, "color": "red"},
+                {"value": -8.6, "color": "yellow"},
+                {"value": 0, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Error Budget Consumed (%)",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 4, "x": 8, "y": 0},
+        "targets": [{
+          "expr": "(1 - ((1 - (rate(controller_runtime_reconcile_errors_total{controller=\"permissionbinder\"}[30d]) / rate(controller_runtime_reconcile_total{controller=\"permissionbinder\"}[30d]))) * 43200) / 43) * 100",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 80, "color": "yellow"},
+                {"value": 90, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Success Rate (30-day rolling)",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 6},
+        "targets": [{
+          "expr": "(1 - (rate(controller_runtime_reconcile_errors_total{controller=\"permissionbinder\"}[30d]) / rate(controller_runtime_reconcile_total{controller=\"permissionbinder\"}[30d]))) * 100",
+          "refId": "A",
+          "legendFormat": "Success Rate"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 99,
+            "max": 100
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Error Rate (30-day rolling)",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 12},
+        "targets": [{
+          "expr": "rate(controller_runtime_reconcile_errors_total{controller=\"permissionbinder\"}[30d])",
+          "refId": "A",
+          "legendFormat": "Errors/sec"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops"
+          }
+        }
+      }
+    ],
+    "refresh": "30s",
+    "time": {
+      "from": "now-30d",
+      "to": "now"
+    }
+  }
+}
+

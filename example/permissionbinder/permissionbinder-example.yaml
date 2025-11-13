@@ -44,3 +44,61 @@ spec:
   # TLS certificate verification (optional, default: true)
   # ldapTlsVerify: false  # Use only for self-signed certs (testing)
 
+  # NetworkPolicy Management via GitOps (optional)
+  networkPolicy:
+    enabled: true
+    
+    # Git repository configuration
+    gitRepository:
+      provider: "github"  # github, bitbucket, or gitlab
+      url: "https://github.com/lukasz-bielinski/tests-network-policies.git"
+      baseBranch: "main"
+      clusterName: "DEV-cluster"  # Used in path: networkpolicies/{clusterName}/...
+      credentialsSecretRef:
+        name: "github-gitops-credentials"
+        namespace: "permissions-binder-operator"
+    
+    # Template directory in Git repo
+    templateDir: "networkpolicies/templates"
+    
+    # Auto-merge configuration (only for Variant A - new file from template)
+    autoMerge:
+      enabled: true
+      label: "auto-merge"
+    
+    # Global exclude list (blocks ALL NetworkPolicy operations)
+    excludeNamespaces:
+      explicit:
+        - "kube-system"
+        - "kube-public"
+        - "kube-node-lease"
+        - "openshift-*"
+        - "ocp-*"
+      patterns:
+        - "^openshift-.*"
+        - "^ocp-.*"
+        - "^kube-.*"
+    
+    # Backup existing NetworkPolicies (optional, default: false)
+    backupExisting: true
+    
+    # Exclude from backup (but still create from templates)
+    excludeBackupForNamespaces:
+      explicit: []
+      patterns: []
+    
+    # Reconciliation interval (default: 1h)
+    reconciliationInterval: "1h"
+    
+    # Status retention (default: 30 days)
+    statusRetentionDays: 30
+    
+    # Stale PR threshold (default: 30d)
+    stalePRThreshold: "30d"
+    
+    # Batch processing configuration
+    batchProcessing:
+      batchSize: 5
+      sleepBetweenNamespaces: "3s"
+      sleepBetweenBatches: "60s"
+

@@ -45,7 +45,9 @@ sleep 2
 echo ""
 echo "Step 4: Delete operator namespace resources"
 echo "---------------------------------------------"
-kubectl delete configmap,service,servicemonitor,serviceaccount,role,rolebinding --all -n permissions-binder-operator --timeout=30s 2>/dev/null || echo "Resources not found (OK)"
+kubectl delete configmap,service,servicemonitor,serviceaccount,role,rolebinding,secret --all -n permissions-binder-operator --timeout=30s 2>/dev/null || echo "Resources not found (OK)"
+# Specifically delete GitHub credentials secret if it exists
+kubectl delete secret github-gitops-credentials -n permissions-binder-operator --timeout=30s 2>/dev/null || echo "GitHub secret not found (OK)"
 
 sleep 2
 

@@ -4,14 +4,19 @@
 # 
 # Usage:
 #   ./run-tests-full-isolation.sh           # Run all tests
-#   ./run-tests-full-isolation.sh 3         # Run single test
-#   ./run-tests-full-isolation.sh 3 7 11    # Run specific tests
+#   ./run-tests-full-isolation.sh 44        # Run single test
+#   ./run-tests-full-isolation.sh 44 45 46  # Run specific tests
 
 set +e  # Don't exit on errors - we want to run all tests
 
 export KUBECONFIG=$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS_LOG="/tmp/e2e-full-isolation-$(date +%Y%m%d-%H%M%S).log"
+NAMESPACE="permissions-binder-operator"
+TEST_RESULTS="/tmp/e2e-test-results-$(date +%Y%m%d-%H%M%S).log"
+
+# Source common functions
+source "$SCRIPT_DIR/test-common.sh"
 
 # Colors
 GREEN='\033[0;32m'
@@ -20,24 +25,75 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Test implementations directory
+TEST_IMPL_DIR="$SCRIPT_DIR/test-implementations"
+
+# Map test IDs to test files
+get_test_file() {
+    local test_id=$1
+    if [ "$test_id" == "pre" ] || [ "$test_id" == "00" ]; then
+        echo "test-00-pre-test.sh"
+    elif [ "$test_id" -ge 1 ] && [ "$test_id" -le 48 ] 2>/dev/null; then
+        # Find test file by number
+        printf "test-%02d-*.sh" $test_id
+    else
+        echo ""
+    fi
+}
+
+# Get test name from scenario file
+get_test_name() {
+    local test_id=$1
+    if [ "$test_id" == "pre" ] || [ "$test_id" == "00" ]; then
+        echo "Pre-Test: Initial State Verification"
+    else
+        # Try to get from scenario file
+        scenario_file="$SCRIPT_DIR/scenarios/$(printf "%02d" $test_id)-*.md"
+        if ls $scenario_file 1> /dev/null 2>&1; then
+            grep "^### Test $test_id:" $(ls $scenario_file | head -1) 2>/dev/null | sed "s/^### Test $test_id: //" | head -1
+        else
+            echo "Test $test_id"
+        fi
+    fi
+}
+
 # Get test list
 if [ $# -eq 0 ]; then
-    # Run all tests (pre + 1-43)
-    TEST_LIST=(pre $(seq 1 43))
+    # Run all tests (pre + 1-48)
+    TEST_LIST=(pre $(seq 1 48))
 else
     # Run specified tests
     TEST_LIST=("$@")
 fi
 
-# Function to get test name
-get_test_name() {
-    local test_id=$1
-    if [ "$test_id" == "pre" ]; then
-        echo "Initial State Verification"
-    else
-        grep "^# Test ${test_id}:" $SCRIPT_DIR/run-complete-e2e-tests.sh 2>/dev/null | sed "s/^# Test ${test_id}: //" | head -1
+# Verify required tools are installed
+MISSING_TOOLS=()
+if ! command -v kubectl &> /dev/null; then
+    MISSING_TOOLS+=("kubectl")
+fi
+if ! command -v jq &> /dev/null; then
+    MISSING_TOOLS+=("jq")
+fi
+
+if [ ${#MISSING_TOOLS[@]} -gt 0 ]; then
+    echo "❌ CRITICAL: Missing required tools:" | tee $RESULTS_LOG
+    for tool in "${MISSING_TOOLS[@]}"; do
+        echo "   - $tool" | tee -a $RESULTS_LOG
+    done
+    echo "" | tee -a $RESULTS_LOG
+    echo "📦 Installation instructions:" | tee -a $RESULTS_LOG
+    if [[ " ${MISSING_TOOLS[@]} " =~ " jq " ]]; then
+        echo "   jq: sudo apt-get install jq  # Debian/Ubuntu" | tee -a $RESULTS_LOG
+        echo "        brew install jq          # macOS" | tee -a $RESULTS_LOG
+        echo "        yum install jq           # RHEL/CentOS" | tee -a $RESULTS_LOG
     fi
-}
+    if [[ " ${MISSING_TOOLS[@]} " =~ " kubectl " ]]; then
+        echo "   kubectl: https://kubernetes.io/docs/tasks/tools/" | tee -a $RESULTS_LOG
+    fi
+    echo "" | tee -a $RESULTS_LOG
+    echo "❌ Tests cannot run without required tools. Please install missing tools and try again." | tee -a $RESULTS_LOG
+    exit 1
+fi
 
 echo "╔═══════════════════════════════════════════════════════════════╗" | tee $RESULTS_LOG
 echo "║     🧪 E2E Tests with FULL ISOLATION                          ║" | tee -a $RESULTS_LOG
@@ -86,10 +142,18 @@ for test_id in "${TEST_LIST[@]}"; do
     echo -e "${YELLOW}📦 Step 2/3: Deploying fresh operator...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR/..
     kubectl apply -f deployment/ >/tmp/deploy-${test_id}.log 2>&1
+    
+    # Create GitHub GitOps credentials Secret for NetworkPolicy tests (if file exists)
+    CREDENTIALS_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml"
+    if [ -f "$CREDENTIALS_FILE" ]; then
+        echo "   Creating GitHub GitOps credentials Secret..." | tee -a $RESULTS_LOG
+        sed "s/namespace: permissions-binder-operator/namespace: permissions-binder-operator/" "$CREDENTIALS_FILE" | kubectl apply -f - >>/tmp/deploy-${test_id}.log 2>&1 || true
+    fi
+    
     sleep 5
     
     # Wait for operator to be ready
-    if kubectl wait --for=condition=available --timeout=60s \
+    if kubectl wait --for=condition=available --timeout=120s \
         deployment/operator-controller-manager -n permissions-binder-operator >/dev/null 2>&1; then
         
         POD_NAME=$(kubectl get pods -n permissions-binder-operator \
@@ -123,9 +187,32 @@ for test_id in "${TEST_LIST[@]}"; do
     
     # STEP 3: RUN TEST
     echo -e "${YELLOW}▶️  Step 3/3: Running test $test_id...${NC}" | tee -a $RESULTS_LOG
-    cd $SCRIPT_DIR
     
-    if ./test-runner.sh $test_id >/tmp/test-${test_id}-isolated.log 2>&1; then
+    # Find test file
+    test_file_pattern=$(get_test_file $test_id)
+    if [ -z "$test_file_pattern" ]; then
+        echo -e "   ${RED}❌ ERROR: Invalid test ID: $test_id${NC}" | tee -a $RESULTS_LOG
+        results[$test_id]="FAIL"
+        failed=$((failed + 1))
+        continue
+    fi
+    
+    test_file=$(ls $TEST_IMPL_DIR/$test_file_pattern 2>/dev/null | head -1)
+    if [ -z "$test_file" ] || [ ! -f "$test_file" ]; then
+        echo -e "   ${RED}❌ ERROR: Test file not found: $TEST_IMPL_DIR/$test_file_pattern${NC}" | tee -a $RESULTS_LOG
+        results[$test_id]="FAIL"
+        failed=$((failed + 1))
+        continue
+    fi
+    
+    # Export variables for test
+    export NAMESPACE
+    export TEST_RESULTS
+    export SCRIPT_DIR
+    export KUBECONFIG
+    
+    # Run test
+    if bash "$test_file" >/tmp/test-${test_id}-isolated.log 2>&1; then
         echo "" | tee -a $RESULTS_LOG
         echo -e "${GREEN}✅ Test $test_id PASSED${NC}" | tee -a $RESULTS_LOG
         results[$test_id]="PASS"
@@ -202,4 +289,3 @@ else
     done
     exit 1
 fi
-

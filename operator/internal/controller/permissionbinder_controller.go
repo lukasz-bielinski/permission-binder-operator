@@ -46,6 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
+	networkpolicy "github.com/permission-binder-operator/operator/internal/controller/networkpolicy"
 )
 
 const (
@@ -167,14 +168,24 @@ func init() {
 		managedServiceAccountsTotal,
 		serviceAccountsCreated,
 		configMapEntriesProcessed,
+		// NetworkPolicy metrics (from network_policy_helper.go)
+		networkpolicy.NetworkPolicyPRsCreatedTotal,
+		networkpolicy.NetworkPolicyPRCreationErrorsTotal,
+		networkpolicy.NetworkPolicyTemplateValidationErrorsTotal,
+		networkpolicy.NetworkPolicyMultipleCRsWarningTotal,
 	)
 }
 
 // PermissionBinderReconciler reconciles a PermissionBinder object
 type PermissionBinderReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
+	Scheme    *runtime.Scheme
 	DebugMode bool
+}
+
+// Status returns the StatusWriter for updating subresource status
+func (r *PermissionBinderReconciler) Status() client.StatusWriter {
+	return r.Client.Status()
 }
 
 // +kubebuilder:rbac:groups=permission.permission-binder.io,resources=permissionbinders,verbs=get;list;watch;create;update;patch;delete
@@ -309,7 +320,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Check if ConfigMap has changed
 	configMapVersion := configMap.ResourceVersion
-	
+
 	// Re-check role mapping hash after re-fetch (in case it was updated)
 	// This ensures we don't incorrectly think role mapping changed when it didn't
 	roleMappingChangedAfterRefetch, currentHashAfterRefetch := r.hasRoleMappingChanged(&permissionBinder)
@@ -325,7 +336,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		roleMappingChanged = false
 		currentHash = currentHashAfterRefetch
 	}
-	
+
 	if r.DebugMode {
 		logger.Info("🔍 DEBUG: ConfigMap version check",
 			"currentVersion", configMapVersion,
@@ -363,6 +374,90 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
+	// Process NetworkPolicies if enabled
+	if permissionBinder.Spec.NetworkPolicy != nil && permissionBinder.Spec.NetworkPolicy.Enabled {
+		// Check for multiple PermissionBinder CRs with NetworkPolicy enabled
+		if err := networkpolicy.CheckMultiplePermissionBinders(ctx, r); err != nil {
+			logger.Error(err, "Failed to check multiple PermissionBinders (non-fatal)")
+			// Continue - not blocking
+		}
+
+		// Extract namespaces from processed RoleBindings
+		namespaces := make(map[string]bool)
+		for _, rb := range result.ProcessedRoleBindings {
+			// RoleBinding format: "namespace/rolebinding-name"
+			parts := strings.Split(rb, "/")
+			if len(parts) == 2 {
+				namespaces[parts[0]] = true
+			}
+		}
+
+		// Convert to slice
+		namespaceList := make([]string, 0, len(namespaces))
+		for ns := range namespaces {
+			// Check global exclude list
+			if networkpolicy.IsNamespaceExcluded(ns, permissionBinder.Spec.NetworkPolicy.ExcludeNamespaces) {
+				logger.V(1).Info("Skipping namespace - excluded from NetworkPolicy operations",
+					"namespace", ns)
+				continue
+			}
+			namespaceList = append(namespaceList, ns)
+		}
+
+		// Event-driven reconciliation: Process new/changed namespaces
+		if len(namespaceList) > 0 {
+			logger.Info("Processing NetworkPolicies for namespaces (event-driven)",
+				"count", len(namespaceList))
+			if err := networkpolicy.ProcessNetworkPoliciesForNamespaces(ctx, r, &permissionBinder, namespaceList); err != nil {
+				logger.Error(err, "Failed to process NetworkPolicies (non-fatal)")
+				// Continue - don't fail reconciliation
+			}
+		}
+
+		// Process removed namespaces (check for namespaces that were removed from whitelist)
+		if err := networkpolicy.ProcessRemovedNamespaces(ctx, r, &permissionBinder, namespaces); err != nil {
+			logger.Error(err, "Failed to process removed namespaces (non-fatal)")
+			// Continue - don't fail reconciliation
+		}
+
+		// Periodic reconciliation: Check if it's time for periodic reconciliation
+		shouldRunPeriodic := false
+		if permissionBinder.Status.LastNetworkPolicyReconciliation == nil {
+			// First time - run periodic reconciliation
+			shouldRunPeriodic = true
+		} else {
+			// Check if reconciliation interval has passed
+			intervalStr := permissionBinder.Spec.NetworkPolicy.ReconciliationInterval
+			if intervalStr == "" {
+				intervalStr = "1h"
+			}
+			interval, err := time.ParseDuration(intervalStr)
+			if err != nil {
+				// Default to 1h if parsing fails
+				interval = 1 * time.Hour
+			}
+
+			lastReconciliation := permissionBinder.Status.LastNetworkPolicyReconciliation.Time
+			if time.Since(lastReconciliation) >= interval {
+				shouldRunPeriodic = true
+			}
+		}
+
+		if shouldRunPeriodic {
+			logger.Info("Running periodic NetworkPolicy reconciliation")
+			if err := networkpolicy.PeriodicNetworkPolicyReconciliation(ctx, r, &permissionBinder); err != nil {
+				logger.Error(err, "Failed to run periodic NetworkPolicy reconciliation (non-fatal)")
+				// Continue - don't fail reconciliation
+			}
+		}
+
+		// Cleanup status (remove old entries after retention period)
+		if err := networkpolicy.CleanupStatus(ctx, r, &permissionBinder, namespaces); err != nil {
+			logger.Error(err, "Failed to cleanup NetworkPolicy status (non-fatal)")
+			// Continue - don't fail reconciliation
+		}
+	}
+
 	// Prepare new status values
 	newProcessedRoleBindings := result.ProcessedRoleBindings
 	newProcessedServiceAccounts := result.ProcessedServiceAccounts
@@ -375,27 +470,27 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Check if status actually changed before updating
 	// This prevents unnecessary ResourceVersion changes
 	statusChanged := false
-	
+
 	// Compare ProcessedRoleBindings
 	if !reflect.DeepEqual(permissionBinder.Status.ProcessedRoleBindings, newProcessedRoleBindings) {
 		statusChanged = true
 	}
-	
+
 	// Compare ProcessedServiceAccounts
 	if !reflect.DeepEqual(permissionBinder.Status.ProcessedServiceAccounts, newProcessedServiceAccounts) {
 		statusChanged = true
 	}
-	
+
 	// Compare ConfigMap version
 	if permissionBinder.Status.LastProcessedConfigMapVersion != newConfigMapVersion {
 		statusChanged = true
 	}
-	
+
 	// Compare role mapping hash
 	if permissionBinder.Status.LastProcessedRoleMappingHash != newRoleMappingHash {
 		statusChanged = true
 	}
-	
+
 	// Check if Conditions need update (only update LastTransitionTime if status changed)
 	conditionMessage := fmt.Sprintf("Successfully processed %d role bindings and %d service accounts", len(newProcessedRoleBindings), len(newProcessedServiceAccounts))
 	existingCondition := findCondition(permissionBinder.Status.Conditions, "Processed")
@@ -418,7 +513,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		permissionBinder.Status.ProcessedServiceAccounts = newProcessedServiceAccounts
 		permissionBinder.Status.LastProcessedConfigMapVersion = newConfigMapVersion
 		permissionBinder.Status.LastProcessedRoleMappingHash = newRoleMappingHash
-		
+
 		// Update Conditions - preserve LastTransitionTime if condition already exists with same status
 		now := metav1.Now()
 		if existingCondition != nil && existingCondition.Status == metav1.ConditionTrue && existingCondition.Message == conditionMessage {
@@ -451,7 +546,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			logger.Error(err, "Failed to update PermissionBinder status")
 			return ctrl.Result{}, err
 		}
-		
+
 		if r.DebugMode {
 			logger.Info("🔍 DEBUG: Status updated",
 				"configMapVersion", configMapVersion,
@@ -1055,12 +1150,12 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 		if roleBinding.Annotations != nil {
 			role = roleBinding.Annotations[AnnotationRole]
 		}
-		
+
 		// Fallback to extracting from name if annotation not present (backward compatibility)
 		if role == "" {
 			role = r.extractRoleFromRoleBindingNameWithMapping(roleBinding.Name, permissionBinder.Spec.RoleMapping)
 		}
-		
+
 		if role != "" && !r.roleExistsInMapping(role, permissionBinder.Spec.RoleMapping) {
 			if err := r.Delete(ctx, &roleBinding); err != nil {
 				logger.Error(err, "Failed to delete obsolete RoleBinding", "namespace", roleBinding.Namespace, "name", roleBinding.Name)
@@ -1249,7 +1344,7 @@ func (r *PermissionBinderReconciler) extractRoleFromRoleBindingNameWithMapping(n
 	for roleName := range roleMapping {
 		roleNames = append(roleNames, roleName)
 	}
-	
+
 	// Simple sort by length (longest first)
 	for i := 0; i < len(roleNames)-1; i++ {
 		for j := i + 1; j < len(roleNames); j++ {
@@ -1258,7 +1353,7 @@ func (r *PermissionBinderReconciler) extractRoleFromRoleBindingNameWithMapping(n
 			}
 		}
 	}
-	
+
 	// Try to match each role name as a suffix of the RoleBinding name
 	for _, roleName := range roleNames {
 		suffix := "-" + roleName
@@ -1266,7 +1361,7 @@ func (r *PermissionBinderReconciler) extractRoleFromRoleBindingNameWithMapping(n
 			return roleName
 		}
 	}
-	
+
 	// Fallback to legacy behavior (last segment after split)
 	parts := strings.Split(name, "-")
 	if len(parts) >= 2 {
@@ -1411,12 +1506,12 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			// This filters out status-only updates on ConfigMaps
 			oldCM := e.ObjectOld.(*corev1.ConfigMap)
 			newCM := e.ObjectNew.(*corev1.ConfigMap)
-			
+
 			// Only process if data or metadata changed, not just status
 			if oldCM.ResourceVersion == newCM.ResourceVersion {
 				return false
 			}
-			
+
 			// Check if actual data changed (not just status)
 			// ConfigMaps don't have status subresource, so ResourceVersion change means data changed
 			return r.isConfigMapReferenced(mgr.GetClient(), e.ObjectNew)
@@ -1439,22 +1534,22 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			// Only reconcile if spec or metadata changed, not status-only changes
 			oldObj := e.ObjectOld.(*permissionv1.PermissionBinder)
 			newObj := e.ObjectNew.(*permissionv1.PermissionBinder)
-			
+
 			// Check if spec changed
 			if oldObj.Generation != newObj.Generation {
 				return true
 			}
-			
+
 			// Check if deletion timestamp changed (object is being deleted)
 			if oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero() {
 				return true
 			}
-			
+
 			// Check if finalizers changed
 			if len(oldObj.Finalizers) != len(newObj.Finalizers) {
 				return true
 			}
-			
+
 			// Ignore status-only updates
 			return false
 		},
@@ -1492,7 +1587,7 @@ func (r *PermissionBinderReconciler) isConfigMapReferenced(c client.Client, obj 
 
 	ctx := context.Background()
 	var permissionBinders permissionv1.PermissionBinderList
-	
+
 	// Use indexer to find PermissionBinders that reference this ConfigMap
 	indexKey := fmt.Sprintf("%s/%s", configMap.Namespace, configMap.Name)
 	if err := c.List(ctx, &permissionBinders, client.MatchingFields{"configMapRef": indexKey}); err != nil {
