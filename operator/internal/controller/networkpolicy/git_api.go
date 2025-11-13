@@ -160,7 +160,8 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 
 	body, err := gitAPIRequest(ctx, "POST", endpoint, payload, headers, tlsVerify)
 	if err != nil {
-		return nil, err
+		// Include full endpoint URL in error for debugging
+		return nil, fmt.Errorf("failed to create PR at endpoint %s: %w", endpoint, err)
 	}
 
 	var pr pullRequest

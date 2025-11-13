@@ -358,6 +358,12 @@ func ProcessNetworkPolicyForNamespace(
 				"action", "networkpolicy_rate_limit_exceeded")
 			NetworkPolicyPRCreationErrorsTotal.WithLabelValues(clusterName, namespace, variant, "rate_limit").Inc()
 		}
+		logger.Error(err, "Failed to create PR",
+			"namespace", namespace,
+			"branch", branchName,
+			"provider", provider,
+			"apiBaseURL", apiBaseURL,
+			"repoURL", gitRepo.URL)
 		return fmt.Errorf("failed to create PR: %w", err)
 	}
 
