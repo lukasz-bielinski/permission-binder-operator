@@ -187,7 +187,7 @@ subjects:
 ### For Operations
 - [**Runbook**](docs/RUNBOOK.md) - Operational procedures and troubleshooting
 - [**Backup & Recovery**](docs/BACKUP.md) - DR procedures with Kasten K10
-- [E2E Test Scenarios](example/e2e-test-scenarios.md) - 42 comprehensive test scenarios (Pre + Tests 1-41)
+- [E2E Test Scenarios](example/e2e-test-scenarios.md) - 48 comprehensive test scenarios (Pre + Tests 1-48)
 - [Monitoring Guide](example/monitoring/README.md) - Metrics, alerts, dashboards
 
 ### For Features
@@ -288,21 +288,14 @@ make build-static
 
 ### Testing
 
-**Comprehensive E2E Test Suite - 42 Tests** ✅
+**Comprehensive E2E Test Suite - 48 Tests** ✅
 
 ```bash
 cd example/tests
 
-# Recommended: Run tests with full isolation (fresh pod per test)
-./run-tests-full-isolation.sh              # All tests (pre + 1-41)
-./run-tests-full-isolation.sh 35 36 37     # Specific tests
-
-# Quick: Run individual tests
-./test-runner.sh 1      # Test role mapping
-./test-runner.sh 35-41  # ServiceAccount tests
-
-# Complete suite (faster, less isolation)
-./run-complete-e2e-tests.sh
+# Run tests with full isolation (fresh pod per test) - RECOMMENDED
+./run-tests-full-isolation.sh              # All tests (pre + 1-48)
+./run-tests-full-isolation.sh 44 45 46     # Specific tests (e.g., NetworkPolicy)
 
 # Run unit tests
 cd ../../operator
@@ -310,15 +303,16 @@ make test
 ```
 
 **Test Categories:**
-- **Configuration Tests (1-6)**: Role mapping, prefixes, ConfigMap changes
-- **Reliability Tests (7-11)**: SAFE MODE, recovery, conflict handling
-- **Security Tests (13, 16)**: ClusterRole validation, permission loss
-- **Observability Tests (18, 22-25)**: JSON logging, metrics
-- **ServiceAccount Tests (31-41)**: 
-  - Basic (31-34): Creation, naming, idempotency
-  - **Advanced (35-41)**: Protection (SAFE MODE), cleanup, cross-namespace isolation, scaling, edge cases, recreation, permission updates
+- **Basic Functionality (1-11)**: Role mapping, prefixes, ConfigMap handling
+- **Security & Reliability (12-24)**: Security validation, error handling, observability
+- **Metrics & Monitoring (25-30)**: Prometheus metrics, metrics updates
+- **ServiceAccount Management (31-41)**: Creation, protection, updates
+- **Bug Fixes (42-43)**: Regression tests for fixed bugs
+- **NetworkPolicy Management (44-48)**: GitOps-based NetworkPolicy management
 
 See detailed scenarios: [example/e2e-test-scenarios.md](example/e2e-test-scenarios.md)
+
+**Adding New Tests**: See [example/tests/ADDING_NEW_TESTS.md](example/tests/ADDING_NEW_TESTS.md)
 
 ---
 

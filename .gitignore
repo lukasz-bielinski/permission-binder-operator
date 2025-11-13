@@ -42,14 +42,38 @@ kubeconfig*
 *.kubeconfig
 
 # Internal documentation (not for public repo)
-AUDIT_REPORT.md
-DEEP_AUDIT_REPORT*.md
-FULL_DEEP_AUDIT*.md
-CONVERSATION_SUMMARY.md
-PROJECT_STATUS.md
-QUICK_START.md
-CODE_QUALITY_TODO.md
-.session-state-*.md
+.internal-docs/
+
+# Session states
+.session-states/
 
 # Temporary directory
 temp/
+
+# Secrets with tokens (sensitive data)
+temp/*secret*.yaml
+temp/*credentials*.yaml
+temp/*token*.yaml
+temp/gitops-credentials*.yaml
+temp/github-credentials*.yaml
+temp/bitbucket-credentials*.yaml
+
+# Cursor IDE and MCP configuration
+.cursor/
+.cursorrules
+.cursorrules-*
+**/.cursorrules
+**/.cursorrules-*
+mcp.json
+**/mcp.json
+cursor-mcp-config.json
+**/cursor-mcp-config.json
+CURSOR_GUIDE.md
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log
+operator/bin/
