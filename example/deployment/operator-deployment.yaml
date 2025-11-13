@@ -755,7 +755,7 @@ spec:
         # Production: use specific version (v1.6.2)
         # Development: use latest tag with Always pull policy
         image: lukaszbielinski/permission-binder-operator:v1.6.2
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         env:
         # Enable debug mode to see detailed reconciliation trigger logging
         # Set to "true" or "1" to enable, "false" or "0" to disable (default: disabled)
