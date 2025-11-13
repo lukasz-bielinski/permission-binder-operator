@@ -267,7 +267,7 @@ func ProcessNetworkPolicyForNamespace(
 	}
 
 	apiBaseURL := getAPIBaseURL(provider, gitRepo.APIBaseURL, gitRepo.URL)
-	existingPR, err := getPRByBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials)
+	existingPR, err := getPRByBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials, tlsVerify)
 	if err == nil && existingPR != nil && existingPR.State == "OPEN" {
 		// PR already exists and is open - skip
 		logger.V(1).Info("PR already exists and is open for namespace", "namespace", namespace, "prNumber", existingPR.Number)
@@ -277,7 +277,7 @@ func ProcessNetworkPolicyForNamespace(
 	// Always delete branch on remote before creating new one (for test resilience)
 	// This ensures clean state even if previous test cleanup failed
 	logger.V(1).Info("Deleting branch on remote before creating new one", "branch", branchName, "namespace", namespace)
-	deleteBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials)
+	deleteBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials, tlsVerify)
 	// Ignore errors - branch might not exist, which is fine
 
 	// Create new branch
@@ -347,7 +347,7 @@ func ProcessNetworkPolicyForNamespace(
 		labels = append(labels, permissionBinder.Spec.NetworkPolicy.AutoMerge.Label)
 	}
 
-	pr, err := createPullRequest(ctx, provider, apiBaseURL, gitRepo.URL, branchName, baseBranch, prTitle, prDescription, labels, credentials)
+	pr, err := createPullRequest(ctx, provider, apiBaseURL, gitRepo.URL, branchName, baseBranch, prTitle, prDescription, labels, credentials, tlsVerify)
 	if err != nil {
 		// Handle rate limit
 		if handleRateLimitError(err) {
@@ -367,7 +367,7 @@ func ProcessNetworkPolicyForNamespace(
 		time.Sleep(2 * time.Second)
 
 		// Try to merge PR
-		if err := mergePullRequest(ctx, provider, apiBaseURL, gitRepo.URL, pr.Number, credentials); err != nil {
+		if err := mergePullRequest(ctx, provider, apiBaseURL, gitRepo.URL, pr.Number, credentials, tlsVerify); err != nil {
 			logger.Error(err, "Failed to auto-merge PR", "prNumber", pr.Number)
 			// Continue - PR is still created, just not merged
 		} else {
@@ -380,7 +380,7 @@ func ProcessNetworkPolicyForNamespace(
 	if autoMerge {
 		// Check if PR was actually merged
 		time.Sleep(1 * time.Second)
-		updatedPR, err := getPRByBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials)
+		updatedPR, err := getPRByBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials, tlsVerify)
 		if err == nil && updatedPR != nil && updatedPR.State == "MERGED" {
 			state = "pr-merged"
 		} else {
