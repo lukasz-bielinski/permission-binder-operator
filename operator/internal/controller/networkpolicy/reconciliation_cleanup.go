@@ -163,12 +163,16 @@ func ProcessRemovedNamespaces(
 
 		pr, err := createPullRequest(ctx, provider, apiBaseURL, gitRepo.URL, branchName, baseBranch, prTitle, prDescription, nil, credentials, tlsVerify)
 		if err != nil {
-			logger.Error(err, "Failed to create removal PR",
+			// Sanitize error and URLs to prevent token leakage
+			sanitizedErr := sanitizeError(err, credentials)
+			sanitizedRepoURL := sanitizeString(gitRepo.URL, credentials)
+			sanitizedAPIBaseURL := sanitizeString(apiBaseURL, credentials)
+			logger.Error(sanitizedErr, "Failed to create removal PR",
 				"namespace", namespace,
 				"branch", branchName,
 				"provider", provider,
-				"apiBaseURL", apiBaseURL,
-				"repoURL", gitRepo.URL)
+				"apiBaseURL", sanitizedAPIBaseURL,
+				"repoURL", sanitizedRepoURL)
 			os.RemoveAll(tmpDir)
 			continue
 		}

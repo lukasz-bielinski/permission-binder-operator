@@ -73,7 +73,9 @@ func gitAPIRequest(ctx context.Context, method, endpoint string, payload interfa
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("API error: %d - %s", resp.StatusCode, string(respBody))
+		// Sanitize response body to prevent token leakage
+		sanitizedBody := sanitizeString(string(respBody), nil)
+		return nil, fmt.Errorf("API error: %d - %s", resp.StatusCode, sanitizedBody)
 	}
 
 	return respBody, nil
@@ -160,8 +162,10 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 
 	body, err := gitAPIRequest(ctx, "POST", endpoint, payload, headers, tlsVerify)
 	if err != nil {
-		// Include full endpoint URL in error for debugging
-		return nil, fmt.Errorf("failed to create PR at endpoint %s: %w", endpoint, err)
+		// Sanitize endpoint and error to prevent token leakage
+		sanitizedEndpoint := sanitizeString(endpoint, credentials)
+		sanitizedErr := sanitizeError(err, credentials)
+		return nil, fmt.Errorf("failed to create PR at endpoint %s: %w", sanitizedEndpoint, sanitizedErr)
 	}
 
 	var pr pullRequest
