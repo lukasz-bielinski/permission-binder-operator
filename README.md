@@ -206,6 +206,11 @@ subjects:
 
 ## Documentation
 
+### Architecture & Design
+- [**Architecture Diagrams**](docs/ARCHITECTURE.md) - System architecture, component diagrams, deployment architecture
+- [**Sequence Diagrams**](docs/SEQUENCE_DIAGRAMS.md) - Detailed flow diagrams for reconciliation, NetworkPolicy, and error handling
+- [**API Reference**](docs/API_REFERENCE.md) - Complete CRD API documentation with examples
+
 ### For Operations
 - [**Runbook**](docs/RUNBOOK.md) - Operational procedures and troubleshooting
 - [**Backup & Recovery**](docs/BACKUP.md) - DR procedures with Kasten K10
