@@ -207,6 +207,13 @@ type GitRepositorySpec struct {
 	//   - GitLab: https://git.cembraintra.ch/api/v4
 	// +kubebuilder:validation:Optional
 	APIBaseURL string `json:"apiBaseURL,omitempty"`
+
+	// GitTlsVerify enables TLS certificate verification for Git HTTPS connections
+	// Set to false to skip certificate verification (insecure, for self-signed certs only)
+	// Default: true (secure)
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=true
+	GitTlsVerify *bool `json:"gitTlsVerify,omitempty"`
 }
 
 // AutoMergeSpec defines auto-merge configuration

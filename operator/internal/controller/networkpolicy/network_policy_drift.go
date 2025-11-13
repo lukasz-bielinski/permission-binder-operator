@@ -196,6 +196,12 @@ func checkDriftForNamespace(r ReconcilerInterface,
 	gitRepo := permissionBinder.Spec.NetworkPolicy.GitRepository
 	clusterName := gitRepo.ClusterName
 
+	// Get TLS verify setting (default: true for security)
+	tlsVerify := true
+	if gitRepo.GitTlsVerify != nil {
+		tlsVerify = *gitRepo.GitTlsVerify
+	}
+
 	// Get Git credentials
 	credentials, err := getGitCredentials(r, ctx, gitRepo.CredentialsSecretRef)
 	if err != nil {
@@ -203,7 +209,7 @@ func checkDriftForNamespace(r ReconcilerInterface,
 	}
 
 	// Clone repo
-	tmpDir, err := cloneGitRepo(ctx, gitRepo.URL, credentials)
+	tmpDir, err := cloneGitRepo(ctx, gitRepo.URL, credentials, tlsVerify)
 	if err != nil {
 		return fmt.Errorf("failed to clone repository: %w", err)
 	}
