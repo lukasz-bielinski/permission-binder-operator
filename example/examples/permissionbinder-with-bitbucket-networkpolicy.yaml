@@ -34,8 +34,9 @@ spec:
     
     # Bitbucket Git repository configuration
     gitRepository:
-      provider: "bitbucket"  # Required for Bitbucket
+      provider: "bitbucket"  # ⚠️ REQUIRED for Bitbucket Server (auto-detected for bitbucket.org)
       url: "https://bitbucket.org/workspace/network-policies-repo.git"
+      # For Bitbucket Server, use: "https://bitbucket.example.com/scm/project/repo.git"
       baseBranch: "main"
       clusterName: "PROD-cluster"  # Used in path: networkpolicies/{clusterName}/...
       
@@ -43,7 +44,8 @@ spec:
       # apiBaseURL: "https://bitbucket.example.com/rest/api/1.0"
       
       # Optional: TLS certificate verification (default: true)
-      # Set to false to skip certificate verification (insecure, for self-signed certs only)
+      # ⚠️ Set to false ONLY for self-signed certificates (insecure)
+      # Required if Bitbucket Server uses self-signed TLS certificate
       # gitTlsVerify: false
       
       credentialsSecretRef:
