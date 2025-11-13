@@ -744,11 +744,11 @@ spec:
         command:
         - /manager
         # Multi-arch image (ARM64 + AMD64)
-        # Available tags: 1.6.0-rc2, 1.5.7, 1.5.6, 1.5.5, 1.5.4, 1.5.3, 1.5.2, 1.5.1, 1.5.0, 1.4.0, 1.3.0, latest
-        # Production: use specific version (1.5.7)
-        # Development: use tagged version (1.6.0-rc2) with Always pull policy
-        image: lukaszbielinski/permission-binder-operator:v1.6.0-rc3
-        imagePullPolicy: Always
+        # Available tags: v1.6.0, 1.6.0-rc3, 1.6.0-rc2, 1.5.7, 1.5.6, 1.5.5, 1.5.4, 1.5.3, 1.5.2, 1.5.1, 1.5.0, 1.4.0, 1.3.0, latest
+        # Production: use specific version (v1.6.0)
+        # Development: use latest tag with Always pull policy
+        image: lukaszbielinski/permission-binder-operator:v1.6.0
+        imagePullPolicy: IfNotPresent
         env:
         # Enable debug mode to see detailed reconciliation trigger logging
         # Set to "true" or "1" to enable, "false" or "0" to disable (default: disabled)
