@@ -207,6 +207,13 @@ spec:
                         - name
                         - namespace
                         type: object
+                      gitTlsVerify:
+                        default: true
+                        description: |-
+                          GitTlsVerify enables TLS certificate verification for Git HTTPS connections
+                          Set to false to skip certificate verification (insecure, for self-signed certs only)
+                          Default: true (secure)
+                        type: boolean
                       provider:
                         description: |-
                           Provider is the Git provider (bitbucket, github, gitlab)
