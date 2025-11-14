@@ -1,23 +1,37 @@
 # Git History Rewrite Notice
 
-## ⚠️ IMPORTANT: Git History Has Been Rewritten
+## ⚠️ IMPORTANT: Git History Has Been Rewritten (TWICE)
 
-**Date**: 2025-11-13  
+### **Rewrite #1** - 2025-11-13
 **Reason**: Removed large binary files (`operator/main` - 73MiB) from Git history
+
+### **Rewrite #2** - 2025-11-14 🔒 **SECURITY**
+**Reason**: Removed internal documentation and session states from Git history
+- **Removed**: `.internal-docs/` (14 files with internal project docs)
+- **Removed**: `.session-states/` (12 files with development session history)
+- **Why**: These directories contain internal development notes, not intended for public repository
+- **Status**: Files preserved locally, only removed from Git history
 
 ---
 
 ## 📊 Impact
 
-### Before Cleanup
+### Before Cleanup (Original)
 - `.git` directory size: **~100MB+**
 - Largest file in history: `operator/main` (73MiB binary)
+- Internal docs in public repo: 26 files
 - Slow clones for new contributors
 
-### After Cleanup
+### After Cleanup #1 (2025-11-13)
 - `.git` directory size: **1.4MB** ✅
-- Largest file in history: ~102KiB (test scripts)
+- Binary files removed
 - **98% size reduction!**
+
+### After Cleanup #2 (2025-11-14) 🔒
+- `.git` directory size: **~1.0MB** ✅
+- Internal docs removed from history (26 files)
+- Session states removed from history
+- **Clean public repository** ✅
 
 ---
 
