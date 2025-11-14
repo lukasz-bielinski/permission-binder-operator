@@ -819,6 +819,6 @@ networkPolicy:
 
 ---
 
-**Last Updated**: 2025-01-15  
-**Version**: v1.6.0-rc2
+**Last Updated**: 2025-11-14  
+**Version**: v1.6.5
 
