@@ -4,29 +4,28 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.6.0-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
-[![GitHub Release](https://img.shields.io/badge/Release-v1.6.0-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.0)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.6.5-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![GitHub Release](https://img.shields.io/badge/Release-v1.6.5-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.5)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
-## 🚀 What's New in v1.6.0
+## 🚀 What's New in v1.6.5
 
-### 🔒 **SECURITY CRITICAL: Token Leak Prevention**
-- ✅ Binary `git-askpass-helper` prevents credentials in logs/process args
-- ✅ Banking/SOC2/GDPR compliant credential handling
-- ✅ Zero tokens in: `ps aux`, operator logs, error messages
+### 🧪 **Testing (MAJOR)**
+- ✅ **Comprehensive Unit Test Coverage**: Added 1,293 lines of new unit tests
+- ✅ **Coverage Improvement**: 21.1% → 23.0% overall (+1.9%)
+- ✅ **Test Quality**: All 61 E2E tests passing (100% success rate)
 
-### 🐛 **Bug Fixes**
-- ✅ Race condition in status updates fixed (retry logic with backoff)
-- ✅ Zero `"object has been modified"` errors
+### ✅ **Code Quality & Architecture**
+- ✅ **Controller Refactoring Verified**: 8-module split tested in production
+- ✅ **Unit Test Philosophy Documented**: Clear guidelines for testable pure logic
 
-### ✨ **Features**
-- ✅ **NetworkPolicy GitOps Management**: Automated PR creation, drift detection, auto-merge
-- ✅ **17 New E2E Tests**: Comprehensive NetworkPolicy testing (Tests 44-60)
-- ✅ **61 Total E2E Scenarios**: All passing ✅
+### 🔒 **Security & Compliance**
+- ✅ **Token Leak Prevention**: Binary `git-askpass-helper` prevents credentials in logs
+- ✅ **Banking/SOC2/GDPR compliant**: Zero tokens in process args, logs, error messages
 
-📖 **Full Release Notes**: [v1.6.0 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.0)
+📖 **Full Release Notes**: [v1.6.5 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.5) | [Changelog](CHANGELOG.md)
 
 ---
 
@@ -545,18 +544,16 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** v1.5.7  
-**Last Updated:** 2025-10-30  
+**Version:** v1.6.5  
+**Last Updated:** 2025-11-14  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes (v1.5.7)
-- ✅ **ServiceAccount Management** - Automated SA creation for CI/CD pipelines
-- ✅ **Image Signing** - Cosign + GitHub Attestations with SLSA provenance
-- ✅ **Race Condition Fixes** - excludeList processing improvements
-- ✅ **Test Infrastructure** - Modular test runner with 35 scenarios
-- ✅ **Prometheus ServiceMonitor** - Automated metrics collection
-- ✅ **Startup Optimization** - Reduced from ~15s to ~3-5s
-- ✅ **Documentation** - 100% coverage for all features
+### Recent Changes (v1.6.5)
+- ✅ **Unit Test Coverage** - Added 1,293 lines of new unit tests (23.0% coverage)
+- ✅ **Code Quality** - Controller refactoring verified, 8-module architecture
+- ✅ **Security** - Token leak prevention, banking/SOC2/GDPR compliant
+- ✅ **E2E Tests** - 61 total scenarios, 100% pass rate
+- ✅ **Documentation** - Comprehensive audit reports and TODO analysis
 
 ---
 
