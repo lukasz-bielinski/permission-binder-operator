@@ -70,7 +70,7 @@ mcp.json
 cursor-mcp-config.json
 **/cursor-mcp-config.json
 CURSOR_GUIDE.md
-
+AGENTS.md
 # IDE
 .idea/
 .vscode/
