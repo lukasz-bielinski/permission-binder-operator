@@ -474,6 +474,7 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName string, credentials *gitCredentials, tlsVerify bool) error {
 	var endpoint string
 	var headers map[string]string
+	var payload map[string]interface{}
 
 	u, err := neturl.Parse(repoURL)
 	if err != nil {
