@@ -694,7 +694,7 @@ spec:
 
 #### Container Images
 - **Base Image**: `gcr.io/distroless/static:nonroot`
-- **Go Version**: 1.24
+- **Go Version**: 1.25
 - **Architectures**: linux/amd64, linux/arm64
 - **Registry**: Docker Hub (`lukaszbielinski/permission-binder-operator`)
 - **Tags**: `v1.0.0`, `latest`
@@ -702,7 +702,7 @@ spec:
 #### Dependencies
 - **Kubernetes**: 1.20+
 - **controller-runtime**: Latest stable
-- **Go**: 1.24+
+- **Go**: 1.25+
 
 #### Performance
 - **Resource Limits**: Configurable (default: 512Mi RAM, 500m CPU)
