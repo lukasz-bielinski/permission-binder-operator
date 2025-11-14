@@ -22,8 +22,9 @@ A safe, predictable, and auditable Kubernetes operator that automatically manage
 - ✅ **Unit Test Philosophy Documented**: Clear guidelines for testable pure logic
 
 ### 🔒 **Security & Compliance**
-- ✅ **Token Leak Prevention**: Binary `git-askpass-helper` prevents credentials in logs
-- ✅ **Banking/SOC2/GDPR compliant**: Zero tokens in process args, logs, error messages
+- ✅ **Token Leak Prevention**: Native `go-git` library with `BasicAuth` (credentials in-memory only)
+- ✅ **Banking/SOC2/GDPR compliant**: Zero tokens in process args, logs, error messages, URLs
+- ✅ **Error Sanitization**: All Git-related errors sanitized (tokens replaced with `[REDACTED]`)
 
 📖 **Full Release Notes**: [v1.6.5 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.5) | [Changelog](CHANGELOG.md)
 
@@ -48,7 +49,7 @@ A safe, predictable, and auditable Kubernetes operator that automatically manage
 
 ### Observability
 - ✅ **JSON Structured Logging** - Machine-readable logs for SIEM
-- ✅ **Prometheus Metrics** - 6 custom metrics for monitoring
+- ✅ **Prometheus Metrics** - 15 custom metrics for monitoring (RBAC, NetworkPolicy, ServiceAccount, LDAP)
 - ✅ **Grafana Dashboard** - Pre-built 13-panel dashboard
 - ✅ **AlertManager Rules** - Loki and Prometheus alerts
 
@@ -237,13 +238,30 @@ kubectl port-forward -n permissions-binder-operator deployment/operator-controll
 curl -k https://localhost:8443/metrics | grep permission_binder
 ```
 
-**Custom Metrics:**
+**Custom Metrics (15 total):**
+
+**RBAC Metrics (6):**
 - `permission_binder_missing_clusterrole_total` - Missing ClusterRoles (security!)
 - `permission_binder_orphaned_resources_total` - Orphaned resources count
 - `permission_binder_adoption_events_total` - Successful adoptions
 - `permission_binder_managed_rolebindings_total` - Managed RoleBindings
 - `permission_binder_managed_namespaces_total` - Managed Namespaces
 - `permission_binder_configmap_entries_processed_total` - Processing status
+
+**NetworkPolicy Metrics (5):**
+- `permission_binder_networkpolicy_prs_created_total` - PRs created
+- `permission_binder_networkpolicy_pr_creation_errors_total` - PR creation errors
+- `permission_binder_networkpolicy_git_operations_total` - Git operations (clone, push)
+- `permission_binder_networkpolicy_template_validation_errors_total` - Template validation errors
+- `permission_binder_multiple_crs_networkpolicy_warning_total` - Multiple CRs warnings
+
+**ServiceAccount Metrics (2):**
+- `permission_binder_service_accounts_created_total` - ServiceAccounts created
+- `permission_binder_managed_service_accounts_total` - Managed ServiceAccounts
+
+**LDAP Metrics (2):**
+- `permission_binder_ldap_group_operations_total` - LDAP group operations
+- `permission_binder_ldap_connections_total` - LDAP connections
 
 ### JSON Logs
 
@@ -363,14 +381,14 @@ All Docker images are **cryptographically signed** and include **supply chain at
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:1.5.7
+  lukaszbielinski/permission-binder-operator:v1.6.5
 ```
 
 **Using GitHub CLI (for attestations):**
 ```bash
 # Verify GitHub Attestations
 gh attestation verify \
-  oci://lukaszbielinski/permission-binder-operator:1.5.0 \
+  oci://lukaszbielinski/permission-binder-operator:v1.6.5 \
   --owner lukasz-bielinski
 ```
 
@@ -381,7 +399,7 @@ cosign verify-attestation \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   --type slsaprovenance \
-  lukaszbielinski/permission-binder-operator:1.5.7 | jq .
+  lukaszbielinski/permission-binder-operator:v1.6.5 | jq .
 ```
 
 ### 📋 What's Verified?
