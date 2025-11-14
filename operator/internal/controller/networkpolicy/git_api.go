@@ -135,25 +135,60 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 		}
 
 	case "bitbucket":
-		workspace, err := extractWorkspaceFromURL(repoURL)
-		if err != nil {
-			return nil, fmt.Errorf("failed to extract workspace: %w", err)
-		}
-		repo := extractRepositoryFromURL(repoURL)
-		endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests", apiBaseURL, workspace, repo)
-		payload = map[string]interface{}{
-			"title": map[string]string{"raw": title},
-			"source": map[string]interface{}{
-				"branch": map[string]string{"name": branchName},
-			},
-			"destination": map[string]interface{}{
-				"branch": map[string]string{"name": baseBranch},
-			},
-			"description": map[string]string{"raw": description},
-		}
-		headers = map[string]string{
-			"Authorization": "Bearer " + credentials.token,
-			"Content-Type":  "application/json",
+		// Detect Bitbucket Server vs Cloud based on API URL
+		if isBitbucketServer(apiBaseURL) {
+			// Bitbucket Server API format:
+			// POST /rest/api/1.0/projects/{projectKey}/repos/{repositorySlug}/pull-requests
+			project, err := extractBitbucketServerProject(repoURL)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract Bitbucket Server project: %w", err)
+			}
+			repo, err := extractBitbucketServerRepo(repoURL)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract Bitbucket Server repo: %w", err)
+			}
+			
+			// Bitbucket Server requires uppercase project key in API
+			projectKey := strings.ToUpper(project)
+			
+			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/pull-requests", apiBaseURL, projectKey, repo)
+			payload = map[string]interface{}{
+				"title":       title,
+				"description": description,
+				"fromRef": map[string]interface{}{
+					"id": "refs/heads/" + branchName,
+				},
+				"toRef": map[string]interface{}{
+					"id": "refs/heads/" + baseBranch,
+				},
+			}
+			headers = map[string]string{
+				"Authorization": "Bearer " + credentials.token,
+				"Content-Type":  "application/json",
+			}
+		} else {
+			// Bitbucket Cloud API format:
+			// POST /2.0/repositories/{workspace}/{repo_slug}/pullrequests
+			workspace, err := extractWorkspaceFromURL(repoURL)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract workspace: %w", err)
+			}
+			repo := extractRepositoryFromURL(repoURL)
+			endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests", apiBaseURL, workspace, repo)
+			payload = map[string]interface{}{
+				"title": map[string]string{"raw": title},
+				"source": map[string]interface{}{
+					"branch": map[string]string{"name": branchName},
+				},
+				"destination": map[string]interface{}{
+					"branch": map[string]string{"name": baseBranch},
+				},
+				"description": map[string]string{"raw": description},
+			}
+			headers = map[string]string{
+				"Authorization": "Bearer " + credentials.token,
+				"Content-Type":  "application/json",
+			}
 		}
 
 	default:
@@ -251,14 +286,35 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 		}
 
 	case "bitbucket":
-		workspace, err := extractWorkspaceFromURL(repoURL)
-		if err != nil {
-			return nil, fmt.Errorf("failed to extract workspace: %w", err)
-		}
-		repo := extractRepositoryFromURL(repoURL)
-		endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests?state=ALL", apiBaseURL, workspace, repo)
-		headers = map[string]string{
-			"Authorization": "Bearer " + credentials.token,
+		// Detect Bitbucket Server vs Cloud
+		if isBitbucketServer(apiBaseURL) {
+			// Bitbucket Server API format:
+			// GET /rest/api/1.0/projects/{projectKey}/repos/{repositorySlug}/pull-requests
+			project, err := extractBitbucketServerProject(repoURL)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract Bitbucket Server project: %w", err)
+			}
+			repo, err := extractBitbucketServerRepo(repoURL)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract Bitbucket Server repo: %w", err)
+			}
+			
+			projectKey := strings.ToUpper(project)
+			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/pull-requests?state=ALL", apiBaseURL, projectKey, repo)
+			headers = map[string]string{
+				"Authorization": "Bearer " + credentials.token,
+			}
+		} else {
+			// Bitbucket Cloud API format
+			workspace, err := extractWorkspaceFromURL(repoURL)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract workspace: %w", err)
+			}
+			repo := extractRepositoryFromURL(repoURL)
+			endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests?state=ALL", apiBaseURL, workspace, repo)
+			headers = map[string]string{
+				"Authorization": "Bearer " + credentials.token,
+			}
 		}
 
 	default:
@@ -369,21 +425,46 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 		}
 
 	case "bitbucket":
-		workspace, err := extractWorkspaceFromURL(repoURL)
-		if err != nil {
-			return fmt.Errorf("failed to extract workspace: %w", err)
-		}
-		repo := extractRepositoryFromURL(repoURL)
-		endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests/%d/merge", apiBaseURL, workspace, repo, prNumber)
-		headers = map[string]string{
-			"Authorization": "Bearer " + credentials.token,
+		// Detect Bitbucket Server vs Cloud
+		if isBitbucketServer(apiBaseURL) {
+			// Bitbucket Server API format:
+			// POST /rest/api/1.0/projects/{projectKey}/repos/{repositorySlug}/pull-requests/{prId}/merge
+			project, err := extractBitbucketServerProject(repoURL)
+			if err != nil {
+				return fmt.Errorf("failed to extract Bitbucket Server project: %w", err)
+			}
+			repo, err := extractBitbucketServerRepo(repoURL)
+			if err != nil {
+				return fmt.Errorf("failed to extract Bitbucket Server repo: %w", err)
+			}
+			
+			projectKey := strings.ToUpper(project)
+			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/pull-requests/%d/merge", apiBaseURL, projectKey, repo, prNumber)
+			payload = map[string]interface{}{
+				"version": 0, // Bitbucket Server requires version field (can use 0 for latest)
+			}
+			headers = map[string]string{
+				"Authorization": "Bearer " + credentials.token,
+				"Content-Type":  "application/json",
+			}
+		} else {
+			// Bitbucket Cloud API format
+			workspace, err := extractWorkspaceFromURL(repoURL)
+			if err != nil {
+				return fmt.Errorf("failed to extract workspace: %w", err)
+			}
+			repo := extractRepositoryFromURL(repoURL)
+			endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests/%d/merge", apiBaseURL, workspace, repo, prNumber)
+			headers = map[string]string{
+				"Authorization": "Bearer " + credentials.token,
+			}
 		}
 
 	default:
 		return fmt.Errorf("unsupported Git provider: %s", provider)
 	}
 
-	_, err = gitAPIRequest(ctx, "PUT", endpoint, payload, headers, tlsVerify)
+	_, err = gitAPIRequest(ctx, "POST", endpoint, payload, headers, tlsVerify)
 	return err
 }
 
@@ -393,6 +474,7 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName string, credentials *gitCredentials, tlsVerify bool) error {
 	var endpoint string
 	var headers map[string]string
+	var payload map[string]interface{}
 
 	u, err := neturl.Parse(repoURL)
 	if err != nil {
@@ -419,21 +501,50 @@ func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName
 		}
 
 	case "bitbucket":
-		workspace, err := extractWorkspaceFromURL(repoURL)
-		if err != nil {
-			return fmt.Errorf("failed to extract workspace: %w", err)
-		}
-		repo := extractRepositoryFromURL(repoURL)
-		endpoint = fmt.Sprintf("%s/repositories/%s/%s/refs/branches/%s", apiBaseURL, workspace, repo, branchName)
-		headers = map[string]string{
-			"Authorization": "Bearer " + credentials.token,
+		// Detect Bitbucket Server vs Cloud
+		if isBitbucketServer(apiBaseURL) {
+			// Bitbucket Server API format:
+			// DELETE /rest/branch-utils/1.0/projects/{projectKey}/repos/{repositorySlug}/branches
+			project, err := extractBitbucketServerProject(repoURL)
+			if err != nil {
+				return fmt.Errorf("failed to extract Bitbucket Server project: %w", err)
+			}
+			repo, err := extractBitbucketServerRepo(repoURL)
+			if err != nil {
+				return fmt.Errorf("failed to extract Bitbucket Server repo: %w", err)
+			}
+			
+			projectKey := strings.ToUpper(project)
+			// Bitbucket Server uses branch-utils API for branch deletion
+			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/branches", apiBaseURL, projectKey, repo)
+			// Note: Bitbucket Server API base might need /rest/branch-utils/1.0 instead of /rest/api/1.0
+			// If this fails, we'll need to construct a different base URL
+			endpoint = strings.Replace(endpoint, "/rest/api/1.0", "/rest/branch-utils/1.0", 1)
+			payload = map[string]interface{}{
+				"name": "refs/heads/" + branchName,
+			}
+			headers = map[string]string{
+				"Authorization": "Bearer " + credentials.token,
+				"Content-Type":  "application/json",
+			}
+		} else {
+			// Bitbucket Cloud API format
+			workspace, err := extractWorkspaceFromURL(repoURL)
+			if err != nil {
+				return fmt.Errorf("failed to extract workspace: %w", err)
+			}
+			repo := extractRepositoryFromURL(repoURL)
+			endpoint = fmt.Sprintf("%s/repositories/%s/%s/refs/branches/%s", apiBaseURL, workspace, repo, branchName)
+			headers = map[string]string{
+				"Authorization": "Bearer " + credentials.token,
+			}
 		}
 
 	default:
 		return fmt.Errorf("unsupported Git provider: %s", provider)
 	}
 
-	_, err = gitAPIRequest(ctx, "DELETE", endpoint, nil, headers, tlsVerify)
+	_, err = gitAPIRequest(ctx, "DELETE", endpoint, payload, headers, tlsVerify)
 	if err != nil && strings.Contains(err.Error(), "404") {
 		return nil // Branch already doesn't exist
 	}

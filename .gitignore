@@ -64,6 +64,7 @@ temp/bitbucket-credentials*.yaml
 .cursorrules-*
 **/.cursorrules
 **/.cursorrules-*
+AGENTS.md
 mcp.json
 **/mcp.json
 cursor-mcp-config.json

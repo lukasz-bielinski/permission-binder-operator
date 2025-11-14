@@ -111,6 +111,50 @@ func extractRepositoryFromURL(repoURL string) string {
 	return ""
 }
 
+// isBitbucketServer detects if this is Bitbucket Server (vs Cloud) based on API URL
+// Bitbucket Server uses /rest/api/1.0, Cloud uses api.bitbucket.org/2.0
+func isBitbucketServer(apiBaseURL string) bool {
+	return strings.Contains(apiBaseURL, "/rest/api/1.0") || strings.Contains(apiBaseURL, "/rest/api/latest")
+}
+
+// extractBitbucketServerProject extracts project key from Bitbucket Server URL
+// Format: https://git.example.com/scm/{project}/{repo}.git
+// Returns: project key (lowercase from URL)
+func extractBitbucketServerProject(repoURL string) (string, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse URL: %w", err)
+	}
+	
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	// Expected: ["scm", "{project}", "{repo}.git"]
+	if len(parts) >= 3 && parts[0] == "scm" {
+		return parts[1], nil // project key (e.g., "infra-os")
+	}
+	
+	return "", fmt.Errorf("invalid Bitbucket Server URL format, expected /scm/{project}/{repo}: %s", repoURL)
+}
+
+// extractBitbucketServerRepo extracts repository slug from Bitbucket Server URL
+// Format: https://git.example.com/scm/{project}/{repo}.git
+// Returns: repository slug (e.g., "openshift-gitops")
+func extractBitbucketServerRepo(repoURL string) (string, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse URL: %w", err)
+	}
+	
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	// Expected: ["scm", "{project}", "{repo}.git"]
+	if len(parts) >= 3 && parts[0] == "scm" {
+		repo := parts[2]
+		repo = strings.TrimSuffix(repo, ".git")
+		return repo, nil // repository slug (e.g., "openshift-gitops")
+	}
+	
+	return "", fmt.Errorf("invalid Bitbucket Server URL format, expected /scm/{project}/{repo}: %s", repoURL)
+}
+
 // IsNamespaceExcluded checks if a namespace is excluded from NetworkPolicy operations.
 //
 // A namespace is excluded if:
