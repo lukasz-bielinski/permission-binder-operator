@@ -4,16 +4,20 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.6.5-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
-[![GitHub Release](https://img.shields.io/badge/Release-v1.6.5-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.5)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.6.6-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![GitHub Release](https://img.shields.io/badge/Release-v1.6.6-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.6)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
-## 🚀 What's New in v1.6.5
+## 🚀 What's New in v1.6.6
 
-### 🧪 **Testing (MAJOR)**
-- ✅ **Comprehensive Unit Test Coverage**: Added 1,293 lines of new unit tests
+### 🚀 **Go 1.25 Upgrade**
+- ✅ **Go Version**: Upgraded from 1.24.0 to 1.25
+- ✅ **Docker Image**: Built and pushed `lukaszbielinski/permission-binder-operator:1.6.6`
+- ✅ **Compatibility**: All 61 E2E tests passing (100% success rate) with Go 1.25
+
+### 🧪 **Testing**
 - ✅ **Coverage**: ~20% overall (realistic), **~96% pure logic** (17 functions) - **EXCELLENT!**
 - ✅ **Test Quality**: All 61 E2E tests passing (100% success rate)
 
@@ -26,7 +30,7 @@ A safe, predictable, and auditable Kubernetes operator that automatically manage
 - ✅ **Banking/SOC2/GDPR compliant**: Zero tokens in process args, logs, error messages, URLs
 - ✅ **Error Sanitization**: All Git-related errors sanitized (tokens replaced with `[REDACTED]`)
 
-📖 **Full Release Notes**: [v1.6.5 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.5) | [Changelog](CHANGELOG.md)
+📖 **Full Release Notes**: [v1.6.6 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.6) | [Changelog](CHANGELOG.md)
 
 ---
 
@@ -381,14 +385,14 @@ All Docker images are **cryptographically signed** and include **supply chain at
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:v1.6.5
+  lukaszbielinski/permission-binder-operator:1.6.6
 ```
 
 **Using GitHub CLI (for attestations):**
 ```bash
 # Verify GitHub Attestations
 gh attestation verify \
-  oci://lukaszbielinski/permission-binder-operator:v1.6.5 \
+  oci://lukaszbielinski/permission-binder-operator:1.6.6 \
   --owner lukasz-bielinski
 ```
 
@@ -399,7 +403,7 @@ cosign verify-attestation \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   --type slsaprovenance \
-  lukaszbielinski/permission-binder-operator:v1.6.5 | jq .
+  lukaszbielinski/permission-binder-operator:1.6.6 | jq .
 ```
 
 ### 📋 What's Verified?
@@ -562,16 +566,17 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** v1.6.5  
-**Last Updated:** 2025-11-14  
+**Version:** v1.6.6  
+**Last Updated:** 2025-11-15  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes (v1.6.5)
-- ✅ **Unit Test Coverage** - Added 1,293 lines of new unit tests (23.0% coverage)
+### Recent Changes (v1.6.6)
+- ✅ **Go 1.25 Upgrade** - Upgraded from Go 1.24.0 to 1.25
+- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.6.6`
+- ✅ **E2E Tests** - All 61 tests passing (100% success rate) with Go 1.25
+- ✅ **Unit Test Coverage** - ~20% overall, ~96% pure logic (17 functions)
 - ✅ **Code Quality** - Controller refactoring verified, 8-module architecture
 - ✅ **Security** - Token leak prevention, banking/SOC2/GDPR compliant
-- ✅ **E2E Tests** - 61 total scenarios, 100% pass rate
-- ✅ **Documentation** - Comprehensive audit reports and TODO analysis
 
 ---
 
