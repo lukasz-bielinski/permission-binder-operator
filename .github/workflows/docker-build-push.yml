@@ -72,6 +72,20 @@ jobs:
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
       
+      - name: Export image digest to job output
+        id: image-digest
+        if: github.event_name != 'pull_request'
+        run: |
+          # Extract digest from build-push step and export as job output
+          DIGEST="${{ steps.build-push.outputs.digest }}"
+          if [ -n "$DIGEST" ]; then
+            echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+            echo "Image digest exported: $DIGEST"
+          else
+            echo "Warning: No digest found, will use tag fallback in security scan"
+            echo "digest=" >> $GITHUB_OUTPUT
+          fi
+      
       - name: Sign image with Cosign
         if: github.event_name != 'pull_request'
         run: |
@@ -87,5 +101,112 @@ jobs:
           push-to-registry: false
 
       - name: Image digest
+        if: github.event_name != 'pull_request'
         run: echo ${{ steps.build-push.outputs.digest }}
+
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    needs: build-and-push
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          trivy_version: 'latest'
+
+      - name: Scan Go dependencies
+        run: |
+          cd operator
+          trivy fs --severity HIGH,CRITICAL \
+            --format sarif \
+            --output trivy-fs-results.sarif \
+            .
+
+      - name: Upload Trivy FS results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'operator/trivy-fs-results.sarif'
+          wait-for-processing: true
+
+      - name: Log in to Docker Hub (for image scan)
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Scan container image
+        if: github.event_name != 'pull_request'
+        run: |
+          # Try to get image digest from build job, fallback to tag
+          IMAGE_DIGEST="${{ needs.build-and-push.outputs.image-digest.digest }}"
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
+            # Fallback: use tag
+            IMAGE_TAG="${{ github.ref_name }}"
+            if [ "$IMAGE_TAG" = "main" ] || [ "$IMAGE_TAG" = "master" ]; then
+              IMAGE_TAG="latest"
+            fi
+            echo "Scanning image by tag: ${{ env.IMAGE_NAME }}:$IMAGE_TAG"
+            trivy image --severity HIGH,CRITICAL \
+              --format sarif \
+              --output trivy-image-results.sarif \
+              ${{ env.IMAGE_NAME }}:$IMAGE_TAG
+          else
+            echo "Scanning image by digest: ${{ env.IMAGE_NAME }}@$IMAGE_DIGEST"
+            trivy image --severity HIGH,CRITICAL \
+              --format sarif \
+              --output trivy-image-results.sarif \
+              ${{ env.IMAGE_NAME }}@$IMAGE_DIGEST
+          fi
+
+      - name: Upload Trivy image results to GitHub Security
+        if: github.event_name != 'pull_request' && always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+          wait-for-processing: true
+
+      - name: Trivy scan summary (Go dependencies)
+        if: always()
+        run: |
+          cd operator
+          echo "## 🔒 Security Scan Results (Go Dependencies)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          trivy fs --severity HIGH,CRITICAL \
+            --format table \
+            . >> $GITHUB_STEP_SUMMARY || true
+
+      - name: Trivy scan summary (Container image)
+        if: github.event_name != 'pull_request' && always()
+        run: |
+          echo "## 🔒 Security Scan Results (Container Image)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          IMAGE_DIGEST="${{ needs.build-and-push.outputs.image-digest.digest }}"
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
+            IMAGE_TAG="${{ github.ref_name }}"
+            if [ "$IMAGE_TAG" = "main" ] || [ "$IMAGE_TAG" = "master" ]; then
+              IMAGE_TAG="latest"
+            fi
+            trivy image --severity HIGH,CRITICAL \
+              --format table \
+              ${{ env.IMAGE_NAME }}:$IMAGE_TAG >> $GITHUB_STEP_SUMMARY || true
+          else
+            trivy image --severity HIGH,CRITICAL \
+              --format table \
+              ${{ env.IMAGE_NAME }}@$IMAGE_DIGEST >> $GITHUB_STEP_SUMMARY || true
+          fi
 
