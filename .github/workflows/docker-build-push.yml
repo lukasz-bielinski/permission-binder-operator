@@ -143,6 +143,12 @@ jobs:
       - name: Image digest
         if: github.event_name != 'pull_request'
         run: echo ${{ steps.build-push.outputs.digest }}
+      
+      - name: Skip steps for PR (image not pushed)
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "⏭️ Skipping image signing, attestation, and digest export for pull request"
+          echo "Images are not pushed to registry for PRs, so these steps are not needed."
 
   security-scan:
     runs-on: ubuntu-latest
@@ -187,6 +193,13 @@ jobs:
         with:
           sarif_file: 'operator/trivy-fs-results.sarif'
           wait-for-processing: true
+
+      - name: Skip container image scan for PR
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "⏭️ Skipping container image scan for pull request"
+          echo "Container images are not pushed to registry for PRs, so image scanning is skipped."
+          echo "Only Go dependencies are scanned for PRs (see 'Scan Go dependencies' step above)."
 
       - name: Log in to Docker Hub (for image scan)
         if: github.event_name != 'pull_request'
