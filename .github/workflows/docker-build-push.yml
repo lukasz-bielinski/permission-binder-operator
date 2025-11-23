@@ -6,9 +6,20 @@ on:
       - main
     tags:
       - 'v*.*.*'
+      - 'v*.*.*-multi-arch'
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      multi_arch:
+        description: 'Build multi-architecture image (amd64 + arm64)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 env:
   REGISTRY: docker.io
@@ -22,12 +33,33 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    outputs:
+      image-digest: ${{ steps.image-digest.outputs.digest }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Determine build platforms
+        id: platforms
+        run: |
+          # Default: amd64 only (faster builds)
+          PLATFORMS="linux/amd64"
+          
+          # Multi-arch if:
+          # 1. Tag contains '-multi-arch'
+          # 2. workflow_dispatch with multi_arch input = 'true'
+          if [[ "${{ github.ref }}" == *"-multi-arch" ]] || [[ "${{ github.event.inputs.multi_arch }}" == "true" ]]; then
+            PLATFORMS="linux/amd64,linux/arm64"
+            echo "Building multi-architecture image: $PLATFORMS"
+          else
+            echo "Building single-architecture image (amd64 only): $PLATFORMS"
+          fi
+          
+          echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
+
       - name: Set up QEMU
+        if: steps.platforms.outputs.platforms == 'linux/amd64,linux/arm64'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -56,12 +88,20 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Generate build date
+        id: build-date
+        run: |
+          # Generate ISO 8601 timestamp (works for all event types)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "date=$BUILD_DATE" >> $GITHUB_OUTPUT
+          echo "Build date: $BUILD_DATE"
+
       - name: Build and push Docker image
         id: build-push
         uses: docker/build-push-action@v5
         with:
           context: ./operator
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.platforms.outputs.platforms }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -70,7 +110,21 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ steps.build-date.outputs.date }}
+      
+      - name: Export image digest to job output
+        id: image-digest
+        if: github.event_name != 'pull_request'
+        run: |
+          # Extract digest from build-push step and export as job output
+          DIGEST="${{ steps.build-push.outputs.digest }}"
+          if [ -n "$DIGEST" ]; then
+            echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+            echo "Image digest exported: $DIGEST"
+          else
+            echo "Warning: No digest found, will use tag fallback in security scan"
+            echo "digest=" >> $GITHUB_OUTPUT
+          fi
       
       - name: Sign image with Cosign
         if: github.event_name != 'pull_request'
@@ -87,5 +141,131 @@ jobs:
           push-to-registry: false
 
       - name: Image digest
+        if: github.event_name != 'pull_request'
         run: echo ${{ steps.build-push.outputs.digest }}
+      
+      - name: Skip steps for PR (image not pushed)
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "⏭️ Skipping image signing, attestation, and digest export for pull request"
+          echo "Images are not pushed to registry for PRs, so these steps are not needed."
+
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    needs: build-and-push
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: operator/go.sum
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get update
+          sudo apt-get install wget apt-transport-https gnupg lsb-release -y
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo tee /etc/apt/trusted.gpg.d/trivy.asc
+          echo "deb [signed-by=/etc/apt/trusted.gpg.d/trivy.asc] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install trivy -y
+          trivy --version
+
+      - name: Scan Go dependencies
+        run: |
+          cd operator
+          trivy fs --severity HIGH,CRITICAL \
+            --format sarif \
+            --output trivy-fs-results.sarif \
+            . || true
+
+      - name: Upload Trivy FS results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: 'operator/trivy-fs-results.sarif'
+          wait-for-processing: true
+
+      - name: Skip container image scan for PR
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "⏭️ Skipping container image scan for pull request"
+          echo "Container images are not pushed to registry for PRs, so image scanning is skipped."
+          echo "Only Go dependencies are scanned for PRs (see 'Scan Go dependencies' step above)."
+
+      - name: Log in to Docker Hub (for image scan)
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Scan container image
+        if: github.event_name != 'pull_request'
+        run: |
+          # Try to get image digest from build job, fallback to tag
+          IMAGE_DIGEST="${{ needs.build-and-push.outputs.image-digest }}"
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
+            # Fallback: use tag
+            IMAGE_TAG="${{ github.ref_name }}"
+            if [ "$IMAGE_TAG" = "main" ] || [ "$IMAGE_TAG" = "master" ]; then
+              IMAGE_TAG="latest"
+            fi
+            echo "Scanning image by tag: ${{ env.IMAGE_NAME }}:$IMAGE_TAG"
+            trivy image --severity HIGH,CRITICAL \
+              --format sarif \
+              --output trivy-image-results.sarif \
+              ${{ env.IMAGE_NAME }}:$IMAGE_TAG
+          else
+            echo "Scanning image by digest: ${{ env.IMAGE_NAME }}@$IMAGE_DIGEST"
+            trivy image --severity HIGH,CRITICAL \
+              --format sarif \
+              --output trivy-image-results.sarif \
+              ${{ env.IMAGE_NAME }}@$IMAGE_DIGEST
+          fi
+
+      - name: Upload Trivy image results to GitHub Security
+        if: github.event_name != 'pull_request' && always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+          wait-for-processing: true
+
+      - name: Trivy scan summary (Go dependencies)
+        if: always()
+        run: |
+          cd operator
+          echo "## 🔒 Security Scan Results (Go Dependencies)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          trivy fs --severity HIGH,CRITICAL \
+            --format table \
+            . >> $GITHUB_STEP_SUMMARY || true
+
+      - name: Trivy scan summary (Container image)
+        if: github.event_name != 'pull_request' && always()
+        run: |
+          echo "## 🔒 Security Scan Results (Container Image)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          IMAGE_DIGEST="${{ needs.build-and-push.outputs.image-digest }}"
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
+            IMAGE_TAG="${{ github.ref_name }}"
+            if [ "$IMAGE_TAG" = "main" ] || [ "$IMAGE_TAG" = "master" ]; then
+              IMAGE_TAG="latest"
+            fi
+            trivy image --severity HIGH,CRITICAL \
+              --format table \
+              ${{ env.IMAGE_NAME }}:$IMAGE_TAG >> $GITHUB_STEP_SUMMARY || true
+          else
+            trivy image --severity HIGH,CRITICAL \
+              --format table \
+              ${{ env.IMAGE_NAME }}@$IMAGE_DIGEST >> $GITHUB_STEP_SUMMARY || true
+          fi
 
