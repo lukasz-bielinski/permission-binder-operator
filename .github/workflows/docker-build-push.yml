@@ -88,6 +88,14 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Generate build date
+        id: build-date
+        run: |
+          # Generate ISO 8601 timestamp (works for all event types)
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "date=$BUILD_DATE" >> $GITHUB_OUTPUT
+          echo "Build date: $BUILD_DATE"
+
       - name: Build and push Docker image
         id: build-push
         uses: docker/build-push-action@v5
@@ -102,7 +110,7 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ steps.build-date.outputs.date }}
       
       - name: Export image digest to job output
         id: image-digest
