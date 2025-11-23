@@ -33,6 +33,8 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    outputs:
+      image-digest: ${{ steps.image-digest.outputs.digest }}
 
     steps:
       - name: Checkout repository
@@ -189,7 +191,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           # Try to get image digest from build job, fallback to tag
-          IMAGE_DIGEST="${{ needs.build-and-push.outputs.image-digest.digest }}"
+          IMAGE_DIGEST="${{ needs.build-and-push.outputs.image-digest }}"
           if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
             # Fallback: use tag
             IMAGE_TAG="${{ github.ref_name }}"
@@ -231,7 +233,7 @@ jobs:
         run: |
           echo "## 🔒 Security Scan Results (Container Image)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          IMAGE_DIGEST="${{ needs.build-and-push.outputs.image-digest.digest }}"
+          IMAGE_DIGEST="${{ needs.build-and-push.outputs.image-digest }}"
           if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
             IMAGE_TAG="${{ github.ref_name }}"
             if [ "$IMAGE_TAG" = "main" ] || [ "$IMAGE_TAG" = "master" ]; then
