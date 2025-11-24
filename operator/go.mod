@@ -3,7 +3,7 @@ module github.com/permission-binder-operator/operator
 go 1.25
 
 require (
-	github.com/go-git/go-git/v5 v5.16.3
+	github.com/go-git/go-git/v5 v5.16.4
 	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
