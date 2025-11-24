@@ -602,6 +602,6 @@ sequenceDiagram
 
 ---
 
-**Last Updated**: 2025-11-14  
-**Version**: v1.6.5
+**Last Updated**: 2025-11-24  
+**Version**: v1.6.7
 

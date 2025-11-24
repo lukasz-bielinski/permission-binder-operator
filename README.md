@@ -4,33 +4,34 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.6.6-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
-[![GitHub Release](https://img.shields.io/badge/Release-v1.6.6-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.6)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.6.7-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![GitHub Release](https://img.shields.io/badge/Release-v1.6.7-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.7)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
-## 🚀 What's New in v1.6.6
+## 🚀 What's New in v1.6.7
 
-### 🚀 **Go 1.25 Upgrade**
-- ✅ **Go Version**: Upgraded from 1.24.0 to 1.25
-- ✅ **Docker Image**: Built and pushed `lukaszbielinski/permission-binder-operator:1.6.6`
-- ✅ **Compatibility**: All 61 E2E tests passing (100% success rate) with Go 1.25
+### 🔁 Toolchain & Dependency Refresh
+- ✅ **Go 1.25 Everywhere** – Dockerfile, go.mod, and CI now build/test with Go 1.25.
+- ✅ **Dependencies Updated** – Kubernetes 0.34.2 stack, Prometheus client 1.23.2, Ginkgo/Gomega, zap, testify, kustomize, yaml.
+- ⚠️ `controller-runtime` intentionally pinned at 0.19.0 (ignore rule added) pending focused upgrade window.
 
-### 🧪 **Testing**
-- ✅ **Coverage**: ~20% overall (realistic), **~96% pure logic** (17 functions) - **EXCELLENT!**
-- ✅ **Test Quality**: All 61 E2E tests passing (100% success rate)
+### 🔐 Security & CI Hardening
+- ✅ Trivy FS/Image scans in GitHub Actions with SARIF uploads + unique categories.
+- ✅ Dependabot configuration for gomod, docker, and github-actions ecosystems.
+- ✅ Digest hand-off between jobs, BUILD_DATE fix for all triggers, amd64-by-default builds, and clear PR skip logs.
+- ✅ Removed deprecated `apt-key` usage; adopted `signed-by` gpg key installation.
 
-### ✅ **Code Quality & Architecture**
-- ✅ **Controller Refactoring Verified**: 8-module split tested in production
-- ✅ **Unit Test Philosophy Documented**: Clear guidelines for testable pure logic
+### 📚 Documentation & Observability
+- ✅ README, docs, deployment manifests, and badges all reference `v1.6.7`.
+- ✅ Unit Test philosophy + architecture docs highlight Go 1.25 + go-git BasicAuth flow.
 
-### 🔒 **Security & Compliance**
-- ✅ **Token Leak Prevention**: Native `go-git` library with `BasicAuth` (credentials in-memory only)
-- ✅ **Banking/SOC2/GDPR compliant**: Zero tokens in process args, logs, error messages, URLs
-- ✅ **Error Sanitization**: All Git-related errors sanitized (tokens replaced with `[REDACTED]`)
+### 🧪 Testing
+- ✅ `go test ./... -short` (Go 1.25).
+- ✅ Full-isolation E2E suite: **61/61** scenarios using image `lukaszbielinski/permission-binder-operator:1.6.7`.
 
-📖 **Full Release Notes**: [v1.6.6 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.6) | [Changelog](CHANGELOG.md)
+📖 **Full Release Notes**: [v1.6.7 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.7) | [Changelog](CHANGELOG.md)
 
 ---
 
@@ -385,14 +386,14 @@ All Docker images are **cryptographically signed** and include **supply chain at
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:1.6.6
+  lukaszbielinski/permission-binder-operator:1.6.7
 ```
 
 **Using GitHub CLI (for attestations):**
 ```bash
 # Verify GitHub Attestations
 gh attestation verify \
-  oci://lukaszbielinski/permission-binder-operator:1.6.6 \
+  oci://lukaszbielinski/permission-binder-operator:1.6.7 \
   --owner lukasz-bielinski
 ```
 
@@ -403,7 +404,7 @@ cosign verify-attestation \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   --type slsaprovenance \
-  lukaszbielinski/permission-binder-operator:1.6.6 | jq .
+  lukaszbielinski/permission-binder-operator:1.6.7 | jq .
 ```
 
 ### 📋 What's Verified?
@@ -566,13 +567,13 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** v1.6.6  
+**Version:** v1.6.7  
 **Last Updated:** 2025-11-15  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes (v1.6.6)
+### Recent Changes (v1.6.7)
 - ✅ **Go 1.25 Upgrade** - Upgraded from Go 1.24.0 to 1.25
-- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.6.6`
+- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.6.7`
 - ✅ **E2E Tests** - All 61 tests passing (100% success rate) with Go 1.25
 - ✅ **Unit Test Coverage** - ~20% overall, ~96% pure logic (17 functions)
 - ✅ **Code Quality** - Controller refactoring verified, 8-module architecture

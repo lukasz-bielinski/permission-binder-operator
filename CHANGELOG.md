@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.6] - 2025-11-24
+
+### 🚀 Highlights
+- **Go 1.25 Upgrade**: Builder images, `go.mod`, and CI pipelines upgraded to Go 1.25 ensuring compatibility with the latest toolchain.
+- **Dependency Refresh**: All production dependencies (k8s.io, Prometheus, Ginkgo/Gomega, zap, testify, etc.) updated to the latest stable versions, excluding `controller-runtime` (still pinned at `v0.19.0` per risk review).
+- **CI/CD Hardening**: GitHub Actions workflow now includes Trivy SBOM + image scanning, digest outputs, BUILD_DATE fixes, amd64-by-default builds, and clearer PR logging.
+- **Security Tooling**: Introduced Dependabot configuration plus ignore rules for `controller-runtime`, eliminated deprecated `apt-key`, and resolved CodeQL warnings (clear-text logging).
+- **Docs Refresh**: All documentation, examples, and badges aligned to the new release version.
+
+### 🔐 Security & Compliance
+- Added Trivy file-system and image scans with SARIF uploads plus unique categories to avoid upload collisions.
+- Fixed Copilot-suggested issue by adopting `signed-by` keyring installation flow (no `apt-key` usage).
+- Added Dependabot configuration for `gomod`, `docker`, and `github-actions` ecosystems with labeling + grouping.
+- Deleted deprecated `git-askpass-helper` binary (already replaced by go-git `BasicAuth`).
+
+### ⚙️ CI/CD Improvements
+- Build matrix defaults to `linux/amd64`; multi-arch builds require explicit flag/tag.
+- Fixed digest handoff between `build-and-push` and `security-scan` jobs.
+- Normalized `BUILD_DATE` generation for all event types (push, PR, workflow_dispatch).
+- Added informative log steps when image push/scan steps are skipped on PRs.
+
+### 📦 Dependencies
+- `github.com/onsi/ginkgo/v2` → 2.27.2, `github.com/onsi/gomega` → 1.38.2.
+- `github.com/prometheus/client_golang` → 1.23.2, `github.com/stretchr/testify` → 1.11.1, `go.uber.org/zap` → 1.27.1.
+- Kubernetes stack bumped to `v0.34.2` (api, apimachinery, client-go) with coordinated indirect updates.
+- `sigs.k8s.io/kustomize/api` → 0.21.0, `sigs.k8s.io/yaml` → 1.6.0.
+- `controller-runtime` remains at `v0.19.0` (ignore rule added) until dedicated compatibility window.
+
+### 📚 Documentation
+- README badges, release sections, and image references updated to v1.6.6.
+- Architecture/API/Sequence docs plus `.internal-docs/UNIT_TEST_PHILOSOPHY.md` reflect Go 1.25 + new version.
+- Highlighted replacement of git-askpass helper with native go-git.
+
+### 🧪 Testing
+- `go test ./... -short` on Go 1.25 (all packages).
+- Full isolation E2E suite: **61/61** scenarios passing using image `lukaszbielinski/permission-binder-operator:1.6.6`.
+- GH Actions run `19617512138` (build-and-push) completed for tag `1.6.6`.
+
+### 🚢 Deployment Notes
+- Example manifests now reference Docker Hub tag `lukaszbielinski/permission-binder-operator:1.6.6` (no `v` prefix).
+- SAFE MODE, audit logging, and Prometheus metrics unchanged; release is a drop-in upgrade from 1.6.5.
+
 ## [1.6.5] - 2025-11-14
 
 ### 🧪 Testing (MAJOR)
