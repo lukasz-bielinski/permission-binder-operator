@@ -38,20 +38,34 @@ import (
 
 const (
 	// Annotation keys
-	AnnotationManagedBy        = "permission-binder.io/managed-by"
-	AnnotationCreatedAt        = "permission-binder.io/created-at"
+	AnnotationManagedBy = "permission-binder.io/managed-by"
+	AnnotationCreatedAt = "permission-binder.io/created-at"
+	// AnnotationPermissionBinder identifies the name of the owning PermissionBinder CR.
 	AnnotationPermissionBinder = "permission-binder.io/permission-binder"
-	AnnotationRole             = "permission-binder.io/role"
+	// AnnotationPermissionBinderNamespace identifies the namespace of the owning
+	// PermissionBinder CR. It makes ownership unique per operator instance when
+	// multiple instances run in parallel (e.g. isolated e2e tests), so that a CR
+	// name collision between instances no longer causes cross-instance deletion.
+	AnnotationPermissionBinderNamespace = "permission-binder.io/permission-binder-namespace"
+	AnnotationRole                      = "permission-binder.io/role"
 
 	// Label keys
 	LabelManagedBy = "permission-binder.io/managed-by"
 
-	// Values
-	ManagedByValue = "permission-binder-operator"
+	// DefaultManagedByValue is the default value of the managed-by label/annotation.
+	DefaultManagedByValue = "permission-binder-operator"
 
 	// Finalizer
 	PermissionBinderFinalizer = "permission-binder.io/finalizer"
 )
+
+// ManagedByValue is the value of the managed-by label/annotation stamped on
+// resources created by this operator instance and used to select its own
+// resources in cluster-wide lists. It is a variable (not a constant) so that
+// it can be overridden at startup via the MANAGED_BY_VALUE environment
+// variable, allowing each instance in a multi-instance deployment to select
+// only its own resources.
+var ManagedByValue = DefaultManagedByValue
 
 // PermissionBinderReconciler reconciles a PermissionBinder object
 type PermissionBinderReconciler struct {

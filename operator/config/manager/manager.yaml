@@ -67,6 +67,18 @@ spec:
         # It prevents duplicate reconciliation during rolling updates
         image: controller:latest
         name: manager
+        # env:
+          # WATCH_NAMESPACE (comma-separated) scopes the operator cache to the
+          # listed namespaces. When unset, the operator watches all namespaces
+          # (default). Set it to run multiple isolated instances (e.g. parallel
+          # e2e tests), each watching only its own namespaces.
+          # - name: WATCH_NAMESPACE
+          #   value: "my-operator-ns,my-test-ns"
+          # MANAGED_BY_VALUE overrides the managed-by label/annotation value this
+          # instance stamps on resources it creates and selects in cluster-wide
+          # lists. Give each instance a unique value in multi-instance setups.
+          # - name: MANAGED_BY_VALUE
+          #   value: "permission-binder-operator-e2e-a"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
