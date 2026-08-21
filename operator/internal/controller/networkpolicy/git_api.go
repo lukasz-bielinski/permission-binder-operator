@@ -147,10 +147,10 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 			if err != nil {
 				return nil, fmt.Errorf("failed to extract Bitbucket Server repo: %w", err)
 			}
-			
+
 			// Bitbucket Server requires uppercase project key in API
 			projectKey := strings.ToUpper(project)
-			
+
 			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/pull-requests", apiBaseURL, projectKey, repo)
 			payload = map[string]interface{}{
 				"title":       title,
@@ -298,7 +298,7 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 			if err != nil {
 				return nil, fmt.Errorf("failed to extract Bitbucket Server repo: %w", err)
 			}
-			
+
 			projectKey := strings.ToUpper(project)
 			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/pull-requests?state=ALL", apiBaseURL, projectKey, repo)
 			headers = map[string]string{
@@ -437,7 +437,7 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 			if err != nil {
 				return fmt.Errorf("failed to extract Bitbucket Server repo: %w", err)
 			}
-			
+
 			projectKey := strings.ToUpper(project)
 			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/pull-requests/%d/merge", apiBaseURL, projectKey, repo, prNumber)
 			payload = map[string]interface{}{
@@ -513,7 +513,7 @@ func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName
 			if err != nil {
 				return fmt.Errorf("failed to extract Bitbucket Server repo: %w", err)
 			}
-			
+
 			projectKey := strings.ToUpper(project)
 			// Bitbucket Server uses branch-utils API for branch deletion
 			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/branches", apiBaseURL, projectKey, repo)
@@ -550,4 +550,3 @@ func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName
 	}
 	return err
 }
-

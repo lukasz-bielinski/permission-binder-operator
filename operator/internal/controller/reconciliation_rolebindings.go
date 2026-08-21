@@ -287,4 +287,3 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 
 	return nil
 }
-

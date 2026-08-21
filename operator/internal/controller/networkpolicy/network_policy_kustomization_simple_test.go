@@ -107,7 +107,7 @@ func TestEnsureKustomizationExistsSimple_NestedDirectory(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	ctx := context.Background()
-	
+
 	// Create nested directory
 	nestedDir := filepath.Join("cluster", "namespace")
 	err = os.MkdirAll(filepath.Join(tmpDir, nestedDir), 0755)
@@ -288,7 +288,7 @@ func TestUpdateKustomizationResourcesSimple_RelativePath(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	ctx := context.Background()
-	
+
 	// Create nested directory structure
 	clusterDir := filepath.Join("cluster", "namespace")
 	err = os.MkdirAll(filepath.Join(tmpDir, clusterDir), 0755)
@@ -481,4 +481,3 @@ func BenchmarkUpdateKustomizationResourcesSimple_Add(b *testing.B) {
 		_ = updateKustomizationResourcesSimple(nil, ctx, tmpDir, kustomizationPath, resourcePath, true)
 	}
 }
-

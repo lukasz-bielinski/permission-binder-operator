@@ -96,4 +96,3 @@ func permissionBinderPredicate() predicate.Predicate {
 		},
 	}
 }
-

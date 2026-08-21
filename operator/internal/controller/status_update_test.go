@@ -11,13 +11,13 @@ import (
 // TestFindCondition tests the findCondition helper function
 func TestFindCondition(t *testing.T) {
 	tests := []struct {
-		name       string
-		conditions []metav1.Condition
+		name          string
+		conditions    []metav1.Condition
 		conditionType string
-		expected   *metav1.Condition
+		expected      *metav1.Condition
 	}{
 		{
-			name:       "Find existing condition",
+			name: "Find existing condition",
 			conditions: []metav1.Condition{
 				{Type: "Processed", Status: metav1.ConditionTrue},
 				{Type: "Ready", Status: metav1.ConditionFalse},
@@ -26,7 +26,7 @@ func TestFindCondition(t *testing.T) {
 			expected:      &metav1.Condition{Type: "Processed", Status: metav1.ConditionTrue},
 		},
 		{
-			name:       "Find condition in middle",
+			name: "Find condition in middle",
 			conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionFalse},
 				{Type: "Processed", Status: metav1.ConditionTrue},
@@ -36,7 +36,7 @@ func TestFindCondition(t *testing.T) {
 			expected:      &metav1.Condition{Type: "Processed", Status: metav1.ConditionTrue},
 		},
 		{
-			name:       "Condition not found",
+			name: "Condition not found",
 			conditions: []metav1.Condition{
 				{Type: "Ready", Status: metav1.ConditionFalse},
 				{Type: "Available", Status: metav1.ConditionTrue},
@@ -45,14 +45,14 @@ func TestFindCondition(t *testing.T) {
 			expected:      nil,
 		},
 		{
-			name:       "Empty conditions slice",
-			conditions: []metav1.Condition{},
+			name:          "Empty conditions slice",
+			conditions:    []metav1.Condition{},
 			conditionType: "Processed",
 			expected:      nil,
 		},
 		{
-			name:       "Nil conditions slice",
-			conditions: nil,
+			name:          "Nil conditions slice",
+			conditions:    nil,
 			conditionType: "Processed",
 			expected:      nil,
 		},
@@ -77,18 +77,18 @@ func TestFindCondition(t *testing.T) {
 func TestStatusChangeDetection(t *testing.T) {
 
 	tests := []struct {
-		name           string
+		name            string
 		oldRoleBindings []string
 		newRoleBindings []string
-		oldSAs         []string
-		newSAs         []string
-		oldCMVersion   string
-		newCMVersion   string
-		oldHash        string
-		newHash        string
-		oldCondition   *metav1.Condition
-		newMessage     string
-		expectedChange bool
+		oldSAs          []string
+		newSAs          []string
+		oldCMVersion    string
+		newCMVersion    string
+		oldHash         string
+		newHash         string
+		oldCondition    *metav1.Condition
+		newMessage      string
+		expectedChange  bool
 	}{
 		{
 			name:            "No changes",
@@ -238,4 +238,3 @@ func TestStatusChangeDetection(t *testing.T) {
 		})
 	}
 }
-

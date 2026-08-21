@@ -204,9 +204,9 @@ func TestCleanJSONForGitOps_InternalAnnotations(t *testing.T) {
 			"annotations": map[string]interface{}{
 				"kubectl.kubernetes.io/last-applied-configuration": "...",
 				"deployment.kubernetes.io/revision":                "1",
-				"kubernetes.io/change-cause":                        "manual update",
-				"custom.example.com/annotation":                     "keep-this",
-				"permission-binder.io/template":                     "keep-this-too",
+				"kubernetes.io/change-cause":                       "manual update",
+				"custom.example.com/annotation":                    "keep-this",
+				"permission-binder.io/template":                    "keep-this-too",
 			},
 		},
 	}
@@ -315,9 +315,9 @@ func TestCleanJSONForGitOps_ComplexMetadata(t *testing.T) {
 			},
 			"annotations": map[string]interface{}{
 				"kubectl.kubernetes.io/last-applied-configuration": `{"apiVersion":"v1","kind":"NetworkPolicy"}`,
-				"permission-binder.io/template":                     "ingress-template.yaml",
-				"permission-binder.io/template-path":                "templates/network-policies/ingress-template.yaml",
-				"custom.example.com/owner":                          "team-a",
+				"permission-binder.io/template":                    "ingress-template.yaml",
+				"permission-binder.io/template-path":               "templates/network-policies/ingress-template.yaml",
+				"custom.example.com/owner":                         "team-a",
 			},
 			"managedFields": []interface{}{
 				map[string]interface{}{
@@ -487,8 +487,8 @@ func BenchmarkCleanJSONForGitOps_Complex(b *testing.B) {
 			},
 			"annotations": map[string]interface{}{
 				"kubectl.kubernetes.io/last-applied-configuration": "...",
-				"permission-binder.io/template":                     "template.yaml",
-				"custom.example.com/owner":                          "team-a",
+				"permission-binder.io/template":                    "template.yaml",
+				"custom.example.com/owner":                         "team-a",
 			},
 			"managedFields":     []interface{}{map[string]interface{}{"manager": "kubectl"}},
 			"creationTimestamp": "2025-01-01T12:00:00Z",
@@ -527,4 +527,3 @@ func BenchmarkIsInternalKubernetesAnnotation(b *testing.B) {
 		}
 	}
 }
-

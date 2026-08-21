@@ -24,16 +24,16 @@ import (
 
 const (
 	// NetworkPolicy annotation keys used to track template metadata on NetworkPolicy resources.
-	
+
 	// AnnotationTemplate stores the template filename used to generate the NetworkPolicy.
 	AnnotationTemplate = "network-policy.permission-binder.io/template"
-	
+
 	// AnnotationTemplateVersion stores the Git commit/version of the template.
 	AnnotationTemplateVersion = "network-policy.permission-binder.io/template-version"
-	
+
 	// AnnotationTemplatePath stores the full path to the template in the Git repository.
 	AnnotationTemplatePath = "network-policy.permission-binder.io/template-path"
-	
+
 	// AnnotationSource indicates the source of the NetworkPolicy (e.g., "template", "backup").
 	AnnotationSource = "network-policy.permission-binder.io/source"
 

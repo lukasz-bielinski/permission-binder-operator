@@ -19,8 +19,8 @@ package networkpolicy
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
+	"github.com/stretchr/testify/assert"
 )
 
 // ============================================================================
@@ -60,16 +60,16 @@ func TestIsNamespaceExcluded(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:      "Nil exclude list",
-			namespace: "my-app",
+			name:        "Nil exclude list",
+			namespace:   "my-app",
 			excludeList: nil,
-			expected: false,
+			expected:    false,
 		},
 		{
-			name:      "Empty exclude list",
-			namespace: "my-app",
+			name:        "Empty exclude list",
+			namespace:   "my-app",
 			excludeList: &permissionv1.NamespaceExcludeList{},
-			expected: false,
+			expected:    false,
 		},
 	}
 
@@ -116,29 +116,29 @@ func TestIsNamespaceExcludedFromBackup(t *testing.T) {
 
 func TestShouldBackupExistingPolicy(t *testing.T) {
 	tests := []struct {
-		name                  string
-		namespace             string
-		backupExisting        bool
+		name                       string
+		namespace                  string
+		backupExisting             bool
 		excludeBackupForNamespaces *permissionv1.NamespaceExcludeList
-		expected              bool
+		expected                   bool
 	}{
 		{
-			name:          "Backup enabled, namespace not excluded",
-			namespace:     "my-app",
-			backupExisting: true,
+			name:                       "Backup enabled, namespace not excluded",
+			namespace:                  "my-app",
+			backupExisting:             true,
 			excludeBackupForNamespaces: nil,
-			expected:      true,
+			expected:                   true,
 		},
 		{
-			name:          "Backup disabled",
-			namespace:     "my-app",
-			backupExisting: false,
+			name:                       "Backup disabled",
+			namespace:                  "my-app",
+			backupExisting:             false,
 			excludeBackupForNamespaces: nil,
-			expected:      false,
+			expected:                   false,
 		},
 		{
-			name:          "Backup enabled but namespace excluded",
-			namespace:     "my-app",
+			name:           "Backup enabled but namespace excluded",
+			namespace:      "my-app",
 			backupExisting: true,
 			excludeBackupForNamespaces: &permissionv1.NamespaceExcludeList{
 				Explicit: []string{"my-app"},
@@ -157,33 +157,33 @@ func TestShouldBackupExistingPolicy(t *testing.T) {
 
 func TestChunkNamespaces(t *testing.T) {
 	tests := []struct {
-		name      string
-		namespaces []string
-		batchSize int
+		name            string
+		namespaces      []string
+		batchSize       int
 		expectedBatches int
 	}{
 		{
-			name:      "Single batch",
-			namespaces: []string{"ns1", "ns2", "ns3"},
-			batchSize: 5,
+			name:            "Single batch",
+			namespaces:      []string{"ns1", "ns2", "ns3"},
+			batchSize:       5,
 			expectedBatches: 1,
 		},
 		{
-			name:      "Multiple batches",
-			namespaces: []string{"ns1", "ns2", "ns3", "ns4", "ns5", "ns6"},
-			batchSize: 2,
+			name:            "Multiple batches",
+			namespaces:      []string{"ns1", "ns2", "ns3", "ns4", "ns5", "ns6"},
+			batchSize:       2,
 			expectedBatches: 3,
 		},
 		{
-			name:      "Empty list",
-			namespaces: []string{},
-			batchSize: 5,
+			name:            "Empty list",
+			namespaces:      []string{},
+			batchSize:       5,
 			expectedBatches: 0,
 		},
 		{
-			name:      "Exact batch size",
-			namespaces: []string{"ns1", "ns2", "ns3", "ns4", "ns5"},
-			batchSize: 5,
+			name:            "Exact batch size",
+			namespaces:      []string{"ns1", "ns2", "ns3", "ns4", "ns5"},
+			batchSize:       5,
 			expectedBatches: 1,
 		},
 	}
@@ -202,4 +202,3 @@ func TestChunkNamespaces(t *testing.T) {
 		})
 	}
 }
-
