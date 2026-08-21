@@ -1,6 +1,29 @@
 #!/bin/bash
 set -e
 
+# Usage:
+#   ./cleanup-operator.sh          # Per-test cleanup - keeps the PermissionBinder CRD
+#   ./cleanup-operator.sh --full   # Full wipe - also deletes the CRD (manual resets)
+
+FULL_CLEANUP=false
+for arg in "$@"; do
+    case "$arg" in
+        --full)
+            FULL_CLEANUP=true
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--full]"
+            echo "  (default)  Remove operator, its resources and test namespaces; keep the CRD"
+            echo "  --full     Also delete the PermissionBinder CRD (full manual reset)"
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown option: $arg (use --full for a complete wipe, -h for help)"
+            exit 1
+            ;;
+    esac
+done
+
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║   🧹 Permission Binder Operator - Complete Cleanup Script     ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
@@ -11,6 +34,13 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+if [ "$FULL_CLEANUP" = true ]; then
+    echo -e "${YELLOW}Mode: FULL cleanup (CRD will be deleted)${NC}"
+else
+    echo -e "${YELLOW}Mode: per-test cleanup (CRD is kept; use --full to delete it)${NC}"
+fi
+echo ""
 
 # Check if KUBECONFIG is set
 if [ -z "$KUBECONFIG" ]; then
@@ -57,12 +87,19 @@ echo "---------------------------------------"
 kubectl delete clusterrole operator-manager-role operator-metrics-auth-role operator-metrics-reader operator-permissionbinder-editor-role operator-permissionbinder-viewer-role --ignore-not-found=true
 kubectl delete clusterrolebinding operator-manager-rolebinding operator-metrics-auth-rolebinding --ignore-not-found=true
 
-echo ""
-echo "Step 6: Delete CRD (may take time)"
-echo "------------------------------------"
-kubectl delete crd permissionbinders.permission.permission-binder.io --timeout=60s 2>/dev/null || echo "CRD not found (OK)"
+if [ "$FULL_CLEANUP" = true ]; then
+    echo ""
+    echo "Step 6: Delete CRD (may take time)"
+    echo "------------------------------------"
+    kubectl delete crd permissionbinders.permission.permission-binder.io --timeout=60s 2>/dev/null || echo "CRD not found (OK)"
 
-sleep 3
+    sleep 3
+else
+    echo ""
+    echo "Step 6: Delete CRD"
+    echo "------------------------------------"
+    echo "Skipped (CRD is installed once per suite run; use --full to delete it)"
+fi
 
 echo ""
 echo "Step 7: Force delete operator namespace"
@@ -107,7 +144,11 @@ sleep 5
 
 echo -e "\n${YELLOW}Checking remaining resources:${NC}"
 kubectl get ns permissions-binder-operator 2>&1 | grep -q "NotFound" && echo -e "${GREEN}✅ Operator namespace: DELETED${NC}" || echo -e "${RED}❌ Operator namespace: STILL EXISTS${NC}"
-kubectl get crd permissionbinders.permission.permission-binder.io 2>&1 | grep -q "NotFound" && echo -e "${GREEN}✅ CRD: DELETED${NC}" || echo -e "${RED}❌ CRD: STILL EXISTS${NC}"
+if [ "$FULL_CLEANUP" = true ]; then
+    kubectl get crd permissionbinders.permission.permission-binder.io 2>&1 | grep -q "NotFound" && echo -e "${GREEN}✅ CRD: DELETED${NC}" || echo -e "${RED}❌ CRD: STILL EXISTS${NC}"
+else
+    kubectl get crd permissionbinders.permission.permission-binder.io >/dev/null 2>&1 && echo -e "${GREEN}✅ CRD: PRESENT (kept by design)${NC}" || echo -e "${YELLOW}⚠️  CRD: NOT INSTALLED (runner will install it at suite start)${NC}"
+fi
 kubectl get clusterrole | grep -q "operator-manager-role" && echo -e "${RED}❌ ClusterRoles: STILL EXIST${NC}" || echo -e "${GREEN}✅ ClusterRoles: DELETED${NC}"
 
 MANAGED_NS_COUNT=$(kubectl get ns | grep -E "(project|tenant|staging|test-)" | wc -l)
