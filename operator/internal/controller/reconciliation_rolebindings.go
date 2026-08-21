@@ -62,6 +62,20 @@ func (r *PermissionBinderReconciler) ensureNamespace(ctx context.Context, namesp
 			return fmt.Errorf("failed to get namespace %s: %w", namespace, err)
 		}
 	} else {
+		// OWNERSHIP GATE (issue #43): never take over a namespace with a live
+		// claim by another PermissionBinder. Unclaimed, own, legacy name-only
+		// and explicitly orphaned namespaces remain adoptable.
+		if !canTakeOwnership(ns.Annotations, permissionBinder.Name, permissionBinder.Namespace) {
+			ownershipConflictsTotal.WithLabelValues("namespace").Inc()
+			logger.Info("Refusing to take ownership of namespace claimed by another PermissionBinder",
+				"namespace", namespace,
+				"claimedBy", ns.Annotations[AnnotationPermissionBinder],
+				"claimedByNamespace", ns.Annotations[AnnotationPermissionBinderNamespace],
+				"reconciledBy", permissionBinder.Name,
+				"reconciledByNamespace", permissionBinder.Namespace)
+			return nil
+		}
+
 		// Update existing namespace with annotations if not present
 		needsUpdate := false
 		if ns.Annotations == nil {
@@ -73,9 +87,9 @@ func (r *PermissionBinderReconciler) ensureNamespace(ctx context.Context, namesp
 
 		// ADOPTION LOGIC: Remove orphaned annotations if present
 		// This allows automatic recovery when PermissionBinder is recreated
-		if ns.Annotations["permission-binder.io/orphaned-at"] != "" {
-			delete(ns.Annotations, "permission-binder.io/orphaned-at")
-			delete(ns.Annotations, "permission-binder.io/orphaned-by")
+		if ns.Annotations[AnnotationOrphanedAt] != "" {
+			delete(ns.Annotations, AnnotationOrphanedAt)
+			delete(ns.Annotations, AnnotationOrphanedBy)
 			needsUpdate = true
 
 			// Increment adoption metrics (automatic recovery)
@@ -145,8 +159,12 @@ func (r *PermissionBinderReconciler) validateClusterRoleExists(ctx context.Conte
 	return true
 }
 
-// createRoleBinding creates a RoleBinding in the specified namespace
-func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, namespace, name, role, group, clusterRole string, permissionBinder *permissionv1.PermissionBinder) error {
+// createRoleBinding ensures the desired RoleBinding exists and is owned by
+// the given PermissionBinder. It returns managed=false (with a nil error) when
+// the RoleBinding is claimed by another PermissionBinder and the ownership
+// gate refused the takeover - the caller must not report such an entry as
+// successfully processed.
+func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, namespace, name, role, group, clusterRole string, permissionBinder *permissionv1.PermissionBinder) (managed bool, err error) {
 	logger := log.FromContext(ctx)
 	now := time.Now().Format(time.RFC3339)
 
@@ -193,20 +211,36 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 
 	// Check if RoleBinding already exists
 	var existing rbacv1.RoleBinding
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &existing)
+	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &existing)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Create new RoleBinding
 			if err := r.Create(ctx, roleBinding); err != nil {
-				return fmt.Errorf("failed to create RoleBinding %s/%s: %w", namespace, name, err)
+				return false, fmt.Errorf("failed to create RoleBinding %s/%s: %w", namespace, name, err)
 			}
 		} else {
-			return fmt.Errorf("failed to get RoleBinding %s/%s: %w", namespace, name, err)
+			return false, fmt.Errorf("failed to get RoleBinding %s/%s: %w", namespace, name, err)
 		}
 	} else {
+		// OWNERSHIP GATE (issue #43): never overwrite a RoleBinding with a live
+		// claim by another PermissionBinder (steal-then-delete prevention).
+		// Gate is annotation-based ONLY - spec drift on an OWNED RoleBinding is
+		// still reverted below (manual-modification protection, e2e test 15).
+		if !canTakeOwnership(existing.Annotations, permissionBinder.Name, permissionBinder.Namespace) {
+			ownershipConflictsTotal.WithLabelValues("rolebinding").Inc()
+			logger.Info("Refusing to take ownership of RoleBinding claimed by another PermissionBinder",
+				"namespace", namespace,
+				"roleBinding", name,
+				"claimedBy", existing.Annotations[AnnotationPermissionBinder],
+				"claimedByNamespace", existing.Annotations[AnnotationPermissionBinderNamespace],
+				"reconciledBy", permissionBinder.Name,
+				"reconciledByNamespace", permissionBinder.Namespace)
+			return false, nil
+		}
+
 		// Check if RoleBinding needs update - avoid unnecessary updates that change ResourceVersion
 		needsUpdate := false
-		hasOrphanedAnnotation := existing.Annotations["permission-binder.io/orphaned-at"] != ""
+		hasOrphanedAnnotation := existing.Annotations[AnnotationOrphanedAt] != ""
 
 		// Check if RoleRef changed
 		if existing.RoleRef != roleBinding.RoleRef {
@@ -256,7 +290,7 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 		// Only update if something actually changed - this prevents unnecessary ResourceVersion changes
 		if !needsUpdate {
 			// RoleBinding is already up-to-date, no update needed
-			return nil
+			return true, nil
 		}
 
 		// Update existing RoleBinding - OVERRIDE any manual changes
@@ -267,8 +301,8 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 		// ADOPTION LOGIC: Remove orphaned annotations if present
 		// This allows automatic recovery when PermissionBinder is recreated
 		if hasOrphanedAnnotation {
-			delete(existing.Annotations, "permission-binder.io/orphaned-at")
-			delete(existing.Annotations, "permission-binder.io/orphaned-by")
+			delete(existing.Annotations, AnnotationOrphanedAt)
+			delete(existing.Annotations, AnnotationOrphanedBy)
 
 			// Increment adoption metrics (automatic recovery)
 			adoptionEventsTotal.Inc()
@@ -291,9 +325,9 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 		existing.Labels[LabelManagedBy] = ManagedByValue
 
 		if err := r.Update(ctx, &existing); err != nil {
-			return fmt.Errorf("failed to update RoleBinding %s/%s: %w", namespace, name, err)
+			return false, fmt.Errorf("failed to update RoleBinding %s/%s: %w", namespace, name, err)
 		}
 	}
 
-	return nil
+	return true, nil
 }

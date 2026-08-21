@@ -243,15 +243,16 @@ kubectl port-forward -n permissions-binder-operator deployment/operator-controll
 curl -k https://localhost:8443/metrics | grep permission_binder
 ```
 
-**Custom Metrics (15 total):**
+**Custom Metrics (16 total):**
 
-**RBAC Metrics (6):**
+**RBAC Metrics (7):**
 - `permission_binder_missing_clusterrole_total` - Missing ClusterRoles (security!)
 - `permission_binder_orphaned_resources_total` - Orphaned resources count
 - `permission_binder_adoption_events_total` - Successful adoptions
 - `permission_binder_managed_rolebindings_total` - Managed RoleBindings
 - `permission_binder_managed_namespaces_total` - Managed Namespaces
 - `permission_binder_configmap_entries_processed_total` - Processing status
+- `permission_binder_ownership_conflicts_total{resource_type}` - refused resource takeovers due to a live ownership claim by another PermissionBinder; `resource_type`: `namespace` | `rolebinding` | `serviceaccount_rolebinding`
 
 **NetworkPolicy Metrics (5):**
 - `permission_binder_networkpolicy_prs_created_total` - PRs created
@@ -303,6 +304,30 @@ When PermissionBinder is deleted:
 - ✅ Automatic adoption when PermissionBinder is recreated
 
 **Why?** Prevents cascade failures and accidental data loss in production.
+
+### Moving a PermissionBinder between namespaces
+
+The ownership annotations include the CR's namespace, so a CR recreated in a
+different namespace does not silently take over live resources. The supported
+migration path uses SAFE MODE orphaning:
+
+1. Delete the old CR - SAFE MODE annotates all managed **namespaces and group
+   RoleBindings** with `orphaned-at`/`orphaned-by` (nothing is deleted).
+2. Recreate the CR (same name) in the new namespace. If the instance sets
+   `RECONCILE_NAMESPACES`, add the new namespace to the list first (restart
+   required) - otherwise the recreated CR is never reconciled.
+3. On the next reconcile the orphaned resources are re-adopted and re-stamped
+   with the new owner namespace.
+
+> **Warning**: between steps 1 and 3 the orphaned RoleBindings **still grant
+> access** - orphaning never revokes permissions. ServiceAccount resources are
+> **never orphan-annotated** (they are outside SAFE-MODE cleanup): after a
+> namespace move their RoleBindings keep the old-namespace ownership claim,
+> are refused by the ownership gate from the first reconcile (counted in
+> `permission_binder_ownership_conflicts_total`) and excluded from the new
+> CR's status; delete them manually and the operator recreates them under the
+> new owner. The ServiceAccounts themselves also keep the stale claim - log
+> noise only, no functional impact.
 
 ### ClusterRole Validation
 
@@ -426,14 +451,43 @@ cosign verify-attestation \
 
 ### Multi-Instance Isolation (e.g. parallel e2e tests)
 
-By default the operator watches all namespaces. For running multiple isolated
-instances in one cluster, each instance can be scoped to its own namespaces:
+By default the operator watches all namespaces and reconciles every
+PermissionBinder CR. Three env vars scope an instance:
 
-- `WATCH_NAMESPACE` (comma-separated) restricts the operator cache to the listed
-  namespaces. Unset = cluster-wide behavior (unchanged default).
+- `RECONCILE_NAMESPACES` (comma-separated) restricts which PermissionBinder
+  CRs this instance reconciles, by CR namespace. The cache stays cluster-wide,
+  so dynamically created target namespaces remain visible - this is the
+  recommended knob for multi-instance deployments. Unset = reconcile all CRs.
+- `WATCH_NAMESPACE` (comma-separated) restricts the entire operator cache.
+  **Hard requirement**: the list must include the CR's namespace,
+  `spec.configMapNamespace`, every target namespace derived from the
+  whitelist, AND any Secret namespaces referenced by `spec.ldapSecretRef` or
+  `spec.networkPolicy.gitRepository.credentialsSecretRef` - namespace-scoped
+  reads hard-fail with `unknown namespace for the cache` for any unlisted
+  namespace, causing partial reconciliation (namespace created, RoleBindings
+  missing), while cluster-wide label-selector Lists (SAFE-MODE cleanup,
+  metrics) silently omit unlisted namespaces - stale RoleBindings there are
+  never cleaned up. Onboarding a new namespace requires an operator restart
+  with an updated list. Unsuitable for dynamic namespace onboarding; prefer
+  `RECONCILE_NAMESPACES`. Unset = cluster-wide cache (unchanged default).
 - `MANAGED_BY_VALUE` overrides the `permission-binder.io/managed-by` value this
   instance stamps on resources it creates and selects in cluster-wide lists.
-  Give each instance a unique value.
+  **Not isolation by itself**: with a cluster-wide watch and no
+  `RECONCILE_NAMESPACES`, every instance still reconciles every CR and
+  re-stamps other instances' resources with its own value (label flapping,
+  alternating cleanup visibility). Only safe combined with
+  `RECONCILE_NAMESPACES` (or fully disjoint `WATCH_NAMESPACE` sets).
+
+Scoping footguns: when both envs are set, `RECONCILE_NAMESPACES` must be a
+subset of `WATCH_NAMESPACE` (entries outside the cache have no informer and
+their CRs are silently never reconciled; the operator logs a startup warning).
+When narrowing `RECONCILE_NAMESPACES`, make sure every namespace with existing
+CRs stays covered by some instance - a CR carrying the operator finalizer in
+an uncovered namespace becomes undeletable (stuck `Terminating`) until the
+scope is restored or the finalizer is removed manually. Legacy name-only
+resources contested by same-named CRs in different namespaces are claimed by
+whichever instance reconciles first; re-annotate legacy resources explicitly
+before running colliding CR names.
 
 Managed resources are owned per PermissionBinder instance: in addition to
 `permission-binder.io/permission-binder: <cr-name>`, new resources carry
@@ -441,6 +495,13 @@ Managed resources are owned per PermissionBinder instance: in addition to
 annotated the old (name-only) way are still adopted. A PermissionBinder name
 collision between two instances therefore no longer causes cross-instance
 RoleBinding deletion.
+
+Write paths enforce ownership symmetrically with deletion paths: the operator
+refuses to take over (adopt, re-stamp or rewrite) a resource carrying a live
+claim by another PermissionBinder, and counts each refusal in the
+`permission_binder_ownership_conflicts_total{resource_type}` metric.
+Unclaimed resources, legacy name-only-annotated resources and explicitly
+orphaned resources (SAFE-MODE `orphaned-at` marker) remain adoptable.
 
 ### GitOps (ArgoCD)
 

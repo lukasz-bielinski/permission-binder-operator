@@ -59,13 +59,19 @@ func (r *PermissionBinderReconciler) configMapPredicate(mgr interface {
 }
 
 // permissionBinderPredicate filters PermissionBinder events to ignore status-only updates
-// This prevents reconciliation loops caused by status updates
-func permissionBinderPredicate() predicate.Predicate {
+// This prevents reconciliation loops caused by status updates.
+// It also drops events for CRs outside RECONCILE_NAMESPACES (issue #43) so a
+// scoped instance never reconciles - and never re-stamps - foreign CRs.
+func (r *PermissionBinderReconciler) permissionBinderPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
-			return true
+			return r.reconcilesNamespace(e.Object.GetNamespace())
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
+			if !r.reconcilesNamespace(e.ObjectNew.GetNamespace()) {
+				return false
+			}
+
 			// Only reconcile if spec or metadata changed, not status-only changes
 			oldObj := e.ObjectOld.(*permissionv1.PermissionBinder)
 			newObj := e.ObjectNew.(*permissionv1.PermissionBinder)
@@ -89,10 +95,10 @@ func permissionBinderPredicate() predicate.Predicate {
 			return false
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
-			return true
+			return r.reconcilesNamespace(e.Object.GetNamespace())
 		},
 		GenericFunc: func(e event.GenericEvent) bool {
-			return true
+			return r.reconcilesNamespace(e.Object.GetNamespace())
 		},
 	}
 }

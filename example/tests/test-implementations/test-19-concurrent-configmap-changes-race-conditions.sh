@@ -24,7 +24,7 @@ RACE_ERRORS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager 
 info_log "Concurrent change log entries: $RACE_ERRORS"
 
 # Verify resources are consistent
-RB_CONSISTENT=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_CONSISTENT=$(count_owned_rolebindings "permissionbinder-example")
 if [ "$RB_CONSISTENT" -gt 0 ]; then
     pass_test "Resources consistent after concurrent changes"
 else

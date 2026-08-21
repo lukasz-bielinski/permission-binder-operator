@@ -1,7 +1,15 @@
 package controller
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"testing"
+	"time"
 )
 
 // TestParseCN tests the ParseCN function
@@ -232,6 +240,126 @@ func TestParseCN(t *testing.T) {
 			// Check full DN
 			if result.FullDN != tt.expectedFullDN {
 				t.Errorf("Expected FullDN %q, got %q", tt.expectedFullDN, result.FullDN)
+			}
+		})
+	}
+}
+
+// generateTestCACertPEM generates a self-signed CA certificate in PEM format for tests
+func generateTestCACertPEM(t *testing.T) string {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("Failed to create certificate: %v", err)
+	}
+
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// TestBuildTlsConfig tests the buildTlsConfig function
+func TestBuildTlsConfig(t *testing.T) {
+	validCAPEM := generateTestCACertPEM(t)
+
+	tests := []struct {
+		name                string
+		tlsVerify           bool
+		caCertPEM           string
+		expectError         bool
+		expectInsecure      bool
+		expectCustomRootCAs bool
+	}{
+		{
+			name:                "TLS verify enabled, no custom CA (system pool)",
+			tlsVerify:           true,
+			caCertPEM:           "",
+			expectError:         false,
+			expectInsecure:      false,
+			expectCustomRootCAs: false,
+		},
+		{
+			name:                "TLS verify disabled, no custom CA (insecure)",
+			tlsVerify:           false,
+			caCertPEM:           "",
+			expectError:         false,
+			expectInsecure:      true,
+			expectCustomRootCAs: false,
+		},
+		{
+			name:                "TLS verify enabled with valid custom CA",
+			tlsVerify:           true,
+			caCertPEM:           validCAPEM,
+			expectError:         false,
+			expectInsecure:      false,
+			expectCustomRootCAs: true,
+		},
+		{
+			name:                "TLS verify enabled with invalid CA PEM",
+			tlsVerify:           true,
+			caCertPEM:           "not-a-valid-pem",
+			expectError:         true,
+			expectInsecure:      false,
+			expectCustomRootCAs: false,
+		},
+		{
+			name:                "TLS verify disabled ignores invalid CA PEM",
+			tlsVerify:           false,
+			caCertPEM:           "not-a-valid-pem",
+			expectError:         false,
+			expectInsecure:      true,
+			expectCustomRootCAs: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := buildTlsConfig(tt.tlsVerify, tt.caCertPEM)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if cfg.InsecureSkipVerify != tt.expectInsecure {
+				t.Errorf("Expected InsecureSkipVerify=%v, got %v", tt.expectInsecure, cfg.InsecureSkipVerify)
+			}
+
+			if tt.expectCustomRootCAs {
+				if cfg.RootCAs == nil {
+					t.Fatalf("Expected RootCAs to be set, got nil")
+				}
+				// Verify the custom CA is actually in the pool
+				cert, _ := pem.Decode([]byte(tt.caCertPEM))
+				if cert == nil {
+					t.Fatalf("Failed to decode test CA PEM")
+				}
+				parsed, err := x509.ParseCertificate(cert.Bytes)
+				if err != nil {
+					t.Fatalf("Failed to parse test CA certificate: %v", err)
+				}
+				if _, err := parsed.Verify(x509.VerifyOptions{Roots: cfg.RootCAs}); err != nil {
+					t.Errorf("Custom CA not found in RootCAs pool: %v", err)
+				}
 			}
 		})
 	}

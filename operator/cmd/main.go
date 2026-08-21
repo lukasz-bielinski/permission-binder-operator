@@ -50,9 +50,10 @@ var (
 	setupLog = ctrl.Log.WithName("setup")
 )
 
-// parseWatchNamespaces parses a comma-separated list of namespaces from the
-// WATCH_NAMESPACE environment variable. Empty segments and surrounding
-// whitespace are ignored; an empty value yields an empty slice (cluster-wide).
+// parseWatchNamespaces parses a comma-separated list of namespaces (used for
+// both the WATCH_NAMESPACE and RECONCILE_NAMESPACES environment variables).
+// Empty segments and surrounding whitespace are ignored; an empty value yields
+// an empty slice (= no restriction).
 func parseWatchNamespaces(value string) []string {
 	var namespaces []string
 	for _, ns := range strings.Split(value, ",") {
@@ -188,7 +189,8 @@ func main() {
 	// When unset or empty, the operator keeps the current cluster-wide behavior.
 	// This enables running multiple isolated operator instances (e.g. parallel e2e tests),
 	// each watching only its own namespaces.
-	if watchNamespaces := parseWatchNamespaces(os.Getenv("WATCH_NAMESPACE")); len(watchNamespaces) > 0 {
+	watchNamespaces := parseWatchNamespaces(os.Getenv("WATCH_NAMESPACE"))
+	if len(watchNamespaces) > 0 {
 		defaultNamespaces := make(map[string]cache.Config, len(watchNamespaces))
 		for _, ns := range watchNamespaces {
 			defaultNamespaces[ns] = cache.Config{}
@@ -208,9 +210,37 @@ func main() {
 	// MANAGED_BY_VALUE optionally overrides the value of the managed-by label/annotation
 	// that this instance stamps on resources it creates and selects in cluster-wide lists.
 	// When unset, the default value is used (single-instance deployments are unaffected).
+	// NOTE: only safe in multi-instance deployments when combined with
+	// RECONCILE_NAMESPACES (issue #43) - without CR scoping every instance still
+	// reconciles every PermissionBinder and re-stamps foreign resources.
 	if managedByValue := strings.TrimSpace(os.Getenv("MANAGED_BY_VALUE")); managedByValue != "" {
 		controller.ManagedByValue = managedByValue
 		setupLog.Info("Using custom managed-by value", "managedByValue", managedByValue)
+	}
+
+	// RECONCILE_NAMESPACES (comma-separated) restricts which PermissionBinder CRs
+	// this instance reconciles, by CR namespace (issue #43). Unlike WATCH_NAMESPACE
+	// it does NOT scope the cache, so dynamically created target namespaces stay
+	// visible. Unset or empty = reconcile CRs from all namespaces (default).
+	reconcileNamespaces := parseWatchNamespaces(os.Getenv("RECONCILE_NAMESPACES"))
+	if len(reconcileNamespaces) > 0 {
+		setupLog.Info("Reconciling PermissionBinders only from namespaces", "namespaces", reconcileNamespaces)
+	}
+
+	// When both are set, RECONCILE_NAMESPACES must be a subset of
+	// WATCH_NAMESPACE: a CR namespace outside the cache scope has no informer,
+	// so its CRs are silently never reconciled (issue #43).
+	if len(watchNamespaces) > 0 {
+		watched := make(map[string]struct{}, len(watchNamespaces))
+		for _, ns := range watchNamespaces {
+			watched[ns] = struct{}{}
+		}
+		for _, ns := range reconcileNamespaces {
+			if _, ok := watched[ns]; !ok {
+				setupLog.Info("WARNING: RECONCILE_NAMESPACES entry is outside WATCH_NAMESPACE - PermissionBinders in this namespace will never be reconciled",
+					"namespace", ns)
+			}
+		}
 	}
 
 	// Check if debug mode is enabled via environment variable
@@ -220,9 +250,10 @@ func main() {
 	}
 
 	if err = (&controller.PermissionBinderReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		DebugMode: debugMode,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		DebugMode:           debugMode,
+		ReconcileNamespaces: reconcileNamespaces,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PermissionBinder")
 		os.Exit(1)

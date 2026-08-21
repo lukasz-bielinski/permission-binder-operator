@@ -36,19 +36,24 @@ import (
 // Parameters:
 //   - ctx: Context for cancellation and timeout
 //   - r: ReconcilerInterface for Kubernetes API access
+//   - allowedNamespaces: CR namespaces this instance reconciles
+//     (RECONCILE_NAMESPACES, issue #43); nil or empty = consider all
+//     namespaces. Keeps a scoped instance from warning about foreign
+//     instances' NetworkPolicy-enabled CRs.
 //
 // Returns:
 //   - error: Returns an error if listing PermissionBinders fails, nil otherwise
 //
 // Example:
 //
-//	err := CheckMultiplePermissionBinders(ctx, reconciler)
+//	err := CheckMultiplePermissionBinders(ctx, reconciler, nil)
 //	if err != nil {
 //	    return fmt.Errorf("validation failed: %w", err)
 //	}
 func CheckMultiplePermissionBinders(
 	ctx context.Context,
 	r ReconcilerInterface,
+	allowedNamespaces []string,
 ) error {
 	logger := log.FromContext(ctx)
 
@@ -57,8 +62,23 @@ func CheckMultiplePermissionBinders(
 		return fmt.Errorf("failed to list PermissionBinders: %w", err)
 	}
 
+	namespaceAllowed := func(namespace string) bool {
+		if len(allowedNamespaces) == 0 {
+			return true
+		}
+		for _, ns := range allowedNamespaces {
+			if ns == namespace {
+				return true
+			}
+		}
+		return false
+	}
+
 	enabledCount := 0
 	for _, binder := range binders.Items {
+		if !namespaceAllowed(binder.Namespace) {
+			continue
+		}
 		if binder.Spec.NetworkPolicy != nil && binder.Spec.NetworkPolicy.Enabled {
 			enabledCount++
 		}

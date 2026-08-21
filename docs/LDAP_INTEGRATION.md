@@ -34,6 +34,11 @@ stringData:
 - `domain_username` - Service account DN with group creation permissions
 - `domain_password` - Service account password
 
+**Optional Secret Keys:**
+- `ca.crt` - PEM-encoded CA certificate used to verify the LDAPS server
+  certificate when it is issued by a private CA. Only honored with
+  `ldapTlsVerify: true`; without this key the system CA pool is used.
+
 ### 2. Enable LDAP in PermissionBinder
 
 ```yaml
@@ -331,9 +336,11 @@ failed to connect: x509: certificate signed by unknown authority
 ```
 
 **Solutions:**
-- Add CA certificate to operator pod's trusted CA store
+- Private CA: put the PEM CA certificate under the `ca.crt` key of the
+  credentials Secret (see Optional Secret Keys above) and keep
+  `ldapTlsVerify: true`
+- `ldapTlsVerify: false` skips verification (insecure, testing only)
 - Use `ldap://` (non-secure) for testing only
-- TODO: Configure `InsecureSkipVerify` in CRD
 
 ### Debug Mode
 

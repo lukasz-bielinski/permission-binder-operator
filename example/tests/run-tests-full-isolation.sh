@@ -8,15 +8,41 @@
 #   ./run-tests-full-isolation.sh           # Run all tests
 #   ./run-tests-full-isolation.sh 44        # Run single test
 #   ./run-tests-full-isolation.sh 44 45 46  # Run specific tests
+#
+# Per-instance isolation (for parallel test slots):
+#   INSTANCE=1 ./run-tests-full-isolation.sh ...
+# When INSTANCE is set, the harness derives an isolated operator namespace,
+# test-namespace prefix and scratch/log directory so that one instance's
+# cleanup never touches another instance's resources:
+#   NAMESPACE=pbo-e2e-${INSTANCE}
+#   TEST_NS_PREFIX=pbo${INSTANCE}-
+#   RUN_DIR=/tmp/pbo-e2e-${INSTANCE}/
+# Without INSTANCE the behavior is exactly as before (defaults below).
 
 set +e  # Don't exit on errors - we want to run all tests
 
 # Respect the caller's KUBECONFIG; fall back to the default k3s kubeconfig.
 export KUBECONFIG="${KUBECONFIG:-$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULTS_LOG="/tmp/e2e-full-isolation-$(date +%Y%m%d-%H%M%S).log"
-NAMESPACE="permissions-binder-operator"
-TEST_RESULTS="/tmp/e2e-test-results-$(date +%Y%m%d-%H%M%S).log"
+
+# Per-instance isolation settings (defaults preserve current behavior).
+if [ -n "${INSTANCE:-}" ]; then
+    NAMESPACE="pbo-e2e-${INSTANCE}"
+    TEST_NS_PREFIX="pbo${INSTANCE}-"
+    RUN_DIR="/tmp/pbo-e2e-${INSTANCE}"
+else
+    NAMESPACE="permissions-binder-operator"
+    TEST_NS_PREFIX=""
+    RUN_DIR="/tmp"
+fi
+mkdir -p "$RUN_DIR"
+
+# Export early: cleanup-operator.sh (Step 1 of every test) and the test bodies
+# all scope themselves by these.
+export NAMESPACE TEST_NS_PREFIX RUN_DIR INSTANCE
+
+RESULTS_LOG="$RUN_DIR/e2e-full-isolation-$(date +%Y%m%d-%H%M%S).log"
+TEST_RESULTS="$RUN_DIR/e2e-test-results-$(date +%Y%m%d-%H%M%S).log"
 
 # Source common functions
 source "$SCRIPT_DIR/test-common.sh"
@@ -133,6 +159,12 @@ echo "Started: $(date)" | tee -a $RESULTS_LOG
 echo "Tests to run: ${#TEST_LIST[@]}" | tee -a $RESULTS_LOG
 echo "Tests: ${TEST_LIST[*]}" | tee -a $RESULTS_LOG
 echo "Results log: $RESULTS_LOG" | tee -a $RESULTS_LOG
+if [ -n "${INSTANCE:-}" ]; then
+    echo "Instance: $INSTANCE" | tee -a $RESULTS_LOG
+    echo "Operator namespace: $NAMESPACE" | tee -a $RESULTS_LOG
+    echo "Test namespace prefix: $TEST_NS_PREFIX" | tee -a $RESULTS_LOG
+    echo "Run dir: $RUN_DIR" | tee -a $RESULTS_LOG
+fi
 echo "" | tee -a $RESULTS_LOG
 
 declare -A results
@@ -141,6 +173,57 @@ declare -A pod_names
 passed=0
 failed=0
 current=0
+
+# Per-instance rendered manifests live under $RUN_DIR so parallel instances
+# never overwrite each other's copies. In default mode these point at the
+# source manifests (no rendering needed).
+DEPLOYMENT_MANIFEST="$SCRIPT_DIR/../deployment/operator-deployment.yaml"
+SERVICEMONITOR_MANIFEST="$SCRIPT_DIR/../deployment/servicemonitor.yaml"
+
+# Render the deployment manifest for this instance: point every namespace
+# field at $NAMESPACE and suffix the cluster-scoped RBAC objects (ClusterRoles
+# and ClusterRoleBindings, including their roleRefs and subject namespaces)
+# with -$INSTANCE so instances never share or clobber them.
+render_instance_manifests() {
+    DEPLOYMENT_MANIFEST="$RUN_DIR/operator-deployment-${INSTANCE}.yaml"
+    SERVICEMONITOR_MANIFEST="$RUN_DIR/servicemonitor-${INSTANCE}.yaml"
+
+    # Namespace fields: the Namespace object's name plus every "namespace:"
+    # reference (ServiceAccount, Role, RoleBindings, CRB subjects, Service,
+    # Deployment). Names of namespaced objects are intentionally untouched.
+    sed -e "s/^  name: permissions-binder-operator\$/  name: ${NAMESPACE}/" \
+        -e "s/^  namespace: permissions-binder-operator\$/  namespace: ${NAMESPACE}/" \
+        -e "s/^  name: operator-manager-role\$/  name: operator-manager-role-${INSTANCE}/" \
+        -e "s/^  name: operator-metrics-auth-role\$/  name: operator-metrics-auth-role-${INSTANCE}/" \
+        -e "s/^  name: operator-metrics-reader\$/  name: operator-metrics-reader-${INSTANCE}/" \
+        -e "s/^  name: operator-permissionbinder-editor-role\$/  name: operator-permissionbinder-editor-role-${INSTANCE}/" \
+        -e "s/^  name: operator-permissionbinder-viewer-role\$/  name: operator-permissionbinder-viewer-role-${INSTANCE}/" \
+        -e "s/^  name: operator-manager-rolebinding\$/  name: operator-manager-rolebinding-${INSTANCE}/" \
+        -e "s/^  name: operator-metrics-auth-rolebinding\$/  name: operator-metrics-auth-rolebinding-${INSTANCE}/" \
+        "$SCRIPT_DIR/../deployment/operator-deployment.yaml" \
+        | sed -e "/^        env:\$/a\\
+        - name: MANAGED_BY_VALUE\\
+          value: \"permission-binder-operator-${INSTANCE}\"\\
+        - name: RECONCILE_NAMESPACES\\
+          value: \"${NAMESPACE}\"" \
+        > "$DEPLOYMENT_MANIFEST"
+    # Note: WATCH_NAMESPACE is deliberately NOT set for e2e instances - test
+    # namespaces are created dynamically from the whitelist, so a static cache
+    # scope would blind the operator to them. Isolation = unique
+    # MANAGED_BY_VALUE + RECONCILE_NAMESPACES=$NAMESPACE (this instance only
+    # reconciles its own CRs) + the ownership gate on write paths (issue #43).
+
+    # ServiceMonitor: unique name and point namespaceSelector at this instance's
+    # operator namespace. It stays in the shared "monitoring" namespace (where
+    # Prometheus discovers it); only the selector is per-instance.
+    sed -e "s/^  name: permission-binder-operator-metrics\$/  name: permission-binder-operator-metrics-${INSTANCE}/" \
+        -e "s/^    - permissions-binder-operator\$/    - ${NAMESPACE}/" \
+        "$SCRIPT_DIR/../deployment/servicemonitor.yaml" > "$SERVICEMONITOR_MANIFEST"
+}
+
+if [ -n "${INSTANCE:-}" ]; then
+    render_instance_manifests
+fi
 
 # ONE-TIME SUITE SETUP: Install the PermissionBinder CRD once for the whole run.
 # The CRD is cluster-scoped and shared by every test, so there is no need to
@@ -171,42 +254,42 @@ for test_id in "${TEST_LIST[@]}"; do
     echo "═════════════════════════════════════════════════════════════════" | tee -a $RESULTS_LOG
     echo "" | tee -a $RESULTS_LOG
     
-    # STEP 1: CLEANUP CLUSTER
+    # STEP 1: CLEANUP CLUSTER (instance-scoped when INSTANCE is set)
     echo -e "${YELLOW}🧹 Step 1/3: Cleaning cluster...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR
-    ./cleanup-operator.sh >/tmp/cleanup-${test_id}.log 2>&1
-    
-    if grep -q "CLEANUP COMPLETE" /tmp/cleanup-${test_id}.log; then
+    ./cleanup-operator.sh >"$RUN_DIR/cleanup-${test_id}.log" 2>&1
+
+    if grep -q "CLEANUP COMPLETE" "$RUN_DIR/cleanup-${test_id}.log"; then
         echo "   ✅ Cluster cleaned" | tee -a $RESULTS_LOG
     else
-        echo "   ⚠️  Cleanup had warnings (check /tmp/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
+        echo "   ⚠️  Cleanup had warnings (check $RUN_DIR/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
     fi
     
     # STEP 2: DEPLOY FRESH OPERATOR (namespace/RBAC/Deployment only - CRD was
     # installed once at suite start and is intentionally NOT re-applied here)
     echo -e "${YELLOW}📦 Step 2/3: Deploying fresh operator...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR/..
-    kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonitor.yaml >/tmp/deploy-${test_id}.log 2>&1
+    kubectl apply -f "$DEPLOYMENT_MANIFEST" -f "$SERVICEMONITOR_MANIFEST" >"$RUN_DIR/deploy-${test_id}.log" 2>&1
     
     # Create GitHub GitOps credentials Secret for NetworkPolicy tests (if file exists)
     CREDENTIALS_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml"
     if [ -f "$CREDENTIALS_FILE" ]; then
         echo "   Creating GitHub GitOps credentials Secret..." | tee -a $RESULTS_LOG
-        sed "s/namespace: permissions-binder-operator/namespace: permissions-binder-operator/" "$CREDENTIALS_FILE" | kubectl apply -f - >>/tmp/deploy-${test_id}.log 2>&1 || true
+        sed "s/namespace: permissions-binder-operator/namespace: ${NAMESPACE}/" "$CREDENTIALS_FILE" | kubectl apply -f - >>"$RUN_DIR/deploy-${test_id}.log" 2>&1 || true
     fi
     
-    sleep 5
+    e2e_sleep 5
     
     # Wait for operator to be ready
-    if kubectl wait --for=condition=available --timeout=120s \
-        deployment/operator-controller-manager -n permissions-binder-operator >/dev/null 2>&1; then
+    if kubectl wait --for=condition=available --timeout="$(e2e_max_wait 120)s" \
+        deployment/operator-controller-manager -n "$NAMESPACE" >/dev/null 2>&1; then
         
-        POD_NAME=$(kubectl get pods -n permissions-binder-operator \
+        POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
             -l control-plane=controller-manager \
             -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-        POD_STATUS=$(kubectl get pod $POD_NAME -n permissions-binder-operator \
+        POD_STATUS=$(kubectl get pod $POD_NAME -n "$NAMESPACE" \
             -o jsonpath='{.status.phase}' 2>/dev/null)
-        POD_START=$(kubectl get pod $POD_NAME -n permissions-binder-operator \
+        POD_START=$(kubectl get pod $POD_NAME -n "$NAMESPACE" \
             -o jsonpath='{.status.startTime}' 2>/dev/null)
         
         if [ "$POD_STATUS" == "Running" ]; then
@@ -218,18 +301,24 @@ for test_id in "${TEST_LIST[@]}"; do
             # Baseline fixtures: every isolated test starts from a reconciled
             # operator with the pre-test ConfigMap + PermissionBinder in place
             # (cleanup wipes them, and without a CR the operator is idle and
-            # most test assertions run against an empty cluster).
-            kubectl apply -f "$SCRIPT_DIR/fixtures/" >>/tmp/deploy-${test_id}.log 2>&1
+            # most test assertions run against an empty cluster). Rendered per
+            # instance: namespace -> $NAMESPACE, whitelist CN -> $TEST_NS_PREFIX.
+            sed -e "s/namespace: permissions-binder-operator/namespace: ${NAMESPACE}/" \
+                -e "s/COMPANY-K8S-test-namespace-001-developer/COMPANY-K8S-${TEST_NS_PREFIX}test-namespace-001-developer/" \
+                "$SCRIPT_DIR/fixtures/permission-config.yaml" > "$RUN_DIR/fixture-cm-${test_id}.yaml"
+            sed -e "s/namespace: permissions-binder-operator/namespace: ${NAMESPACE}/" \
+                "$SCRIPT_DIR/fixtures/permissionbinder-base.yaml" > "$RUN_DIR/fixture-pb-${test_id}.yaml"
+            kubectl apply -f "$RUN_DIR/fixture-cm-${test_id}.yaml" -f "$RUN_DIR/fixture-pb-${test_id}.yaml" >>"$RUN_DIR/deploy-${test_id}.log" 2>&1
             BASELINE_OK=false
             for i in $(seq 1 30); do
-                if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+                if kubectl get namespace "${TEST_NS_PREFIX}test-namespace-001" >/dev/null 2>&1; then
                     BASELINE_OK=true
                     break
                 fi
                 sleep 2
             done
             if [ "$BASELINE_OK" = "true" ]; then
-                echo "   ✅ Baseline reconciled (test-namespace-001 exists)" | tee -a $RESULTS_LOG
+                echo "   ✅ Baseline reconciled (${TEST_NS_PREFIX}test-namespace-001 exists)" | tee -a $RESULTS_LOG
             else
                 echo -e "   ${RED}❌ Baseline NOT reconciled within 60s — operator idle or RBAC-blocked${NC}" | tee -a $RESULTS_LOG
             fi
@@ -237,7 +326,7 @@ for test_id in "${TEST_LIST[@]}"; do
             echo -e "   ${RED}❌ ERROR: Operator pod is NOT running!${NC}" | tee -a $RESULTS_LOG
             echo "      Pod: $POD_NAME" | tee -a $RESULTS_LOG
             echo "      Status: $POD_STATUS" | tee -a $RESULTS_LOG
-            kubectl describe pod $POD_NAME -n permissions-binder-operator | grep -A 5 "Events:" >> $RESULTS_LOG
+            kubectl describe pod $POD_NAME -n "$NAMESPACE" | grep -A 5 "Events:" >> $RESULTS_LOG
             results[$test_id]="FAIL"
             failed=$((failed + 1))
             continue
@@ -278,16 +367,16 @@ for test_id in "${TEST_LIST[@]}"; do
     # Run test. A test FAILS if the script exits non-zero OR any fail_test
     # assertion (❌ FAIL line) fired — fail_test does not set an exit code,
     # so exit status alone always reports PASS.
-    bash "$test_file" >/tmp/test-${test_id}-isolated.log 2>&1
+    bash "$test_file" >"$RUN_DIR/test-${test_id}-isolated.log" 2>&1
     TEST_EXIT=$?
-    if [ $TEST_EXIT -eq 0 ] && ! grep -q "❌ FAIL" /tmp/test-${test_id}-isolated.log; then
+    if [ $TEST_EXIT -eq 0 ] && ! grep -q "❌ FAIL" "$RUN_DIR/test-${test_id}-isolated.log"; then
         echo "" | tee -a $RESULTS_LOG
         echo -e "${GREEN}✅ Test $test_id PASSED${NC}" | tee -a $RESULTS_LOG
         results[$test_id]="PASS"
         passed=$((passed + 1))
-
+        
         # Show summary
-        grep -E "✅ PASS|Test.*Results:" /tmp/test-${test_id}-isolated.log | tail -3 | tee -a $RESULTS_LOG
+        grep -E "✅ PASS|Test.*Results:" "$RUN_DIR/test-${test_id}-isolated.log" | tail -3 | tee -a $RESULTS_LOG
     else
         echo "" | tee -a $RESULTS_LOG
         echo -e "${RED}❌ Test $test_id FAILED${NC}" | tee -a $RESULTS_LOG
@@ -296,7 +385,7 @@ for test_id in "${TEST_LIST[@]}"; do
         
         # Show failures
         echo "   Last errors:" | tee -a $RESULTS_LOG
-        grep -E "❌ FAIL|error|Error" /tmp/test-${test_id}-isolated.log | tail -5 | sed 's/^/   /' | tee -a $RESULTS_LOG
+        grep -E "❌ FAIL|error|Error" "$RUN_DIR/test-${test_id}-isolated.log" | tail -5 | sed 's/^/   /' | tee -a $RESULTS_LOG
     fi
     
     # Show progress
@@ -304,7 +393,7 @@ for test_id in "${TEST_LIST[@]}"; do
     echo -e "${BLUE}Progress: $current/${#TEST_LIST[@]} (✅ $passed passed, ❌ $failed failed)${NC}" | tee -a $RESULTS_LOG
     
     # Small pause between tests
-    sleep 2
+    e2e_sleep 2
 done
 
 # FINAL SUMMARY
@@ -334,9 +423,9 @@ echo "Success Rate: ${success_rate}%" | tee -a $RESULTS_LOG
 echo "" | tee -a $RESULTS_LOG
 echo "Results log: $RESULTS_LOG" | tee -a $RESULTS_LOG
 echo "Individual logs:" | tee -a $RESULTS_LOG
-echo "  - Cleanup: /tmp/cleanup-<test_id>.log" | tee -a $RESULTS_LOG
-echo "  - Deploy:  /tmp/deploy-<test_id>.log" | tee -a $RESULTS_LOG
-echo "  - Test:    /tmp/test-<test_id>-isolated.log" | tee -a $RESULTS_LOG
+echo "  - Cleanup: $RUN_DIR/cleanup-<test_id>.log" | tee -a $RESULTS_LOG
+echo "  - Deploy:  $RUN_DIR/deploy-<test_id>.log" | tee -a $RESULTS_LOG
+echo "  - Test:    $RUN_DIR/test-<test_id>-isolated.log" | tee -a $RESULTS_LOG
 echo "" | tee -a $RESULTS_LOG
 echo "Completed: $(date)" | tee -a $RESULTS_LOG
 echo "═════════════════════════════════════════════════════════════════" | tee -a $RESULTS_LOG
