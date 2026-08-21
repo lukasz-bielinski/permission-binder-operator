@@ -6,13 +6,16 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Test namespaces carry the per-instance prefix (empty in legacy mode)
+TEST_NS_DEV="${TEST_NS_PREFIX}test-namespace"
+
 # ============================================================================
 # ============================================================================
 echo "Test 1: Role Mapping Changes"
 echo "------------------------------"
 
-# Count current RoleBindings
-RB_BEFORE=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+# Count current RoleBindings (scoped to this instance's CR - issue #35)
+RB_BEFORE=$(count_owned_rolebindings "permissionbinder-example")
 info_log "RoleBindings before: $RB_BEFORE"
 
 # Add new role to PermissionBinder mapping
@@ -23,12 +26,12 @@ kubectl_retry kubectl patch permissionbinder permissionbinder-example -n $NAMESP
 # Get current whitelist and append new entry
 CURRENT_WHITELIST=$(kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')
 kubectl_retry kubectl patch configmap permission-config -n $NAMESPACE --type=merge \
-  -p="{\"data\":{\"whitelist.txt\":\"${CURRENT_WHITELIST}\nCN=COMPANY-K8S-test-namespace-developer,OU=Example,DC=example,DC=com\"}}" >/dev/null 2>&1
+  -p="{\"data\":{\"whitelist.txt\":\"${CURRENT_WHITELIST}\nCN=COMPANY-K8S-${TEST_NS_DEV}-developer,OU=Example,DC=example,DC=com\"}}" >/dev/null 2>&1
 
 sleep 20
 
-# Check if new RoleBindings were created
-RB_AFTER=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+# Check if new RoleBindings were created (own CR only)
+RB_AFTER=$(count_owned_rolebindings "permissionbinder-example")
 if [ "$RB_AFTER" -gt "$RB_BEFORE" ]; then
     pass_test "New RoleBindings created after role mapping change"
     info_log "RoleBindings increased: $RB_BEFORE → $RB_AFTER"
@@ -37,7 +40,7 @@ else
 fi
 
 # Verify RoleBinding references new role
-DEVELOPER_RB=$(kubectl_retry kubectl get rolebindings -A -o json | jq -r '.items[] | select(.roleRef.name=="edit") | .metadata.name' | grep -c "developer" 2>/dev/null | head -1 || echo "0")
+DEVELOPER_RB=$(list_owned_rolebindings "permissionbinder-example" | grep -c "developer" | head -1)
 if [ "$DEVELOPER_RB" -gt 0 ]; then
     pass_test "RoleBindings reference new ClusterRole correctly"
 else

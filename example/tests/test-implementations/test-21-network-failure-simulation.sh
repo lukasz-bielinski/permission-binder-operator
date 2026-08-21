@@ -25,7 +25,7 @@ CONN_ERRORS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager 
 info_log "Connection-related log entries: $CONN_ERRORS"
 
 # Verify operator is still functional
-RB_CURRENT=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+RB_CURRENT=$(count_owned_rolebindings "permissionbinder-example")
 if [ "$RB_CURRENT" -gt 0 ]; then
     pass_test "Operator remained functional under stress"
     info_log "Managed RoleBindings: $RB_CURRENT"

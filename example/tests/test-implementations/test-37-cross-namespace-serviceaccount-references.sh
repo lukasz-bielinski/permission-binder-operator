@@ -31,8 +31,8 @@ EOF
 
 sleep 15
 
-# Get managed namespaces
-MANAGED_NAMESPACES=$(kubectl get ns -l permission-binder.io/managed-by=permission-binder-operator -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+# Get managed namespaces (owned by THIS test's CR - issue #35)
+MANAGED_NAMESPACES=$(list_owned_namespaces "test-sa-cross-ns" | tr '\n' ' ')
 
 if [ -n "$MANAGED_NAMESPACES" ]; then
     SA_COUNT=0

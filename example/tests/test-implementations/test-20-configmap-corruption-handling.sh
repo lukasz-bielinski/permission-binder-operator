@@ -11,13 +11,15 @@ source "$SCRIPT_DIR/test-common.sh"
 echo "Test 20: ConfigMap Corruption Handling"
 echo "----------------------------------------"
 
-# Test with various malformed entries
-kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-corrupt.txt
-echo "CN=COMPANY-K8S-incomplete" >> /tmp/whitelist-corrupt.txt  # Missing parts
-echo "CN=" >> /tmp/whitelist-corrupt.txt  # Empty CN
-echo "$(python3 -c 'print("A"*300)')" >> /tmp/whitelist-corrupt.txt  # Too long
-kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-corrupt.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
-rm -f /tmp/whitelist-corrupt.txt
+# Test with various malformed entries (kept verbatim, unprefixed - the broken
+# structure IS the test input; a prefix would change the failure mode)
+WHITELIST_CORRUPT="${RUN_DIR:-/tmp}/whitelist-corrupt.txt"
+kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > "$WHITELIST_CORRUPT"
+echo "CN=COMPANY-K8S-incomplete" >> "$WHITELIST_CORRUPT"  # Missing parts
+echo "CN=" >> "$WHITELIST_CORRUPT"  # Empty CN
+echo "$(python3 -c 'print("A"*300)')" >> "$WHITELIST_CORRUPT"  # Too long
+kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt="$WHITELIST_CORRUPT" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+rm -f "$WHITELIST_CORRUPT"
 
 kubectl_retry kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-corrupt="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 15

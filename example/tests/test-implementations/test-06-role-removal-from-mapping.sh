@@ -19,7 +19,7 @@ kubectl_retry kubectl annotate permissionbinder permissionbinder-example -n $NAM
 sleep 10
 
 # Check if temp role RoleBindings were created
-TEMP_RB_COUNT=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.name | contains("temp-test-role"))] | length')
+TEMP_RB_COUNT=$(list_owned_rolebindings "permissionbinder-example" | grep -c "temp-test-role" | head -1)
 info_log "Temp role RoleBindings created: $TEMP_RB_COUNT"
 
 # Remove temp role
@@ -30,7 +30,7 @@ kubectl_retry kubectl annotate permissionbinder permissionbinder-example -n $NAM
 sleep 10
 
 # Check temp role RoleBindings were removed
-TEMP_RB_AFTER=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.name | contains("temp-test-role"))] | length')
+TEMP_RB_AFTER=$(list_owned_rolebindings "permissionbinder-example" | grep -c "temp-test-role" | head -1)
 if [ "$TEMP_RB_AFTER" -eq 0 ]; then
     pass_test "RoleBindings removed when role deleted from mapping"
 else

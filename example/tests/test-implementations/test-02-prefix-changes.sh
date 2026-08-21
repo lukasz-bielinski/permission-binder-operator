@@ -15,7 +15,7 @@ echo "-----------------------"
 # This test verifies prefix change behavior
 
 # Count RoleBindings with current prefix
-CURRENT_RB=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+CURRENT_RB=$(kubectl_retry kubectl get rolebindings -A -l "$MANAGED_BY_LABEL" --no-headers | wc -l)
 info_log "Current RoleBindings: $CURRENT_RB"
 
 # Change prefix array
