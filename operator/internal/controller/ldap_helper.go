@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"regexp"
 	"strings"
@@ -44,6 +45,9 @@ type LdapCredentials struct {
 	Server   string
 	Username string
 	Password string
+	// CACert is an optional PEM-encoded CA certificate (from the "ca.crt" Secret key)
+	// used to verify the LDAPS server certificate when it is issued by a private CA
+	CACert string
 }
 
 // ParseCN extracts group name and path from LDAP CN string
@@ -103,16 +107,45 @@ func (r *PermissionBinderReconciler) GetLdapCredentials(ctx context.Context, pb 
 		return nil, fmt.Errorf("domain_password not found in Secret %s/%s", secret.Namespace, secret.Name)
 	}
 
+	// Optional: CA certificate for verifying LDAPS servers on a private CA
+	caCert := string(secret.Data["ca.crt"])
+
 	logger.Info("Successfully retrieved LDAP credentials",
 		"secret", secretKey.Name,
 		"namespace", secretKey.Namespace,
-		"server", string(server))
+		"server", string(server),
+		"hasCaCert", caCert != "")
 
 	return &LdapCredentials{
 		Server:   string(server),
 		Username: string(username),
 		Password: string(password),
+		CACert:   caCert,
 	}, nil
+}
+
+// buildTlsConfig builds the tls.Config for an LDAPS connection.
+// When caCertPEM is set, the given CA certificate is used to verify the server
+// certificate (private CA support). Otherwise the system CA pool is used.
+// InsecureSkipVerify is only set when tlsVerify is false (insecure, testing only).
+func buildTlsConfig(tlsVerify bool, caCertPEM string) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: !tlsVerify, // Configurable via CRD
+	}
+
+	if tlsVerify && caCertPEM != "" {
+		rootCAs, err := x509.SystemCertPool()
+		if err != nil {
+			// System pool unavailable (e.g. scratch containers) - start with an empty pool
+			rootCAs = x509.NewCertPool()
+		}
+		if !rootCAs.AppendCertsFromPEM([]byte(caCertPEM)) {
+			return nil, fmt.Errorf("failed to parse CA certificate from Secret key \"ca.crt\": no valid PEM certificates found")
+		}
+		tlsConfig.RootCAs = rootCAs
+	}
+
+	return tlsConfig, nil
 }
 
 // ConnectLdap establishes connection to LDAP/AD server
@@ -122,10 +155,12 @@ func ConnectLdap(creds *LdapCredentials, tlsVerify bool) (*ldap.Conn, error) {
 
 	// Check if using LDAPS (secure)
 	if strings.HasPrefix(creds.Server, "ldaps://") {
-		// LDAPS connection with configurable TLS verification
+		// LDAPS connection with configurable TLS verification and optional custom CA
 		serverAddr := strings.TrimPrefix(creds.Server, "ldaps://")
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: !tlsVerify, // Configurable via CRD
+		tlsConfig, tlsErr := buildTlsConfig(tlsVerify, creds.CACert)
+		if tlsErr != nil {
+			ldapConnectionsTotal.WithLabelValues("error").Inc()
+			return nil, fmt.Errorf("failed to build TLS config for LDAP server %s: %w", creds.Server, tlsErr)
 		}
 		conn, err = ldap.DialURL(fmt.Sprintf("ldaps://%s", serverAddr), ldap.DialWithTLSConfig(tlsConfig))
 	} else {
@@ -278,7 +313,8 @@ func (r *PermissionBinderReconciler) ProcessLdapGroupCreation(ctx context.Contex
 
 	logger.Info("Connected to LDAP server",
 		"server", creds.Server,
-		"tlsVerify", tlsVerify)
+		"tlsVerify", tlsVerify,
+		"customCa", creds.CACert != "")
 
 	// Process each whitelist entry
 	successCount := 0
