@@ -306,13 +306,15 @@ log "═════════════════════════
 log ""
 for i in $(seq 1 "$SLOTS"); do
     [ -z "${SLOT_PID[$i]:-}" ] && continue
-    slot_pass=$(grep -c "✅ Test .* PASSED" "${SLOT_LOG[$i]}" 2>/dev/null || echo 0)
-    slot_fail=$(grep -c "❌ Test .* FAILED" "${SLOT_LOG[$i]}" 2>/dev/null || echo 0)
+    # grep -c prints the count (0 included) even when it exits non-zero, so an
+    # `|| echo 0` fallback would yield "0\n0" and break arithmetic below.
+    slot_pass=$(grep -c "✅ Test .* PASSED" "${SLOT_LOG[$i]}" 2>/dev/null); slot_pass=${slot_pass:-0}
+    slot_fail=$(grep -c "❌ Test .* FAILED" "${SLOT_LOG[$i]}" 2>/dev/null); slot_fail=${slot_fail:-0}
     log "  Slot $i: ✅ $slot_pass passed, ❌ $slot_fail failed — ${SLOT_LOG[$i]}"
     grep -E "❌ Test [0-9]+ FAILED" "${SLOT_LOG[$i]}" 2>/dev/null | sed 's/^/    /' | tee -a "$RESULTS_LOG" >/dev/null
 done
-sc_pass=$(grep -c "✅ Test .* PASSED" "$SERIAL_LOG" 2>/dev/null || echo 0)
-sc_fail=$(grep -c "❌ Test .* FAILED" "$SERIAL_LOG" 2>/dev/null || echo 0)
+sc_pass=$(grep -c "✅ Test .* PASSED" "$SERIAL_LOG" 2>/dev/null); sc_pass=${sc_pass:-0}
+sc_fail=$(grep -c "❌ Test .* FAILED" "$SERIAL_LOG" 2>/dev/null); sc_fail=${sc_fail:-0}
 log "  Pool C (serial): ✅ $sc_pass passed, ❌ $sc_fail failed — $SERIAL_LOG"
 grep -E "❌ Test [0-9]+ FAILED" "$SERIAL_LOG" 2>/dev/null | sed 's/^/    /' | tee -a "$RESULTS_LOG" >/dev/null
 log ""
@@ -321,8 +323,8 @@ TOTAL_PASS=0
 TOTAL_FAIL=0
 for i in $(seq 1 "$SLOTS"); do
     [ -z "${SLOT_PID[$i]:-}" ] && continue
-    p=$(grep -c "✅ Test .* PASSED" "${SLOT_LOG[$i]}" 2>/dev/null || echo 0)
-    f=$(grep -c "❌ Test .* FAILED" "${SLOT_LOG[$i]}" 2>/dev/null || echo 0)
+    p=$(grep -c "✅ Test .* PASSED" "${SLOT_LOG[$i]}" 2>/dev/null); p=${p:-0}
+    f=$(grep -c "❌ Test .* FAILED" "${SLOT_LOG[$i]}" 2>/dev/null); f=${f:-0}
     TOTAL_PASS=$((TOTAL_PASS + p))
     TOTAL_FAIL=$((TOTAL_FAIL + f))
 done

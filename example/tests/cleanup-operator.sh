@@ -157,21 +157,36 @@ list_test_namespaces() {
     fi
 }
 
-list_test_namespaces | while read ns; do
-    [ -z "$ns" ] && continue
-    echo "Deleting test namespace: $ns"
-    kubectl delete namespace "$ns" --timeout=30s 2>/dev/null || true
-done
+# Batch deletion: one non-blocking kubectl call for ALL test namespaces, then
+# poll until they are gone (sequential --timeout=30s deletes serialized the
+# sweep at ~30s per stuck namespace).
+TEST_NS_LIST=$(list_test_namespaces)
+if [ -n "$TEST_NS_LIST" ]; then
+    echo "$TEST_NS_LIST" | while read ns; do
+        [ -z "$ns" ] && continue
+        echo "Deleting test namespace: $ns"
+    done
+    echo "$TEST_NS_LIST" | xargs -r kubectl delete namespace --wait=false 2>/dev/null || true
 
-# Force delete if stuck
-sleep 3
-list_test_namespaces | while read ns; do
-    [ -z "$ns" ] && continue
-    if kubectl get ns "$ns" 2>/dev/null | grep -q Terminating; then
-        echo "Force deleting stuck namespace: $ns"
-        kubectl delete namespace "$ns" --force --grace-period=0 2>/dev/null || true
-    fi
-done
+    # Poll until all test namespaces are gone (up to ~90s)
+    WAITED=0
+    while [ "$WAITED" -lt 90 ]; do
+        if [ -z "$(list_test_namespaces)" ]; then
+            break
+        fi
+        sleep 3
+        WAITED=$((WAITED + 3))
+    done
+
+    # Force delete stragglers stuck in Terminating
+    list_test_namespaces | while read ns; do
+        [ -z "$ns" ] && continue
+        if kubectl get ns "$ns" 2>/dev/null | grep -q Terminating; then
+            echo "Force deleting stuck namespace: $ns"
+            kubectl delete namespace "$ns" --force --grace-period=0 2>/dev/null || true
+        fi
+    done
+fi
 
 DELETED_COUNT=$(list_test_namespaces | grep -c . || true)
 if [ "${DELETED_COUNT:-0}" -eq 0 ]; then
