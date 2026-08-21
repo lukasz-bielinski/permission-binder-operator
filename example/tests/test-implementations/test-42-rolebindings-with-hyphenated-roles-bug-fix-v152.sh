@@ -93,8 +93,14 @@ if kubectl get namespace test-hyphenated >/dev/null 2>&1; then
         fail_test "cluster-admin RoleBinding was deleted!"
     fi
     
-    # Verify no "Deleted obsolete RoleBinding" logs for hyphenated roles
-    OBSOLETE_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=100 2>/dev/null | jq -r 'select(.message | contains("Deleted obsolete RoleBinding")) | select(.name | contains("read-only") or contains("cluster-admin"))' 2>/dev/null || echo "")
+    # Verify no "Deleted obsolete RoleBinding" logs for hyphenated roles.
+    # Scoped to THIS test's namespace: every operator instance reconciles all
+    # CRs (until WATCH_NAMESPACE is used), so a sibling instance legitimately
+    # logs deletions of its own *-read-only RoleBindings - only deletions in
+    # the test-hyphenated namespace are a bug here. Log fields message/
+    # namespace/name come from reconciliation_cleanup.go ("Deleted obsolete
+    # RoleBinding", "namespace", ..., "name", ...); fromjson? skips non-JSON lines.
+    OBSOLETE_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --tail=100 2>/dev/null | jq -R -r --arg ns "test-hyphenated" 'fromjson? | select(.message == "Deleted obsolete RoleBinding") | select(.namespace == $ns) | select(.name | contains("read-only") or contains("cluster-admin")) | .namespace + "/" + .name' 2>/dev/null || echo "")
     
     if [ -z "$OBSOLETE_LOGS" ]; then
         pass_test "No incorrect deletion logs for hyphenated roles"
