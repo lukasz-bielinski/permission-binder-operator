@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Per-instance test namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+
 # ============================================================================
 # ============================================================================
 echo "Test 32: ServiceAccount Naming Pattern"
@@ -33,14 +36,14 @@ EOF
 sleep 10
 
 # Check custom naming pattern
-if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
-    if kubectl get sa sa-test-namespace-001-deploy -n test-namespace-001 >/dev/null 2>&1; then
+if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
+    if kubectl get sa sa-${TEST_NS}-deploy -n "$TEST_NS" >/dev/null 2>&1; then
         pass_test "Custom naming pattern works (sa-{namespace}-{name})"
     else
         fail_test "Custom naming pattern not applied"
     fi
 else
-    info_log "test-namespace-001 does not exist, skipping pattern test"
+    info_log "$TEST_NS does not exist, skipping pattern test"
 fi
 
 echo ""

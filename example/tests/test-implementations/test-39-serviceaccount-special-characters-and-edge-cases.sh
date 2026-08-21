@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Per-instance test namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+
 # ============================================================================
 # ============================================================================
 echo "Test 39: ServiceAccount Special Characters & Edge Cases"
@@ -32,13 +35,13 @@ EOF
 
 sleep 15
 
-if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
     # Check valid names
     VALID_COUNT=0
-    if kubectl get sa -n test-namespace-001 2>/dev/null | grep -q "my-deploy-sa"; then
+    if kubectl get sa -n "$TEST_NS" 2>/dev/null | grep -q "my-deploy-sa"; then
         VALID_COUNT=$((VALID_COUNT + 1))
     fi
-    if kubectl get sa -n test-namespace-001 2>/dev/null | grep -q "test-runtime-123"; then
+    if kubectl get sa -n "$TEST_NS" 2>/dev/null | grep -q "test-runtime-123"; then
         VALID_COUNT=$((VALID_COUNT + 1))
     fi
     
@@ -75,7 +78,7 @@ EOF
         fail_test "Operator not running after empty mapping"
     fi
 else
-    info_log "test-namespace-001 does not exist, skipping edge case tests"
+    info_log "$TEST_NS does not exist, skipping edge case tests"
 fi
 
 echo ""

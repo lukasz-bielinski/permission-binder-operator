@@ -6,6 +6,12 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Test namespaces carry the per-instance prefix (empty in legacy mode).
+# CR name (test-invalid-entries) and ConfigMap name are NOT prefixed.
+VALID_NS="${TEST_NS_PREFIX}valid-invalid-test"
+VALID_NS_2="${TEST_NS_PREFIX}valid-invalid-test-2"
+STRESS_NS="${TEST_NS_PREFIX}stress-invalid-test"
+
 # ============================================================================
 # ============================================================================
 echo "Test 43: Invalid Whitelist Entry Handling (Bug Fix v1.5.3)"
@@ -38,7 +44,7 @@ metadata:
 data:
   whitelist.txt: |-
     # Valid entry
-    CN=COMPANY-K8S-valid-invalid-test-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-${VALID_NS}-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
     
     # Invalid entry: Missing prefix
     CN=INVALID-PREFIX-ns-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
@@ -53,7 +59,7 @@ data:
     CN=,OU=Kubernetes,OU=Platform,DC=example,DC=com
     
     # Another valid entry (should be processed)
-    CN=COMPANY-K8S-valid-invalid-test-2-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-${VALID_NS_2}-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
 EOF
 
 # Wait for initial processing
@@ -72,19 +78,19 @@ else
 fi
 
 # Verify valid entries were processed
-if kubectl get namespace valid-invalid-test >/dev/null 2>&1; then
+if kubectl get namespace "$VALID_NS" >/dev/null 2>&1; then
     pass_test "Valid namespace created"
 else
     fail_test "Valid namespace not created"
 fi
 
-if kubectl get namespace valid-invalid-test-2 >/dev/null 2>&1; then
+if kubectl get namespace "$VALID_NS_2" >/dev/null 2>&1; then
     pass_test "Second valid namespace created"
 else
     info_log "Second valid namespace not yet created"
 fi
 
-if kubectl get rolebinding valid-invalid-test-engineer -n valid-invalid-test >/dev/null 2>&1; then
+if kubectl get rolebinding "${VALID_NS}-engineer" -n "$VALID_NS" >/dev/null 2>&1; then
     pass_test "Valid RoleBinding created"
 else
     fail_test "Valid RoleBinding not created"
@@ -190,7 +196,7 @@ metadata:
 data:
   whitelist.txt: |-
     $(for i in {1..10}; do echo "INVALID-ENTRY-$i"; done)
-    CN=COMPANY-K8S-stress-invalid-test-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-${STRESS_NS}-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
 EOF
 
 # Wait for processing
@@ -208,7 +214,7 @@ else
     fail_test "Operator crashed during stress test"
 fi
 
-if kubectl get namespace stress-invalid-test >/dev/null 2>&1; then
+if kubectl get namespace "$STRESS_NS" >/dev/null 2>&1; then
     pass_test "Valid entry processed despite many invalid entries"
 else
     info_log "Valid entry not yet processed (may need more time)"

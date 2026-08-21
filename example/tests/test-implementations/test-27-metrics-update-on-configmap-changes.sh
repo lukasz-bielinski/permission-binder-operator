@@ -24,11 +24,12 @@ else
     NS_METRIC_BEFORE=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_NS}" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
     info_log "Namespaces metric before: $NS_METRIC_BEFORE"
 
-    # Add new namespace entry
-    kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-metrics.txt
-    echo "CN=COMPANY-K8S-metrics-test-ns27-admin,OU=Test,DC=example,DC=com" >> /tmp/whitelist-metrics.txt
-    kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-metrics.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
-    rm -f /tmp/whitelist-metrics.txt
+    # Add new namespace entry (prefixed per instance)
+    WHITELIST_METRICS="${RUN_DIR:-/tmp}/whitelist-metrics.txt"
+    kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > "$WHITELIST_METRICS"
+    echo "CN=COMPANY-K8S-${TEST_NS_PREFIX}metrics-test-ns27-admin,OU=Test,DC=example,DC=com" >> "$WHITELIST_METRICS"
+    kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt="$WHITELIST_METRICS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+    rm -f "$WHITELIST_METRICS"
     
     kubectl_retry kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-ns-metrics="$(date +%s)" --overwrite >/dev/null 2>&1
     sleep 30
