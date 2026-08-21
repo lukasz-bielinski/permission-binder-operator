@@ -1,7 +1,9 @@
 #!/bin/bash
 # Run E2E tests with FULL ISOLATION
 # Each test gets: fresh cluster cleanup + fresh operator deployment + test execution
-# 
+# The PermissionBinder CRD is installed ONCE per suite run (cluster-scoped and
+# shared by all tests); per-test cleanup/deploy never touches it.
+#
 # Usage:
 #   ./run-tests-full-isolation.sh           # Run all tests
 #   ./run-tests-full-isolation.sh 44        # Run single test
@@ -9,7 +11,8 @@
 
 set +e  # Don't exit on errors - we want to run all tests
 
-export KUBECONFIG=$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)
+# Respect the caller's KUBECONFIG; fall back to the default k3s kubeconfig.
+export KUBECONFIG="${KUBECONFIG:-$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS_LOG="/tmp/e2e-full-isolation-$(date +%Y%m%d-%H%M%S).log"
 NAMESPACE="permissions-binder-operator"
@@ -139,6 +142,20 @@ passed=0
 failed=0
 current=0
 
+# ONE-TIME SUITE SETUP: Install the PermissionBinder CRD once for the whole run.
+# The CRD is cluster-scoped and shared by every test, so there is no need to
+# delete/re-apply it per test (delete cascades all CRs and can hang on
+# finalizers). Per-test cleanup keeps the CRD; use `cleanup-operator.sh --full`
+# for a manual full wipe.
+echo -e "${YELLOW}📦 Suite setup: installing PermissionBinder CRD (once)...${NC}" | tee -a $RESULTS_LOG
+if kubectl apply -f "$SCRIPT_DIR/../deployment/crd.yaml" >>$RESULTS_LOG 2>&1; then
+    echo "   ✅ CRD installed" | tee -a $RESULTS_LOG
+else
+    echo -e "   ${RED}❌ ERROR: Failed to install CRD (see $RESULTS_LOG)${NC}" | tee -a $RESULTS_LOG
+    exit 1
+fi
+echo "" | tee -a $RESULTS_LOG
+
 # Pre-load test names
 for test_id in "${TEST_LIST[@]}"; do
     test_names[$test_id]=$(get_test_name $test_id)
@@ -165,10 +182,11 @@ for test_id in "${TEST_LIST[@]}"; do
         echo "   ⚠️  Cleanup had warnings (check /tmp/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
     fi
     
-    # STEP 2: DEPLOY FRESH OPERATOR
+    # STEP 2: DEPLOY FRESH OPERATOR (namespace/RBAC/Deployment only - CRD was
+    # installed once at suite start and is intentionally NOT re-applied here)
     echo -e "${YELLOW}📦 Step 2/3: Deploying fresh operator...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR/..
-    kubectl apply -f deployment/ >/tmp/deploy-${test_id}.log 2>&1
+    kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonitor.yaml >/tmp/deploy-${test_id}.log 2>&1
     
     # Create GitHub GitOps credentials Secret for NetworkPolicy tests (if file exists)
     CREDENTIALS_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml"

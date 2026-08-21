@@ -9,6 +9,7 @@ example/
 ├── crd/                                    # Custom Resource Definitions
 │   └── permission.permission-binder.io_permissionbinders.yaml
 ├── deployment/                             # Operator deployment
+│   ├── crd.yaml                            # PermissionBinder CRD (installed once; also in crd/)
 │   ├── operator-deployment.yaml
 │   └── servicemonitor.yaml                 # Prometheus metrics
 ├── monitoring/                             # Monitoring configuration
