@@ -760,8 +760,8 @@ spec:
         # Available tags: 1.6.7, 1.6.6, 1.6.5, 1.6.4, 1.6.3, 1.6.2, 1.6.1, 1.6.0, 1.6.0-rc3, 1.6.0-rc2, 1.5.7, 1.5.6, 1.5.5, 1.5.4, 1.5.3, 1.5.2, 1.5.1, 1.5.0, 1.4.0, 1.3.0, latest
         # Production: use specific version (1.6.7 - Go 1.25 + dependency refresh)
         # Development: use latest tag with Always pull policy
-        image: lukaszbielinski/permission-binder-operator:1.6.7
-        imagePullPolicy: IfNotPresent
+        image: lukaszbielinski/permission-binder-operator:e2e-rbac-validation
+        imagePullPolicy: Always
         env:
         # Enable debug mode to see detailed reconciliation trigger logging
         # Set to "true" or "1" to enable, "false" or "0" to disable (default: disabled)
@@ -811,5 +811,7 @@ spec:
             - ALL
       securityContext:
         runAsNonRoot: true
+      nodeSelector:
+        kubernetes.io/hostname: n5pro
       serviceAccountName: operator-controller-manager
       terminationGracePeriodSeconds: 10
