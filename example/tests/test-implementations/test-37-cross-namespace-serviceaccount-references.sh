@@ -1,25 +1,43 @@
 #!/bin/bash
-# Test 37: Cross Namespace Serviceaccount References
+# Test 37: Cross-Namespace ServiceAccount References
+#
+# Self-contained under the first-owner-wins ownership gate (issue #43, PR #45):
+# the previous version reused the baseline ConfigMap, was refused ownership of
+# the baseline-owned namespace, found zero managed namespaces and passed
+# VACUOUSLY (every assertion behind an info_log escape). It now provisions its
+# OWN ConfigMap resolving to TWO dedicated namespaces and hard-asserts that a
+# ServiceAccount exists in each, with each RoleBinding referencing the SA from
+# its OWN namespace (cross-namespace isolation).
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+PB_NAME="test-sa-cross-ns"
+CM_NAME="sa-test-config-37"
+# Two dedicated namespaces (prefix empty in legacy single-instance mode)
+TEST_NS_A="${TEST_NS_PREFIX}sa-test-37"
+TEST_NS_B="${TEST_NS_PREFIX}sa-test-37-b"
+
 # ============================================================================
 # ============================================================================
 echo "Test 37: Cross-Namespace ServiceAccount References"
 echo "----------------------------------------------------"
 
-# Create PermissionBinder for cross-namespace test
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+if ! create_sa_test_configmap "$CM_NAME" "$TEST_NS_A" "$TEST_NS_B"; then
+    fail_test "Could not create test ConfigMap $CM_NAME"
+    exit 1
+fi
+
+apply_yaml_with_retry <<EOF
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-sa-cross-ns
+  name: $PB_NAME
   namespace: $NAMESPACE
 spec:
-  configMapName: permission-config
+  configMapName: $CM_NAME
   configMapNamespace: $NAMESPACE
   prefixes:
     - "COMPANY-K8S"
@@ -29,46 +47,32 @@ spec:
     cross-ns-test: view
 EOF
 
-sleep 15
+if ! wait_for_sa "$TEST_NS_A" "${TEST_NS_A}-sa-cross-ns-test" 90 \
+    || ! wait_for_sa "$TEST_NS_B" "${TEST_NS_B}-sa-cross-ns-test" 60; then
+    fail_test "ServiceAccounts not created in both namespaces ($TEST_NS_A, $TEST_NS_B)"
+    exit 1
+fi
+pass_test "ServiceAccounts created in multiple namespaces (2 namespaces)"
 
-# Enumerate namespaces via the ServiceAccounts this CR actually created:
-# under the ownership gate (issue #43) shared namespaces stay claimed by the
-# baseline CR, so namespace-ownership listing would be empty and the test
-# vacuous. SAs carry app.kubernetes.io/name=<cr-name>.
-MANAGED_NAMESPACES=$(kubectl get sa -A -l "app.kubernetes.io/name=test-sa-cross-ns" \
-    -o custom-columns=NS:.metadata.namespace --no-headers 2>/dev/null | sort -u | tr '\n' ' ')
+# Each RoleBinding must reference the ServiceAccount from its OWN namespace
+ISOLATION_OK=0
+for ns in "$TEST_NS_A" "$TEST_NS_B"; do
+    RB_SA_NAME=$(kubectl get rolebinding "sa-${ns}-cross-ns-test" -n "$ns" \
+        -o jsonpath='{.subjects[0].name}' 2>/dev/null)
+    RB_SA_NS=$(kubectl get rolebinding "sa-${ns}-cross-ns-test" -n "$ns" \
+        -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)
+    if [ "$RB_SA_NAME" == "${ns}-sa-cross-ns-test" ] && [ "$RB_SA_NS" == "$ns" ]; then
+        ISOLATION_OK=$((ISOLATION_OK + 1))
+    else
+        info_log "Namespace $ns: RoleBinding subject ${RB_SA_NAME:-<none>}/${RB_SA_NS:-<none>} does not reference local SA"
+    fi
+done
 
-if [ -n "$MANAGED_NAMESPACES" ]; then
-    SA_COUNT=0
-    ISOLATION_OK=0
-    
-    for ns in $MANAGED_NAMESPACES; do
-        # Check if SA exists in this namespace
-        if kubectl get sa ${ns}-sa-cross-ns-test -n $ns >/dev/null 2>&1; then
-            SA_COUNT=$((SA_COUNT + 1))
-            
-            # Verify RoleBinding references SA from same namespace
-            RB_SA_NS=$(kubectl get rolebinding -n $ns -o json 2>/dev/null | jq -r '.items[] | select(.subjects[0].name | contains("sa-cross-ns-test")) | .subjects[0].namespace' | head -1)
-            
-            if [ "$RB_SA_NS" == "$ns" ]; then
-                ISOLATION_OK=$((ISOLATION_OK + 1))
-            fi
-        fi
-    done
-    
-    if [ $SA_COUNT -gt 1 ]; then
-        pass_test "ServiceAccounts created in multiple namespaces ($SA_COUNT namespaces)"
-    else
-        info_log "ServiceAccounts created in $SA_COUNT namespace(s)"
-    fi
-    
-    if [ $ISOLATION_OK -eq $SA_COUNT ] && [ $SA_COUNT -gt 0 ]; then
-        pass_test "Cross-namespace isolation verified (RoleBindings reference local SAs)"
-    else
-        info_log "Isolation check: $ISOLATION_OK/$SA_COUNT namespaces OK"
-    fi
+if [ $ISOLATION_OK -eq 2 ]; then
+    pass_test "Cross-namespace isolation verified (RoleBindings reference local SAs)"
 else
-    info_log "No managed namespaces found for cross-namespace test"
+    fail_test "Cross-namespace isolation broken ($ISOLATION_OK/2 namespaces OK)"
+    exit 1
 fi
 
 echo ""

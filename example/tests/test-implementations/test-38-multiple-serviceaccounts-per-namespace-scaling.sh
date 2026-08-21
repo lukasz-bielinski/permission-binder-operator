@@ -1,28 +1,41 @@
 #!/bin/bash
-# Test 38: Multiple Serviceaccounts Per Namespace Scaling
+# Test 38: Multiple ServiceAccounts per Namespace (Scaling)
+#
+# Self-contained under the first-owner-wins ownership gate (issue #43, PR #45):
+# provisions its OWN ConfigMap resolving to a DEDICATED namespace and
+# hard-asserts the exact expected ServiceAccount count (8) instead of the old
+# info_log escape.
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
-# Per-instance test namespace (prefix empty in legacy single-instance mode)
-TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+PB_NAME="test-sa-multiple"
+CM_NAME="sa-test-config-38"
+# Dedicated namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}sa-test-38"
+SA_KEYS="deploy runtime monitoring cicd backup logging metrics ingress"
+EXPECTED_SA_COUNT=8
 
 # ============================================================================
 # ============================================================================
 echo "Test 38: Multiple ServiceAccounts per Namespace"
 echo "-------------------------------------------------"
 
-# Create PermissionBinder with multiple SA mappings
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+if ! create_sa_test_configmap "$CM_NAME" "$TEST_NS"; then
+    fail_test "Could not create test ConfigMap $CM_NAME"
+    exit 1
+fi
+
+apply_yaml_with_retry <<EOF
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-sa-multiple
+  name: $PB_NAME
   namespace: $NAMESPACE
 spec:
-  configMapName: permission-config
+  configMapName: $CM_NAME
   configMapNamespace: $NAMESPACE
   prefixes:
     - "COMPANY-K8S"
@@ -39,41 +52,42 @@ spec:
     ingress: edit
 EOF
 
-START_TIME=$(date +%s)
-sleep 25
-END_TIME=$(date +%s)
-DURATION=$((END_TIME - START_TIME))
+all_sas_present() {
+    local key
+    for key in $SA_KEYS; do
+        kubectl get sa "${TEST_NS}-sa-${key}" -n "$TEST_NS" >/dev/null 2>&1 || return 1
+    done
+    return 0
+}
 
-if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
-    # Count ServiceAccounts
-    ACTUAL_SA_COUNT=$(kubectl get sa -n "$TEST_NS" 2>/dev/null | grep "sa-" | wc -l)
-    ACTUAL_SA_COUNT=$(echo "$ACTUAL_SA_COUNT" | tr -d ' \n')
-    
-    info_log "ServiceAccounts created: $ACTUAL_SA_COUNT"
-    info_log "Reconciliation time: ${DURATION}s"
-    
-    if [ "$ACTUAL_SA_COUNT" -ge 8 ]; then
-        pass_test "Multiple ServiceAccounts created successfully ($ACTUAL_SA_COUNT)"
-    else
-        info_log "Created $ACTUAL_SA_COUNT ServiceAccounts (expected 8+)"
-    fi
-    
-    # Performance check
-    if [ $DURATION -lt 30 ]; then
-        pass_test "Reconciliation completed in acceptable time (${DURATION}s < 30s)"
-    else
-        info_log "Reconciliation took ${DURATION}s"
-    fi
-    
-    # Check for duplicates
-    DUPLICATE_CHECK=$(kubectl get sa -n "$TEST_NS" -o json 2>/dev/null | jq -r '[.items[].metadata.name] | group_by(.) | map(select(length > 1)) | length')
-    if [ "$DUPLICATE_CHECK" == "0" ]; then
-        pass_test "No duplicate ServiceAccounts"
-    else
-        fail_test "Duplicate ServiceAccounts detected"
-    fi
+START_TIME=$(date +%s)
+if ! wait_for_cmd 120 all_sas_present; then
+    PRESENT=0
+    for key in $SA_KEYS; do
+        kubectl get sa "${TEST_NS}-sa-${key}" -n "$TEST_NS" >/dev/null 2>&1 && PRESENT=$((PRESENT + 1))
+    done
+    fail_test "Only $PRESENT/$EXPECTED_SA_COUNT ServiceAccounts created within $(e2e_max_wait 120)s"
+    exit 1
+fi
+DURATION=$(( $(date +%s) - START_TIME ))
+info_log "Reconciliation time: ${DURATION}s"
+pass_test "Multiple ServiceAccounts created successfully ($EXPECTED_SA_COUNT)"
+
+# Performance envelope (informational threshold preserved from original test)
+if [ "$DURATION" -lt "$(e2e_max_wait 30)" ]; then
+    pass_test "Reconciliation completed in acceptable time (${DURATION}s < $(e2e_max_wait 30)s)"
 else
-    info_log "$TEST_NS does not exist, skipping multiple SA test"
+    info_log "Reconciliation took ${DURATION}s"
+fi
+
+# Exactly the expected count - no extra operator-created SAs in the namespace
+ACTUAL_SA_COUNT=$(kubectl get sa -n "$TEST_NS" -l "app.kubernetes.io/name=${PB_NAME}" \
+    --no-headers 2>/dev/null | wc -l | tr -d ' ')
+if [ "$ACTUAL_SA_COUNT" -eq "$EXPECTED_SA_COUNT" ]; then
+    pass_test "Exactly $EXPECTED_SA_COUNT operator-managed ServiceAccounts (no duplicates/extras)"
+else
+    fail_test "Unexpected operator-managed ServiceAccount count: $ACTUAL_SA_COUNT (expected $EXPECTED_SA_COUNT)"
+    exit 1
 fi
 
 echo ""
