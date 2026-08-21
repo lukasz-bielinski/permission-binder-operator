@@ -18,8 +18,10 @@ if [ -z "$PROM_POD" ]; then
     info_log "Install Prometheus to enable this test"
     echo ""
 else
+    # Instance-scoped query (issue #35): only this operator namespace's series
+    Q_RB=$(printf '%s' "permission_binder_managed_rolebindings_total{namespace=\"${NAMESPACE:?}\"}" | jq -sRr @uri)
     # Record initial metric value
-    RB_METRIC_BEFORE=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
+    RB_METRIC_BEFORE=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_RB}" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
     info_log "RoleBindings metric before: $RB_METRIC_BEFORE"
 
     # Add new role
@@ -28,7 +30,7 @@ else
     sleep 30
     
     # Check updated metric
-    RB_METRIC_AFTER=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_rolebindings_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
+    RB_METRIC_AFTER=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_RB}" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1)
     info_log "RoleBindings metric after: $RB_METRIC_AFTER"
     
     if [ "$RB_METRIC_AFTER" -gt "$RB_METRIC_BEFORE" ]; then

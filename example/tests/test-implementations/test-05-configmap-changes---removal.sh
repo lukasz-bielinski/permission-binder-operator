@@ -11,8 +11,8 @@ source "$SCRIPT_DIR/test-common.sh"
 echo "Test 5: ConfigMap Changes - Removal"
 echo "------------------------------------"
 
-# Count RoleBindings before removal
-RB_BEFORE_REMOVAL=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+# Count RoleBindings before removal (scoped to this instance's CR - issue #35)
+RB_BEFORE_REMOVAL=$(count_owned_rolebindings "permissionbinder-example")
 
 # Remove entry from whitelist.txt (remove project3 if exists)
 kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | grep -v "project3" > /tmp/whitelist-removal.txt
@@ -22,8 +22,8 @@ rm -f /tmp/whitelist-removal.txt
 kubectl_retry kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-removal="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 20
 
-# Check RoleBinding removed
-RB_AFTER_REMOVAL=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+# Check RoleBinding removed (own CR only)
+RB_AFTER_REMOVAL=$(count_owned_rolebindings "permissionbinder-example")
 if [ "$RB_AFTER_REMOVAL" -le "$RB_BEFORE_REMOVAL" ]; then
     pass_test "RoleBinding removed after ConfigMap entry deletion"
     info_log "RoleBindings: $RB_BEFORE_REMOVAL → $RB_AFTER_REMOVAL"

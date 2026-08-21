@@ -18,8 +18,10 @@ if [ -z "$PROM_POD" ]; then
     info_log "Install Prometheus to enable this test"
     echo ""
 else
+    # Instance-scoped query (issue #35): only this operator namespace's series
+    Q_NS=$(printf '%s' "permission_binder_managed_namespaces_total{namespace=\"${NAMESPACE:?}\"}" | jq -sRr @uri)
     # Record initial namespace metric
-    NS_METRIC_BEFORE=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_namespaces_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
+    NS_METRIC_BEFORE=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_NS}" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
     info_log "Namespaces metric before: $NS_METRIC_BEFORE"
 
     # Add new namespace entry
@@ -32,7 +34,7 @@ else
     sleep 30
     
     # Check updated metric
-    NS_METRIC_AFTER=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_managed_namespaces_total" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
+    NS_METRIC_AFTER=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_NS}" 2>/dev/null | jq -r '.data.result[0].value[1]' | cut -d. -f1 2>/dev/null || echo "0")
     info_log "Namespaces metric after: $NS_METRIC_AFTER"
     
     if [ "$NS_METRIC_AFTER" -gt "$NS_METRIC_BEFORE" ]; then
