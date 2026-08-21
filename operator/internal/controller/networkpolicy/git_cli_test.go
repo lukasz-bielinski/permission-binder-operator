@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -152,7 +153,15 @@ func TestGitCheckoutBranch_ErrorHandling(t *testing.T) {
 
 				_, err = worktree.Add("test.txt")
 				require.NoError(t, err)
-				_, err = worktree.Commit("Initial commit", &git.CommitOptions{})
+				// go-git >= 5.19 requires an explicit author when no git identity is
+				// configured in the environment; keep the test hermetic.
+				_, err = worktree.Commit("Initial commit", &git.CommitOptions{
+					Author: &object.Signature{
+						Name:  "test",
+						Email: "test@example.com",
+						When:  time.Now(),
+					},
+				})
 				require.NoError(t, err)
 
 				// Create a branch
@@ -224,7 +233,15 @@ func TestGitCommitAndPush_NoChanges(t *testing.T) {
 	_, err = worktree.Add("test.txt")
 	require.NoError(t, err)
 
-	_, err = worktree.Commit("Initial commit", &git.CommitOptions{})
+	// go-git >= 5.19 requires an explicit author when no git identity is
+	// configured in the environment; keep the test hermetic.
+	_, err = worktree.Commit("Initial commit", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "test",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
 	require.NoError(t, err)
 
 	credentials := &gitCredentials{
