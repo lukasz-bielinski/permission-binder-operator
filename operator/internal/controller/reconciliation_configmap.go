@@ -153,6 +153,7 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 				permissionBinder.Spec.ServiceAccountMapping,
 				permissionBinder.Spec.ServiceAccountNamingPattern,
 				permissionBinder.Name,
+				permissionBinder.Namespace,
 			)
 			if err != nil {
 				// Log error but don't fail the entire reconciliation
