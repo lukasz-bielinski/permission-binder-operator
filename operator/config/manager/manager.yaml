@@ -68,15 +68,34 @@ spec:
         image: controller:latest
         name: manager
         # env:
-          # WATCH_NAMESPACE (comma-separated) scopes the operator cache to the
-          # listed namespaces. When unset, the operator watches all namespaces
-          # (default). Set it to run multiple isolated instances (e.g. parallel
-          # e2e tests), each watching only its own namespaces.
+          # RECONCILE_NAMESPACES (comma-separated) restricts which
+          # PermissionBinder CRs this instance reconciles, by CR namespace.
+          # The cache stays cluster-wide, so dynamically created target
+          # namespaces remain visible - the recommended scoping knob for
+          # multi-instance deployments. Unset = reconcile all CRs (default).
+          # When combined with WATCH_NAMESPACE, this list must be a SUBSET of
+          # it (entries outside the cache are silently never reconciled).
+          # Narrowing the list leaves CRs with the operator finalizer in
+          # uncovered namespaces undeletable (stuck Terminating).
+          # - name: RECONCILE_NAMESPACES
+          #   value: "my-operator-ns"
+          # WATCH_NAMESPACE (comma-separated) scopes the ENTIRE operator cache.
+          # The list MUST include the CR's namespace, spec.configMapNamespace
+          # and EVERY target namespace derived from the whitelist - a cached
+          # Get/List in any unlisted namespace hard-fails with "unknown
+          # namespace for the cache" (partial reconciliation: namespace
+          # created, RoleBindings missing), and onboarding a new namespace
+          # requires an operator restart with an updated list. Unsuitable for
+          # dynamic namespace onboarding; prefer RECONCILE_NAMESPACES.
+          # When unset, the operator watches all namespaces (default).
           # - name: WATCH_NAMESPACE
-          #   value: "my-operator-ns,my-test-ns"
+          #   value: "my-operator-ns,my-config-ns,my-target-ns-1,my-target-ns-2"
           # MANAGED_BY_VALUE overrides the managed-by label/annotation value this
           # instance stamps on resources it creates and selects in cluster-wide
           # lists. Give each instance a unique value in multi-instance setups.
+          # NOT isolation by itself - only safe combined with
+          # RECONCILE_NAMESPACES (or fully disjoint WATCH_NAMESPACE sets),
+          # otherwise instances re-stamp each other's resources.
           # - name: MANAGED_BY_VALUE
           #   value: "permission-binder-operator-e2e-a"
         securityContext:

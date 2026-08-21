@@ -319,6 +319,23 @@ spec:
         # - Reasons for skipping reconciliation
         - name: DEBUG_MODE
           value: "false"
+        # Multi-instance scoping envs (all optional; see README "Multi-Instance
+        # Isolation"). The e2e runner injects per-instance values right after
+        # the "env:" line above - keep that line intact.
+        # RECONCILE_NAMESPACES: reconcile only CRs from these namespaces
+        # (cache stays cluster-wide; recommended multi-instance knob).
+        # - name: RECONCILE_NAMESPACES
+        #   value: "permissions-binder-operator"
+        # WATCH_NAMESPACE: scopes the WHOLE cache - must list CR namespace +
+        # configMapNamespace + EVERY target namespace, else cached reads fail
+        # with "unknown namespace for the cache"; unsuitable for dynamic
+        # namespace onboarding.
+        # - name: WATCH_NAMESPACE
+        #   value: "permissions-binder-operator,target-ns-1,target-ns-2"
+        # MANAGED_BY_VALUE: per-instance managed-by stamp; only safe combined
+        # with RECONCILE_NAMESPACES (or disjoint WATCH_NAMESPACE sets).
+        # - name: MANAGED_BY_VALUE
+        #   value: "permission-binder-operator-instance-a"
         startupProbe:
           httpGet:
             path: /readyz

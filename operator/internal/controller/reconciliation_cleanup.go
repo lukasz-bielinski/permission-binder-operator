@@ -44,26 +44,61 @@ import (
 //   - Legacy resources only carry AnnotationPermissionBinder (name-only, no
 //     namespace). They are still adopted by name match alone, preserving the
 //     pre-existing behavior (backward compatibility).
-//   - When the reconciled CR has no namespace (e.g. CRs created via plain
-//     envtest clients), matching falls back to name-only as well.
 func isOwnedByPermissionBinder(annotations map[string]string, permissionBinder *permissionv1.PermissionBinder) bool {
+	return isOwnedBy(annotations, permissionBinder.Name, permissionBinder.Namespace)
+}
+
+// isOwnedBy is the string-based form of isOwnedByPermissionBinder, usable from
+// helpers that carry the owner identity as plain strings (ServiceAccount flow).
+// The CRD is namespace-scoped, so ownerNamespace is never empty in a real
+// cluster; an empty ownerNamespace matches only resources without the
+// namespace annotation (legacy) - there is deliberately NO name-only fallback
+// for namespaced owners, to avoid silent cross-instance ownership loss.
+func isOwnedBy(annotations map[string]string, ownerName, ownerNamespace string) bool {
 	if annotations == nil {
 		return false
 	}
-	if annotations[AnnotationPermissionBinder] != permissionBinder.Name {
+	if annotations[AnnotationPermissionBinder] != ownerName {
 		return false
 	}
-	ownerNamespace, hasNamespaceAnnotation := annotations[AnnotationPermissionBinderNamespace]
-	if !hasNamespaceAnnotation {
-		// Legacy resource annotated before ownership became namespace-aware.
+	stampedNamespace := annotations[AnnotationPermissionBinderNamespace]
+	if stampedNamespace == "" {
+		// Legacy resource annotated before ownership became namespace-aware
+		// (or a degenerate empty-value stamp) - match by name alone so such
+		// resources stay manageable instead of being permanently wedged.
 		return true
 	}
-	if permissionBinder.Namespace == "" {
-		// The reconciled CR carries no namespace (e.g. plain envtest clients).
-		// Fall back to name-only matching so existing behavior is preserved.
-		return true
+	return stampedNamespace == ownerNamespace
+}
+
+// canTakeOwnership decides whether the adopt/update (write) path may manage a
+// resource carrying the given annotations, closing the steal-then-delete gap
+// (issue #43): deletion paths already respect ownership, but create/update
+// paths used to adopt unconditionally.
+//
+// The decision is based ONLY on the ownership/orphan annotations - never on
+// spec drift - so manual modifications of an OWNED resource are still
+// reverted (e2e test 15).
+//
+// Allowed:
+//   - unclaimed: no AnnotationPermissionBinder at all (pre-existing user
+//     resources; preserves the long-standing adoption of plain namespaces),
+//   - owned: isOwnedBy() matches, including legacy name-only resources
+//     (which then get the namespace annotation stamped retroactively),
+//   - orphaned: AnnotationOrphanedAt is set by SAFE-MODE cleanup - explicit
+//     adoption, and the documented migration path for moving a CR between
+//     namespaces (delete old CR -> orphan -> recreate -> re-adopt).
+//
+// Refused: a live claim by ANOTHER PermissionBinder (different name or
+// namespace) with no orphan marker.
+func canTakeOwnership(annotations map[string]string, ownerName, ownerNamespace string) bool {
+	if annotations == nil || annotations[AnnotationPermissionBinder] == "" {
+		return true // unclaimed
 	}
-	return ownerNamespace == permissionBinder.Namespace
+	if isOwnedBy(annotations, ownerName, ownerNamespace) {
+		return true // already ours (or legacy name-only match)
+	}
+	return annotations[AnnotationOrphanedAt] != "" // explicit orphan - adoptable
 }
 
 // cleanupManagedResources cleans up all resources managed by this PermissionBinder
@@ -84,8 +119,8 @@ func (r *PermissionBinderReconciler) cleanupManagedResources(ctx context.Context
 			if roleBinding.Annotations == nil {
 				roleBinding.Annotations = make(map[string]string)
 			}
-			roleBinding.Annotations["permission-binder.io/orphaned-at"] = time.Now().Format(time.RFC3339)
-			roleBinding.Annotations["permission-binder.io/orphaned-by"] = "permission-binder-deletion"
+			roleBinding.Annotations[AnnotationOrphanedAt] = time.Now().Format(time.RFC3339)
+			roleBinding.Annotations[AnnotationOrphanedBy] = OrphanedByPermissionBinderDeletion
 
 			if err := r.Update(ctx, &roleBinding); err != nil {
 				logger.Error(err, "Failed to annotate RoleBinding as orphaned", "namespace", roleBinding.Namespace, "name", roleBinding.Name)
@@ -111,8 +146,8 @@ func (r *PermissionBinderReconciler) cleanupManagedResources(ctx context.Context
 			if ns.Annotations == nil {
 				ns.Annotations = make(map[string]string)
 			}
-			ns.Annotations["permission-binder.io/orphaned-at"] = time.Now().Format(time.RFC3339)
-			ns.Annotations["permission-binder.io/orphaned-by"] = "permission-binder-deletion"
+			ns.Annotations[AnnotationOrphanedAt] = time.Now().Format(time.RFC3339)
+			ns.Annotations[AnnotationOrphanedBy] = OrphanedByPermissionBinderDeletion
 
 			if err := r.Update(ctx, &ns); err != nil {
 				logger.Error(err, "Failed to annotate namespace as orphaned", "namespace", namespace)

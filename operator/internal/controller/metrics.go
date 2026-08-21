@@ -59,6 +59,18 @@ var (
 		},
 	)
 
+	// Counter for refused ownership takeovers (issue #43): a resource carrying
+	// a live claim by ANOTHER PermissionBinder was skipped by the write path
+	// instead of being stolen. resource_type: namespace | rolebinding |
+	// serviceaccount_rolebinding.
+	ownershipConflictsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "permission_binder_ownership_conflicts_total",
+			Help: "Total number of refused resource takeovers due to a live ownership claim by another PermissionBinder",
+		},
+		[]string{"resource_type"},
+	)
+
 	// Gauge for managed RoleBindings
 	managedRoleBindingsTotal = prometheus.NewGauge(
 		prometheus.GaugeOpts{
@@ -126,6 +138,7 @@ func init() {
 		missingClusterRoleTotal,
 		orphanedResourcesTotal,
 		adoptionEventsTotal,
+		ownershipConflictsTotal,
 		ldapGroupOperationsTotal,
 		ldapConnectionsTotal,
 		managedRoleBindingsTotal,
@@ -162,7 +175,7 @@ func (r *PermissionBinderReconciler) updateMetrics(ctx context.Context, permissi
 	orphanedNS := 0
 
 	for _, rb := range roleBindings {
-		if rb.Annotations != nil && rb.Annotations["permission-binder.io/orphaned-at"] != "" {
+		if rb.Annotations != nil && rb.Annotations[AnnotationOrphanedAt] != "" {
 			orphanedRB++
 		}
 	}
@@ -176,7 +189,7 @@ func (r *PermissionBinderReconciler) updateMetrics(ctx context.Context, permissi
 		selector = selector.Add(*req)
 		if err := r.List(ctx, &nsList, &client.ListOptions{LabelSelector: selector}); err == nil {
 			for _, ns := range nsList.Items {
-				if ns.Annotations != nil && ns.Annotations["permission-binder.io/orphaned-at"] != "" {
+				if ns.Annotations != nil && ns.Annotations[AnnotationOrphanedAt] != "" {
 					orphanedNS++
 				}
 			}

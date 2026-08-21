@@ -14,6 +14,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const (
+	// Annotation keys specific to the ServiceAccount flow.
+	AnnotationCreatedBy      = "permission-binder.io/created-by"
+	AnnotationSAType         = "permission-binder.io/sa-type"
+	AnnotationServiceAccount = "permission-binder.io/service-account"
+)
+
 // GenerateServiceAccountName generates a ServiceAccount name based on the pattern
 // Available variables: {namespace}, {name}
 // Default pattern: {namespace}-sa-{name}
@@ -80,16 +87,16 @@ func ProcessServiceAccounts(
 						Name:      fullSAName,
 						Namespace: namespace,
 						Labels: map[string]string{
-							"app.kubernetes.io/managed-by": "permission-binder-operator",
+							"app.kubernetes.io/managed-by": ManagedByValue,
 							"app.kubernetes.io/component":  saName, // deploy, runtime, etc.
 							"app.kubernetes.io/name":       ownerName,
 						},
 						Annotations: map[string]string{
-							"permission-binder.io/created-by":                  "permission-binder-operator",
-							"permission-binder.io/sa-type":                     saName,
-							"permission-binder.io/role":                        roleName,
-							"permission-binder.io/permission-binder":           ownerName,
-							"permission-binder.io/permission-binder-namespace": ownerNamespace,
+							AnnotationCreatedBy:                 ManagedByValue,
+							AnnotationSAType:                    saName,
+							AnnotationRole:                      roleName,
+							AnnotationPermissionBinder:          ownerName,
+							AnnotationPermissionBinderNamespace: ownerNamespace,
 						},
 					},
 				}
@@ -118,6 +125,17 @@ func ProcessServiceAccounts(
 			logger.Info("ServiceAccount already exists, skipping creation",
 				"name", fullSAName,
 				"namespace", namespace)
+			// Visibility only (issue #43): the SA half never mutates existing
+			// objects, but flag when a foreign-claimed SA is treated as satisfied.
+			if sa.Annotations[AnnotationPermissionBinder] != "" && !isOwnedBy(sa.Annotations, ownerName, ownerNamespace) {
+				logger.Info("Existing ServiceAccount is claimed by another PermissionBinder - treating as satisfied without taking ownership",
+					"name", fullSAName,
+					"namespace", namespace,
+					"claimedBy", sa.Annotations[AnnotationPermissionBinder],
+					"claimedByNamespace", sa.Annotations[AnnotationPermissionBinderNamespace],
+					"reconciledBy", ownerName,
+					"reconciledByNamespace", ownerNamespace)
+			}
 		}
 
 		// 2. Create or update RoleBinding for ServiceAccount
@@ -145,16 +163,16 @@ func ProcessServiceAccounts(
 						Name:      roleBindingName,
 						Namespace: namespace,
 						Labels: map[string]string{
-							"app.kubernetes.io/managed-by": "permission-binder-operator",
+							"app.kubernetes.io/managed-by": ManagedByValue,
 							"app.kubernetes.io/component":  "service-account-binding",
 							"app.kubernetes.io/name":       ownerName,
 						},
 						Annotations: map[string]string{
-							"permission-binder.io/created-by":                  "permission-binder-operator",
-							"permission-binder.io/service-account":             fullSAName,
-							"permission-binder.io/sa-type":                     saName,
-							"permission-binder.io/permission-binder":           ownerName,
-							"permission-binder.io/permission-binder-namespace": ownerNamespace,
+							AnnotationCreatedBy:                 ManagedByValue,
+							AnnotationServiceAccount:            fullSAName,
+							AnnotationSAType:                    saName,
+							AnnotationPermissionBinder:          ownerName,
+							AnnotationPermissionBinderNamespace: ownerNamespace,
 						},
 					},
 					RoleRef: rbacv1.RoleRef{
@@ -193,6 +211,26 @@ func ProcessServiceAccounts(
 				return processedSAs, err
 			}
 		} else {
+			// OWNERSHIP GATE (issue #43): a RoleBinding with a live claim by
+			// another PermissionBinder is excluded from this CR's processing
+			// entirely - not deleted/recreated on drift and not counted in
+			// processedSAs/status either (consistent exclusion, no metric
+			// flapping when the mapping later changes). SA RoleBindings are
+			// never orphan-annotated (SAFE-MODE cleanup selects by
+			// LabelManagedBy, which they do not carry), so only unclaimed,
+			// own and legacy name-only RoleBindings are manageable here.
+			if !canTakeOwnership(rb.Annotations, ownerName, ownerNamespace) {
+				ownershipConflictsTotal.WithLabelValues("serviceaccount_rolebinding").Inc()
+				logger.Info("Refusing to take ownership of ServiceAccount RoleBinding claimed by another PermissionBinder",
+					"roleBinding", roleBindingName,
+					"namespace", namespace,
+					"claimedBy", rb.Annotations[AnnotationPermissionBinder],
+					"claimedByNamespace", rb.Annotations[AnnotationPermissionBinderNamespace],
+					"reconciledBy", ownerName,
+					"reconciledByNamespace", ownerNamespace)
+				continue
+			}
+
 			// RoleBinding exists, check if it needs update
 			needsUpdate := false
 
@@ -210,6 +248,32 @@ func ProcessServiceAccounts(
 				logger.Info("RoleBinding subject changed, needs update",
 					"roleBinding", roleBindingName)
 				needsUpdate = true
+			}
+
+			// Legacy RoleBindings (name-only or missing ownership annotations)
+			// are re-stamped in place on first reconcile, so the
+			// namespace-aware takeover protection engages immediately after
+			// upgrade instead of only when the role mapping changes (issue #43
+			// upgrade asymmetry). Annotation-only changes use a plain Update -
+			// delete+recreate would briefly drop the granted permissions.
+			stampOutdated := rb.Annotations[AnnotationPermissionBinderNamespace] != ownerNamespace ||
+				rb.Annotations[AnnotationPermissionBinder] != ownerName
+
+			if !needsUpdate && stampOutdated {
+				if rb.Annotations == nil {
+					rb.Annotations = make(map[string]string)
+				}
+				rb.Annotations[AnnotationPermissionBinder] = ownerName
+				rb.Annotations[AnnotationPermissionBinderNamespace] = ownerNamespace
+				if err := k8sClient.Update(ctx, rb); err != nil {
+					logger.Error(err, "Failed to re-stamp ownership annotations on RoleBinding",
+						"roleBinding", roleBindingName,
+						"namespace", namespace)
+					return processedSAs, err
+				}
+				logger.Info("Re-stamped ownership annotations on legacy RoleBinding",
+					"roleBinding", roleBindingName,
+					"namespace", namespace)
 			}
 
 			if needsUpdate {
@@ -231,16 +295,16 @@ func ProcessServiceAccounts(
 						Name:      roleBindingName,
 						Namespace: namespace,
 						Labels: map[string]string{
-							"app.kubernetes.io/managed-by": "permission-binder-operator",
+							"app.kubernetes.io/managed-by": ManagedByValue,
 							"app.kubernetes.io/component":  "service-account-binding",
 							"app.kubernetes.io/name":       ownerName,
 						},
 						Annotations: map[string]string{
-							"permission-binder.io/created-by":                  "permission-binder-operator",
-							"permission-binder.io/service-account":             fullSAName,
-							"permission-binder.io/sa-type":                     saName,
-							"permission-binder.io/permission-binder":           ownerName,
-							"permission-binder.io/permission-binder-namespace": ownerNamespace,
+							AnnotationCreatedBy:                 ManagedByValue,
+							AnnotationServiceAccount:            fullSAName,
+							AnnotationSAType:                    saName,
+							AnnotationPermissionBinder:          ownerName,
+							AnnotationPermissionBinderNamespace: ownerNamespace,
 						},
 					},
 					RoleRef: rbacv1.RoleRef{

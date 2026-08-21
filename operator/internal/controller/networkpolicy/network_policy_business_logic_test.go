@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -141,11 +142,66 @@ func TestCheckMultiplePermissionBinders(t *testing.T) {
 			}
 			r := setupFakeClient(objs...)
 
-			err := CheckMultiplePermissionBinders(ctx, r)
+			err := CheckMultiplePermissionBinders(ctx, r, nil)
 			require.NoError(t, err)
 
 			// Note: We can't easily test metrics increment without exposing them,
 			// but the function should complete without error
+		})
+	}
+}
+
+// TestCheckMultiplePermissionBindersNamespaceScoping verifies that the
+// allowedNamespaces filter (RECONCILE_NAMESPACES, issue #43) excludes foreign
+// instances' CRs from the multiple-CR count: two NetworkPolicy-enabled binders
+// in different namespaces do not trip the warning when the instance is scoped
+// to one of them.
+func TestCheckMultiplePermissionBindersNamespaceScoping(t *testing.T) {
+	binders := []*permissionv1.PermissionBinder{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "binder-a", Namespace: "instance-a"},
+			Spec: permissionv1.PermissionBinderSpec{
+				NetworkPolicy: &permissionv1.NetworkPolicySpec{Enabled: true},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "binder-b", Namespace: "instance-b"},
+			Spec: permissionv1.PermissionBinderSpec{
+				NetworkPolicy: &permissionv1.NetworkPolicySpec{Enabled: true},
+			},
+		},
+	}
+
+	tests := []struct {
+		name              string
+		allowedNamespaces []string
+		expectWarning     bool
+	}{
+		{name: "nil allowlist considers all namespaces", allowedNamespaces: nil, expectWarning: true},
+		{name: "scoped to instance-a ignores instance-b", allowedNamespaces: []string{"instance-a"}, expectWarning: false},
+		{name: "scoped to both sees both", allowedNamespaces: []string{"instance-a", "instance-b"}, expectWarning: true},
+		{name: "scoped to unknown namespace sees none", allowedNamespaces: []string{"instance-c"}, expectWarning: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			objs := make([]client.Object, len(binders))
+			for i, binder := range binders {
+				objs[i] = binder
+			}
+			r := setupFakeClient(objs...)
+
+			before := testutil.ToFloat64(NetworkPolicyMultipleCRsWarningTotal)
+			err := CheckMultiplePermissionBinders(ctx, r, tt.allowedNamespaces)
+			require.NoError(t, err)
+			delta := testutil.ToFloat64(NetworkPolicyMultipleCRsWarningTotal) - before
+
+			if tt.expectWarning {
+				require.Equal(t, float64(1), delta, "expected the multiple-CRs warning metric to increment")
+			} else {
+				require.Equal(t, float64(0), delta, "expected no multiple-CRs warning for a scoped instance")
+			}
 		})
 	}
 }

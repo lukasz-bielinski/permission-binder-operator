@@ -203,12 +203,15 @@ render_instance_manifests() {
         "$SCRIPT_DIR/../deployment/operator-deployment.yaml" \
         | sed -e "/^        env:\$/a\\
         - name: MANAGED_BY_VALUE\\
-          value: \"permission-binder-operator-${INSTANCE}\"" \
+          value: \"permission-binder-operator-${INSTANCE}\"\\
+        - name: RECONCILE_NAMESPACES\\
+          value: \"${NAMESPACE}\"" \
         > "$DEPLOYMENT_MANIFEST"
     # Note: WATCH_NAMESPACE is deliberately NOT set for e2e instances - test
     # namespaces are created dynamically from the whitelist, so a static cache
-    # scope would blind the operator to them. Isolation comes from the unique
-    # MANAGED_BY_VALUE plus the namespace-aware ownership annotations (PR #38).
+    # scope would blind the operator to them. Isolation = unique
+    # MANAGED_BY_VALUE + RECONCILE_NAMESPACES=$NAMESPACE (this instance only
+    # reconciles its own CRs) + the ownership gate on write paths (issue #43).
 
     # ServiceMonitor: unique name and point namespaceSelector at this instance's
     # operator namespace. It stays in the shared "monitoring" namespace (where
