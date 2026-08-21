@@ -250,22 +250,15 @@ func TestGitCommitAndPush_NoChanges(t *testing.T) {
 		email:    "test@example.com",
 	}
 
-	// Call gitCommitAndPush with no changes
-	// Note: This will fail on push (no remote), but should handle no changes correctly
-	err = gitCommitAndPush(ctx, tmpDir, "main", "No changes commit", credentials, true)
+	// Call gitCommitAndPush with no changes: it must detect the clean worktree
+	// and return early without attempting a push (there is no remote).
+	pushErr := gitCommitAndPush(ctx, tmpDir, "main", "No changes commit", credentials, true)
 
-	// Should return error about push (no remote configured), but commit logic should work
-	// The function should detect no changes and return early
-	// However, since we're testing with go-git, let's check the status first
 	status, err := worktree.Status()
 	require.NoError(t, err)
+	require.True(t, status.IsClean(), "worktree should be clean before the assertion")
 
-	if status.IsClean() {
-		// No changes - should return early without error (before push attempt)
-		// But since we don't have a remote, push will fail
-		// The function should detect no changes before attempting push
-		assert.NoError(t, err, "should not error on no changes")
-	}
+	assert.NoError(t, pushErr, "should not error on no changes")
 
 	// Verify no new commit was created
 	commitIter, err := repo.Log(&git.LogOptions{})
