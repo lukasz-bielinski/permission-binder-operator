@@ -6,6 +6,12 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Test namespaces carry the per-instance prefix (empty in legacy mode).
+# CR name (test-invalid-entries) and ConfigMap name are NOT prefixed.
+VALID_NS="${TEST_NS_PREFIX}valid-invalid-test"
+VALID_NS_2="${TEST_NS_PREFIX}valid-invalid-test-2"
+STRESS_NS="${TEST_NS_PREFIX}stress-invalid-test"
+
 # ============================================================================
 # ============================================================================
 echo "Test 43: Invalid Whitelist Entry Handling (Bug Fix v1.5.3)"
@@ -38,7 +44,7 @@ metadata:
 data:
   whitelist.txt: |-
     # Valid entry
-    CN=COMPANY-K8S-valid-invalid-test-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-${VALID_NS}-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
     
     # Invalid entry: Missing prefix
     CN=INVALID-PREFIX-ns-engineer,OU=Kubernetes,OU=Platform,DC=example,DC=com
@@ -53,7 +59,7 @@ data:
     CN=,OU=Kubernetes,OU=Platform,DC=example,DC=com
     
     # Another valid entry (should be processed)
-    CN=COMPANY-K8S-valid-invalid-test-2-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-${VALID_NS_2}-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
 EOF
 
 # Wait for initial processing
@@ -72,19 +78,19 @@ else
 fi
 
 # Verify valid entries were processed
-if kubectl get namespace valid-invalid-test >/dev/null 2>&1; then
+if kubectl get namespace "$VALID_NS" >/dev/null 2>&1; then
     pass_test "Valid namespace created"
 else
     fail_test "Valid namespace not created"
 fi
 
-if kubectl get namespace valid-invalid-test-2 >/dev/null 2>&1; then
+if kubectl get namespace "$VALID_NS_2" >/dev/null 2>&1; then
     pass_test "Second valid namespace created"
 else
     info_log "Second valid namespace not yet created"
 fi
 
-if kubectl get rolebinding valid-invalid-test-engineer -n valid-invalid-test >/dev/null 2>&1; then
+if kubectl get rolebinding "${VALID_NS}-engineer" -n "$VALID_NS" >/dev/null 2>&1; then
     pass_test "Valid RoleBinding created"
 else
     fail_test "Valid RoleBinding not created"
@@ -94,8 +100,12 @@ fi
 sleep 5
 
 # Verify invalid entries logged as INFO (not ERROR)
-# Check logs from last 5 minutes to catch all processing
-ERROR_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --since=5m 2>/dev/null | jq -r 'select(.level == "error") | select(.message | contains("parse") or contains("extract") or contains("invalid")) | .message' 2>/dev/null || echo "")
+# Check logs from last 5 minutes to catch all processing.
+# Scoped to THIS test's CR/ConfigMap: this operator reconciles ALL
+# PermissionBinders (until WATCH_NAMESPACE is used), so error entries caused
+# by a sibling instance's invalid-config tests must not trip this assertion.
+# fromjson? skips non-JSON lines instead of aborting the whole pipe.
+ERROR_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --since=5m 2>/dev/null | jq -R -r --arg pb "test-invalid-entries" --arg cm "permission-config-invalid-test" 'fromjson? | select(.level == "error") | select(.message | contains("parse") or contains("extract") or contains("invalid")) | select(tostring | contains($pb) or contains($cm)) | .message' 2>/dev/null || echo "")
 
 if [ -z "$ERROR_LOGS" ]; then
     pass_test "No ERROR level logs for invalid entries"
@@ -123,18 +133,23 @@ fi
 
 # Verify log entries contain required fields
 # Find log entry with "Skipping invalid" message and check required fields
+# Scratch files live under $RUN_DIR (per-instance) and are removed up front so
+# a stale file from a previous run can never satisfy the check.
+LOG_ENTRY_VALID="${RUN_DIR:-/tmp}/log-entry-43-valid.txt"
+LOG_ENTRY_STATUS="${RUN_DIR:-/tmp}/log-entry-43-status.txt"
+rm -f "$LOG_ENTRY_VALID" "$LOG_ENTRY_STATUS"
 LOG_ENTRY_FOUND=false
 kubectl logs -n $NAMESPACE deployment/operator-controller-manager --since=5m 2>/dev/null | while IFS= read -r line; do
     # Try to parse as JSON and check if it matches
     if echo "$line" | jq -e 'select(.message | contains("Skipping invalid")) | select(.line != null) | select(.reason != null) | select(.action == "skip")' >/dev/null 2>&1; then
-        echo "$line" > /tmp/log-entry-43-valid.txt
+        echo "$line" > "$LOG_ENTRY_VALID"
         echo "found"
         break
     fi
-done > /tmp/log-entry-43-status.txt 2>/dev/null
+done > "$LOG_ENTRY_STATUS" 2>/dev/null
 
-if [ -s /tmp/log-entry-43-valid.txt ] && grep -q "found" /tmp/log-entry-43-status.txt 2>/dev/null; then
-    LOG_ENTRY=$(cat /tmp/log-entry-43-valid.txt)
+if [ -s "$LOG_ENTRY_VALID" ] && grep -q "found" "$LOG_ENTRY_STATUS" 2>/dev/null; then
+    LOG_ENTRY=$(cat "$LOG_ENTRY_VALID")
     HAS_LINE=$(echo "$LOG_ENTRY" | jq -e '.line != null' >/dev/null 2>&1 && echo "true" || echo "false")
     HAS_REASON=$(echo "$LOG_ENTRY" | jq -e '.reason != null and .reason != ""' >/dev/null 2>&1 && echo "true" || echo "false")
     HAS_ACTION=$(echo "$LOG_ENTRY" | jq -e '.action == "skip"' >/dev/null 2>&1 && echo "true" || echo "false")
@@ -152,14 +167,23 @@ else
     info_log "No log entries with required fields found (may need more reconciliations)"
 fi
 
-# Verify no stacktraces in logs
-# Check logs from last 5 minutes
-STACKTRACE=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manager --since=5m 2>/dev/null | grep -i "stacktrace\|panic\|goroutine" || echo "")
+# Verify no REAL crash evidence in logs.
+# A plain grep for stacktrace|panic|goroutine false-fails: zap attaches a
+# literal "stacktrace" JSON field to every error-level entry, including
+# routine recoverable ones (e.g. status-update conflicts caused by a sibling
+# instance reconciling the same CRs). Real crashes show up as:
+#  - plain-text Go runtime dump lines (panic: ... / goroutine N [state]:), or
+#  - error entries WITH a stacktrace that reference THIS test's CR/ConfigMap.
+LOGS_43="${RUN_DIR:-/tmp}/operator-logs-43.txt"
+kubectl logs -n $NAMESPACE deployment/operator-controller-manager --since=5m >"$LOGS_43" 2>/dev/null
+CRASH_DUMP=$(grep -E '^panic:|^goroutine [0-9]+ \[' "$LOGS_43" 2>/dev/null || echo "")
+SCOPED_STACKTRACE=$(jq -R -r --arg pb "test-invalid-entries" --arg cm "permission-config-invalid-test" 'fromjson? | select(.level == "error") | select(.stacktrace != null and .stacktrace != "") | select(tostring | contains($pb) or contains($cm)) | .message' "$LOGS_43" 2>/dev/null || echo "")
+STACKTRACE="${CRASH_DUMP}${SCOPED_STACKTRACE}"
 
 if [ -z "$STACKTRACE" ]; then
     pass_test "No stacktraces in logs"
 else
-    fail_test "Found stacktrace in logs"
+    fail_test "Found stacktrace in logs: $(echo "$STACKTRACE" | head -2)"
 fi
 
 # Test multiple invalid entries (stress test)
@@ -172,7 +196,7 @@ metadata:
 data:
   whitelist.txt: |-
     $(for i in {1..10}; do echo "INVALID-ENTRY-$i"; done)
-    CN=COMPANY-K8S-stress-invalid-test-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
+    CN=COMPANY-K8S-${STRESS_NS}-admin,OU=Kubernetes,OU=Platform,DC=example,DC=com
 EOF
 
 # Wait for processing
@@ -190,7 +214,7 @@ else
     fail_test "Operator crashed during stress test"
 fi
 
-if kubectl get namespace stress-invalid-test >/dev/null 2>&1; then
+if kubectl get namespace "$STRESS_NS" >/dev/null 2>&1; then
     pass_test "Valid entry processed despite many invalid entries"
 else
     info_log "Valid entry not yet processed (may need more time)"

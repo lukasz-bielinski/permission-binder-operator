@@ -190,4 +190,3 @@ func ProcessRemovedNamespaces(
 
 	return nil
 }
-

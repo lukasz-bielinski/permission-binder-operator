@@ -78,4 +78,3 @@ func CheckMultiplePermissionBinders(
 
 	return nil
 }
-

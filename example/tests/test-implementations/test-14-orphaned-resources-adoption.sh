@@ -12,7 +12,7 @@ echo "Test 14: Orphaned Resources Adoption"
 echo "--------------------------------------"
 
 # Check for orphaned resources (from Test 8)
-ORPHANED_BEFORE=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length')
+ORPHANED_BEFORE=$(kubectl_retry kubectl get rolebindings -A -l "$MANAGED_BY_LABEL" -o json | jq --arg pb "permissionbinder-example" --arg ns "$NAMESPACE" '[.items[] | select(.metadata.annotations["permission-binder.io/permission-binder"] == $pb and ((.metadata.annotations["permission-binder.io/permission-binder-namespace"] // $ns) == $ns) and .metadata.annotations["permission-binder.io/orphaned-at"])] | length')
 info_log "Orphaned resources before reconciliation: $ORPHANED_BEFORE"
 
 # Force reconciliation
@@ -24,7 +24,7 @@ ADOPTION_LOGS=$(kubectl logs -n $NAMESPACE deployment/operator-controller-manage
 info_log "Adoption-related log entries: $ADOPTION_LOGS"
 
 # Check if orphaned resources decreased
-ORPHANED_AFTER=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.metadata.annotations["permission-binder.io/orphaned-at"])] | length' | tr -d '\n')
+ORPHANED_AFTER=$(kubectl_retry kubectl get rolebindings -A -l "$MANAGED_BY_LABEL" -o json | jq --arg pb "permissionbinder-example" --arg ns "$NAMESPACE" '[.items[] | select(.metadata.annotations["permission-binder.io/permission-binder"] == $pb and ((.metadata.annotations["permission-binder.io/permission-binder-namespace"] // $ns) == $ns) and .metadata.annotations["permission-binder.io/orphaned-at"])] | length' | tr -d '\n')
 
 if [ "$ORPHANED_AFTER" -lt "$ORPHANED_BEFORE" ] || [ "$ADOPTION_LOGS" -gt 0 ]; then
     pass_test "Automatic adoption of orphaned resources"

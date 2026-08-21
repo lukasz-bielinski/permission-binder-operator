@@ -4,7 +4,7 @@
 
 Comprehensive End-to-End test suite for the Permission Binder Operator covering all scenarios from `e2e-test-scenarios.md`.
 
-**All tests are run with FULL ISOLATION** - each test gets a fresh cluster cleanup and fresh operator deployment.
+**All tests are run with FULL ISOLATION** - each test gets a fresh cluster cleanup and fresh operator deployment. The PermissionBinder CRD is cluster-scoped and shared by all tests, so it is installed **once** at suite start and left in place by per-test cleanup.
 
 ## Test Structure
 
@@ -12,16 +12,18 @@ Comprehensive End-to-End test suite for the Permission Binder Operator covering 
 - **`test-common.sh`** - Common helper functions used by all tests
 - **`test-implementations/`** - Individual test implementation files (1 test = 1 file)
 - **`scenarios/`** - Test scenario documentation (1 scenario = 1 file)
-- **`cleanup-operator.sh`** - Cluster cleanup script
+- **`cleanup-operator.sh`** - Cluster cleanup script (keeps the CRD by default; use `--full` for a complete wipe)
 
 ## Running Tests
 
 ### Full Isolation Mode (Always Used)
 
-All tests are run with full isolation - each test gets:
-1. **Fresh cluster cleanup** - All operator resources removed
-2. **Fresh operator deployment** - New operator pod deployed from scratch
+The runner installs the PermissionBinder CRD (`deployment/crd.yaml`) **once** at suite start. Each test then gets:
+1. **Fresh cluster cleanup** - All operator resources removed (the CRD is kept)
+2. **Fresh operator deployment** - New operator pod deployed from scratch (namespace/RBAC/Deployment only, no CRD re-apply)
 3. **Test execution** - Test runs against clean environment
+
+> **Manual full reset:** `./cleanup-operator.sh --full` also deletes the CRD (the runner re-installs it on the next suite start).
 
 ```bash
 # Run all tests (Pre-Test + Tests 1-48)
@@ -111,9 +113,9 @@ Results are saved to:
 
 ### Step 2: Fresh Operator Deployment
 ```bash
-kubectl apply -f deployment/
+kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonitor.yaml
 ```
-- Deploys operator from scratch
+- Deploys operator from scratch (the CRD from `deployment/crd.yaml` is already installed and is not re-applied)
 - Creates GitHub GitOps credentials Secret (if file exists)
 - Waits for operator pod to be ready (timeout: 120s)
 

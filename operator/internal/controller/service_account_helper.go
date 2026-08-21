@@ -33,6 +33,8 @@ func GenerateServiceAccountName(pattern, namespace, name string) string {
 
 // ProcessServiceAccounts creates ServiceAccounts and RoleBindings for a namespace
 // based on the ServiceAccountMapping configuration
+// ownerName and ownerNamespace identify the owning PermissionBinder CR; they are
+// stamped on the created resources so ownership is unique per operator instance.
 func ProcessServiceAccounts(
 	ctx context.Context,
 	k8sClient client.Client,
@@ -40,6 +42,7 @@ func ProcessServiceAccounts(
 	saMapping map[string]string,
 	namingPattern string,
 	ownerName string,
+	ownerNamespace string,
 ) ([]string, error) {
 	logger := log.FromContext(ctx)
 	processedSAs := []string{}
@@ -82,9 +85,11 @@ func ProcessServiceAccounts(
 							"app.kubernetes.io/name":       ownerName,
 						},
 						Annotations: map[string]string{
-							"permission-binder.io/created-by": "permission-binder-operator",
-							"permission-binder.io/sa-type":    saName,
-							"permission-binder.io/role":       roleName,
+							"permission-binder.io/created-by":                  "permission-binder-operator",
+							"permission-binder.io/sa-type":                     saName,
+							"permission-binder.io/role":                        roleName,
+							"permission-binder.io/permission-binder":           ownerName,
+							"permission-binder.io/permission-binder-namespace": ownerNamespace,
 						},
 					},
 				}
@@ -145,9 +150,11 @@ func ProcessServiceAccounts(
 							"app.kubernetes.io/name":       ownerName,
 						},
 						Annotations: map[string]string{
-							"permission-binder.io/created-by":      "permission-binder-operator",
-							"permission-binder.io/service-account": fullSAName,
-							"permission-binder.io/sa-type":         saName,
+							"permission-binder.io/created-by":                  "permission-binder-operator",
+							"permission-binder.io/service-account":             fullSAName,
+							"permission-binder.io/sa-type":                     saName,
+							"permission-binder.io/permission-binder":           ownerName,
+							"permission-binder.io/permission-binder-namespace": ownerNamespace,
 						},
 					},
 					RoleRef: rbacv1.RoleRef{
@@ -229,9 +236,11 @@ func ProcessServiceAccounts(
 							"app.kubernetes.io/name":       ownerName,
 						},
 						Annotations: map[string]string{
-							"permission-binder.io/created-by":      "permission-binder-operator",
-							"permission-binder.io/service-account": fullSAName,
-							"permission-binder.io/sa-type":         saName,
+							"permission-binder.io/created-by":                  "permission-binder-operator",
+							"permission-binder.io/service-account":             fullSAName,
+							"permission-binder.io/sa-type":                     saName,
+							"permission-binder.io/permission-binder":           ownerName,
+							"permission-binder.io/permission-binder-namespace": ownerNamespace,
 						},
 					},
 					RoleRef: rbacv1.RoleRef{

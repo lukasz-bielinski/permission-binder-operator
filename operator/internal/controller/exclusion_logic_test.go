@@ -179,4 +179,3 @@ func BenchmarkIsExcluded_Large(b *testing.B) {
 		_ = r.isExcluded(key, excludeList)
 	}
 }
-

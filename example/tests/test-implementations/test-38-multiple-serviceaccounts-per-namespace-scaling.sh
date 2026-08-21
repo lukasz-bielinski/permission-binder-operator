@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Per-instance test namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+
 # ============================================================================
 # ============================================================================
 echo "Test 38: Multiple ServiceAccounts per Namespace"
@@ -41,9 +44,9 @@ sleep 25
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
-if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
     # Count ServiceAccounts
-    ACTUAL_SA_COUNT=$(kubectl get sa -n test-namespace-001 2>/dev/null | grep "sa-" | wc -l)
+    ACTUAL_SA_COUNT=$(kubectl get sa -n "$TEST_NS" 2>/dev/null | grep "sa-" | wc -l)
     ACTUAL_SA_COUNT=$(echo "$ACTUAL_SA_COUNT" | tr -d ' \n')
     
     info_log "ServiceAccounts created: $ACTUAL_SA_COUNT"
@@ -63,14 +66,14 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
     fi
     
     # Check for duplicates
-    DUPLICATE_CHECK=$(kubectl get sa -n test-namespace-001 -o json 2>/dev/null | jq -r '[.items[].metadata.name] | group_by(.) | map(select(length > 1)) | length')
+    DUPLICATE_CHECK=$(kubectl get sa -n "$TEST_NS" -o json 2>/dev/null | jq -r '[.items[].metadata.name] | group_by(.) | map(select(length > 1)) | length')
     if [ "$DUPLICATE_CHECK" == "0" ]; then
         pass_test "No duplicate ServiceAccounts"
     else
         fail_test "Duplicate ServiceAccounts detected"
     fi
 else
-    info_log "test-namespace-001 does not exist, skipping multiple SA test"
+    info_log "$TEST_NS does not exist, skipping multiple SA test"
 fi
 
 echo ""

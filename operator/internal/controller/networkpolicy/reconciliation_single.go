@@ -183,9 +183,9 @@ func ProcessNetworkPolicyForNamespace(
 
 	// Process templates (Variant A: new from template)
 	var filesToCreate []struct {
-		path    string
-		content []byte
-		policy  *networkingv1.NetworkPolicy
+		path     string
+		content  []byte
+		policy   *networkingv1.NetworkPolicy
 		isBackup bool // true if file is backed up from cluster (Variant B/C), false if created from template (Variant A)
 	}
 
@@ -219,14 +219,14 @@ func ProcessNetworkPolicyForNamespace(
 			}
 
 			filesToCreate = append(filesToCreate, struct {
-				path    string
-				content []byte
-				policy  *networkingv1.NetworkPolicy
+				path     string
+				content  []byte
+				policy   *networkingv1.NetworkPolicy
 				isBackup bool
 			}{
-				path:    filePath,
-				content: yamlContent,
-				policy:  &policy,
+				path:     filePath,
+				content:  yamlContent,
+				policy:   &policy,
 				isBackup: false, // Variant A: created from template
 			})
 		} else if backupExisting && shouldBackupExistingPolicy(namespace, backupExisting, permissionBinder.Spec.NetworkPolicy.ExcludeBackupForNamespaces) {
@@ -238,14 +238,14 @@ func ProcessNetworkPolicyForNamespace(
 			}
 
 			filesToCreate = append(filesToCreate, struct {
-				path    string
-				content []byte
-				policy  *networkingv1.NetworkPolicy
+				path     string
+				content  []byte
+				policy   *networkingv1.NetworkPolicy
 				isBackup bool
 			}{
-				path:    filePath,
-				content: yamlContent,
-				policy:  clusterPolicy,
+				path:     filePath,
+				content:  yamlContent,
+				policy:   clusterPolicy,
 				isBackup: true, // Variant B: backup existing template-based policy
 			})
 		}
@@ -278,14 +278,14 @@ func ProcessNetworkPolicyForNamespace(
 					}
 
 					filesToCreate = append(filesToCreate, struct {
-						path    string
-						content []byte
-						policy  *networkingv1.NetworkPolicy
+						path     string
+						content  []byte
+						policy   *networkingv1.NetworkPolicy
 						isBackup bool
 					}{
-						path:    filePath,
-						content: yamlContent,
-						policy:  &clusterPolicy,
+						path:     filePath,
+						content:  yamlContent,
+						policy:   &clusterPolicy,
 						isBackup: true, // Variant C: backup other policy
 					})
 				}
@@ -459,4 +459,3 @@ func ProcessNetworkPolicyForNamespace(
 
 	return nil
 }
-
