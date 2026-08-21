@@ -107,4 +107,3 @@ func (e *sanitizedError) Error() string {
 func (e *sanitizedError) Unwrap() error {
 	return e.original
 }
-

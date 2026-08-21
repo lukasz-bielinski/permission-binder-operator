@@ -444,4 +444,3 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		"serviceAccounts", len(result.ProcessedServiceAccounts))
 	return ctrl.Result{}, nil
 }
-

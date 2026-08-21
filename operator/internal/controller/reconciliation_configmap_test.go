@@ -22,7 +22,7 @@ func TestCalculateRoleMappingHash(t *testing.T) {
 		description string
 	}{
 		{
-			name: "empty mapping",
+			name:        "empty mapping",
 			roleMapping: map[string]string{},
 			description: "Empty map should produce consistent hash",
 		},
@@ -149,7 +149,7 @@ func TestCalculateRoleMappingHash_ChangeSensitivity(t *testing.T) {
 		{
 			name: "value changed",
 			modified: map[string]string{
-				"engineer": "view",  // Changed from "edit"
+				"engineer": "view", // Changed from "edit"
 				"admin":    "cluster-admin",
 			},
 			description: "Changing a value should produce different hash",
@@ -159,7 +159,7 @@ func TestCalculateRoleMappingHash_ChangeSensitivity(t *testing.T) {
 			modified: map[string]string{
 				"engineer": "edit",
 				"admin":    "cluster-admin",
-				"viewer":   "view",  // Added
+				"viewer":   "view", // Added
 			},
 			description: "Adding a key should produce different hash",
 		},
@@ -174,7 +174,7 @@ func TestCalculateRoleMappingHash_ChangeSensitivity(t *testing.T) {
 		{
 			name: "key renamed",
 			modified: map[string]string{
-				"engineer2": "edit",  // Key changed
+				"engineer2": "edit", // Key changed
 				"admin":     "cluster-admin",
 			},
 			description: "Renaming a key should produce different hash",
@@ -442,4 +442,3 @@ func TestHasRoleMappingChanged_Integration(t *testing.T) {
 	assert.False(t, changed4, "Fourth reconciliation should not detect change")
 	assert.Equal(t, hash3, hash4, "Hash should match after reconciliation")
 }
-

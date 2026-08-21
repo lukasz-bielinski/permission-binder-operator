@@ -125,13 +125,13 @@ func extractBitbucketServerProject(repoURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to parse URL: %w", err)
 	}
-	
+
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	// Expected: ["scm", "{project}", "{repo}.git"]
 	if len(parts) >= 3 && parts[0] == "scm" {
 		return parts[1], nil // project key (e.g., "infra-os")
 	}
-	
+
 	return "", fmt.Errorf("invalid Bitbucket Server URL format, expected /scm/{project}/{repo}: %s", repoURL)
 }
 
@@ -143,7 +143,7 @@ func extractBitbucketServerRepo(repoURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to parse URL: %w", err)
 	}
-	
+
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	// Expected: ["scm", "{project}", "{repo}.git"]
 	if len(parts) >= 3 && parts[0] == "scm" {
@@ -151,7 +151,7 @@ func extractBitbucketServerRepo(repoURL string) (string, error) {
 		repo = strings.TrimSuffix(repo, ".git")
 		return repo, nil // repository slug (e.g., "openshift-gitops")
 	}
-	
+
 	return "", fmt.Errorf("invalid Bitbucket Server URL format, expected /scm/{project}/{repo}: %s", repoURL)
 }
 

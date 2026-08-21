@@ -214,4 +214,3 @@ func BenchmarkRoleExistsInMapping_Large(b *testing.B) {
 		_ = r.roleExistsInMapping(role, mapping)
 	}
 }
-

@@ -30,74 +30,74 @@ import (
 
 func TestGetAPIBaseURL(t *testing.T) {
 	tests := []struct {
-		name           string
-		provider       string
+		name             string
+		provider         string
 		customAPIBaseURL string
-		repoURL        string
-		expected       string
+		repoURL          string
+		expected         string
 	}{
 		{
-			name:           "Custom API base URL takes precedence",
-			provider:       "github",
+			name:             "Custom API base URL takes precedence",
+			provider:         "github",
 			customAPIBaseURL: "https://custom.github.com/api/v3",
-			repoURL:        "https://github.com/owner/repo",
-			expected:       "https://custom.github.com/api/v3",
+			repoURL:          "https://github.com/owner/repo",
+			expected:         "https://custom.github.com/api/v3",
 		},
 		{
-			name:           "GitHub default",
-			provider:       "github",
+			name:             "GitHub default",
+			provider:         "github",
 			customAPIBaseURL: "",
-			repoURL:        "https://github.com/owner/repo",
-			expected:       "https://api.github.com",
+			repoURL:          "https://github.com/owner/repo",
+			expected:         "https://api.github.com",
 		},
 		{
-			name:           "GitLab default",
-			provider:       "gitlab",
+			name:             "GitLab default",
+			provider:         "gitlab",
 			customAPIBaseURL: "",
-			repoURL:        "https://gitlab.com/owner/repo",
-			expected:       "https://gitlab.com/api/v4",
+			repoURL:          "https://gitlab.com/owner/repo",
+			expected:         "https://gitlab.com/api/v4",
 		},
 		{
-			name:           "Bitbucket default",
-			provider:       "bitbucket",
+			name:             "Bitbucket default",
+			provider:         "bitbucket",
 			customAPIBaseURL: "",
-			repoURL:        "https://bitbucket.org/workspace/repo",
-			expected:       "https://api.bitbucket.org/2.0",
+			repoURL:          "https://bitbucket.org/workspace/repo",
+			expected:         "https://api.bitbucket.org/2.0",
 		},
 		{
-			name:           "Self-hosted GitHub (uses default when no custom URL)",
-			provider:       "github",
+			name:             "Self-hosted GitHub (uses default when no custom URL)",
+			provider:         "github",
 			customAPIBaseURL: "",
-			repoURL:        "https://git.example.com/owner/repo",
-			expected:       "https://api.github.com", // Uses default, not self-hosted detection
+			repoURL:          "https://git.example.com/owner/repo",
+			expected:         "https://api.github.com", // Uses default, not self-hosted detection
 		},
 		{
-			name:           "Self-hosted GitLab (uses default when no custom URL)",
-			provider:       "gitlab",
+			name:             "Self-hosted GitLab (uses default when no custom URL)",
+			provider:         "gitlab",
 			customAPIBaseURL: "",
-			repoURL:        "https://gitlab.example.com/owner/repo",
-			expected:       "https://gitlab.com/api/v4", // Uses default, not self-hosted detection
+			repoURL:          "https://gitlab.example.com/owner/repo",
+			expected:         "https://gitlab.com/api/v4", // Uses default, not self-hosted detection
 		},
 		{
-			name:           "Self-hosted Bitbucket (uses default when no custom URL)",
-			provider:       "bitbucket",
+			name:             "Self-hosted Bitbucket (uses default when no custom URL)",
+			provider:         "bitbucket",
 			customAPIBaseURL: "",
-			repoURL:        "https://bitbucket.example.com/workspace/repo",
-			expected:       "https://api.bitbucket.org/2.0", // Uses default, not self-hosted detection
+			repoURL:          "https://bitbucket.example.com/workspace/repo",
+			expected:         "https://api.bitbucket.org/2.0", // Uses default, not self-hosted detection
 		},
 		{
-			name:           "Unknown provider with self-hosted",
-			provider:       "unknown",
+			name:             "Unknown provider with self-hosted",
+			provider:         "unknown",
 			customAPIBaseURL: "",
-			repoURL:        "https://git.example.com/owner/repo",
-			expected:       "https://git.example.com",
+			repoURL:          "https://git.example.com/owner/repo",
+			expected:         "https://git.example.com",
 		},
 		{
-			name:           "Invalid repo URL (falls back to default)",
-			provider:       "github",
+			name:             "Invalid repo URL (falls back to default)",
+			provider:         "github",
 			customAPIBaseURL: "",
-			repoURL:        "://invalid-url",
-			expected:       "https://api.github.com", // Invalid URL doesn't trigger self-hosted path, uses default
+			repoURL:          "://invalid-url",
+			expected:         "https://api.github.com", // Invalid URL doesn't trigger self-hosted path, uses default
 		},
 	}
 
@@ -149,7 +149,7 @@ func TestExtractWorkspaceFromURL(t *testing.T) {
 		{
 			name:        "URL without path (empty path returns empty string, no error)",
 			repoURL:     "https://bitbucket.org",
-			expected:    "", // Empty path returns empty string
+			expected:    "",    // Empty path returns empty string
 			expectError: false, // Function doesn't return error for empty path
 		},
 	}
@@ -278,4 +278,3 @@ func TestHandleRateLimitError(t *testing.T) {
 		})
 	}
 }
-

@@ -28,28 +28,28 @@ import (
 
 func TestGetNetworkPolicyName(t *testing.T) {
 	tests := []struct {
-		name        string
-		namespace   string
+		name         string
+		namespace    string
 		templateName string
-		expected    string
+		expected     string
 	}{
 		{
-			name:        "Basic template name",
-			namespace:   "my-namespace",
+			name:         "Basic template name",
+			namespace:    "my-namespace",
 			templateName: "deny-all-ingress.yaml",
-			expected:    "my-namespace-deny-all-ingress",
+			expected:     "my-namespace-deny-all-ingress",
 		},
 		{
-			name:        "Template name without extension",
-			namespace:   "app",
+			name:         "Template name without extension",
+			namespace:    "app",
 			templateName: "deny-all-egress",
-			expected:    "app-deny-all-egress",
+			expected:     "app-deny-all-egress",
 		},
 		{
-			name:        "Complex namespace and template",
-			namespace:   "application-service",
+			name:         "Complex namespace and template",
+			namespace:    "application-service",
 			templateName: "allow-prometheus-metrics.yaml",
-			expected:    "application-service-allow-prometheus-metrics",
+			expected:     "application-service-allow-prometheus-metrics",
 		},
 	}
 
@@ -63,39 +63,39 @@ func TestGetNetworkPolicyName(t *testing.T) {
 
 func TestIsPolicyFromTemplate(t *testing.T) {
 	tests := []struct {
-		name        string
-		policyName  string
-		namespace   string
+		name         string
+		policyName   string
+		namespace    string
 		templateName string
-		expected    bool
+		expected     bool
 	}{
 		{
-			name:        "Policy matches template",
-			policyName:  "my-namespace-deny-all-ingress",
-			namespace:   "my-namespace",
+			name:         "Policy matches template",
+			policyName:   "my-namespace-deny-all-ingress",
+			namespace:    "my-namespace",
 			templateName: "deny-all-ingress.yaml",
-			expected:    true,
+			expected:     true,
 		},
 		{
-			name:        "Policy does not match template",
-			policyName:  "my-namespace-other-policy",
-			namespace:   "my-namespace",
+			name:         "Policy does not match template",
+			policyName:   "my-namespace-other-policy",
+			namespace:    "my-namespace",
 			templateName: "deny-all-ingress.yaml",
-			expected:    false,
+			expected:     false,
 		},
 		{
-			name:        "Policy with different namespace",
-			policyName:  "other-namespace-deny-all-ingress",
-			namespace:   "my-namespace",
+			name:         "Policy with different namespace",
+			policyName:   "other-namespace-deny-all-ingress",
+			namespace:    "my-namespace",
 			templateName: "deny-all-ingress.yaml",
-			expected:    false,
+			expected:     false,
 		},
 		{
-			name:        "Policy name without namespace prefix",
-			policyName:  "deny-all-ingress",
-			namespace:   "my-namespace",
+			name:         "Policy name without namespace prefix",
+			policyName:   "deny-all-ingress",
+			namespace:    "my-namespace",
 			templateName: "deny-all-ingress.yaml",
-			expected:    false,
+			expected:     false,
 		},
 	}
 
@@ -106,4 +106,3 @@ func TestIsPolicyFromTemplate(t *testing.T) {
 		})
 	}
 }
-

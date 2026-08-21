@@ -53,10 +53,10 @@ func setupFakeClient(objs ...client.Object) ReconcilerInterface {
 
 func TestCheckMultiplePermissionBinders(t *testing.T) {
 	tests := []struct {
-		name           string
-		binders        []*permissionv1.PermissionBinder
-		expectWarning  bool
-		expectedCount  int
+		name          string
+		binders       []*permissionv1.PermissionBinder
+		expectWarning bool
+		expectedCount int
 	}{
 		{
 			name: "Single PermissionBinder with NetworkPolicy enabled",
@@ -317,4 +317,3 @@ func TestCheckDriftForNamespace(t *testing.T) {
 		})
 	}
 }
-

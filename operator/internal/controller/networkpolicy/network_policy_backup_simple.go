@@ -29,7 +29,7 @@ import (
 
 // backupNetworkPolicy gets NetworkPolicy from cluster and converts to YAML
 // Uses native k8s client: kubectl get networkpolicy -o json
-func backupNetworkPolicy(r ReconcilerInterface, 
+func backupNetworkPolicy(r ReconcilerInterface,
 	ctx context.Context,
 	namespace string,
 	policyName string,
@@ -78,4 +78,3 @@ func backupNetworkPolicy(r ReconcilerInterface,
 	logger.V(1).Info("Backed up NetworkPolicy", "namespace", namespace, "policy", policyName)
 	return yamlBytes, nil
 }
-

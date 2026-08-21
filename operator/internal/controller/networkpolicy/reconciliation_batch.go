@@ -126,4 +126,3 @@ func ProcessNetworkPoliciesForNamespaces(
 
 	return nil
 }
-

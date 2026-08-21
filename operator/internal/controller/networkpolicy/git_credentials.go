@@ -58,4 +58,3 @@ func getGitCredentials(r ReconcilerInterface, ctx context.Context, secretRef *pe
 		email:    email,
 	}, nil
 }
-

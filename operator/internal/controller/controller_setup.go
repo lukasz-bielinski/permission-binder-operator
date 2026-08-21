@@ -134,4 +134,3 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 
 	return requests
 }
-

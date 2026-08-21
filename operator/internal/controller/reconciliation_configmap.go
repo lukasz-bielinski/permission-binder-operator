@@ -317,4 +317,3 @@ func (r *PermissionBinderReconciler) hasRoleMappingChanged(pb *permissionv1.Perm
 	// Compare hashes
 	return currentHash != lastHash, currentHash
 }
-
