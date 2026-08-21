@@ -12,7 +12,7 @@ echo "Test 9: Operator Restart Recovery"
 echo "-----------------------------------"
 
 # Recreate PermissionBinder first (needed for operator to work)
-kubectl apply -f example/permissionbinder/permissionbinder-example.yaml >/dev/null 2>&1
+kubectl apply -f "$SCRIPT_DIR/fixtures/permissionbinder-base.yaml" >/dev/null 2>&1
 sleep 5
 
 # Count resources before restart

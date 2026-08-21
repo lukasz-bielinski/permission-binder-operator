@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: permission-config
+  namespace: permissions-binder-operator
+data:
+  whitelist.txt: |
+    CN=COMPANY-K8S-test-namespace-001-developer,OU=Groups,DC=example,DC=com

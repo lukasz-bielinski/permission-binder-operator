@@ -196,6 +196,25 @@ for test_id in "${TEST_LIST[@]}"; do
             echo "      Pod: $POD_NAME" | tee -a $RESULTS_LOG
             echo "      Started: $POD_START" | tee -a $RESULTS_LOG
             pod_names[$test_id]=$POD_NAME
+
+            # Baseline fixtures: every isolated test starts from a reconciled
+            # operator with the pre-test ConfigMap + PermissionBinder in place
+            # (cleanup wipes them, and without a CR the operator is idle and
+            # most test assertions run against an empty cluster).
+            kubectl apply -f "$SCRIPT_DIR/fixtures/" >>/tmp/deploy-${test_id}.log 2>&1
+            BASELINE_OK=false
+            for i in $(seq 1 30); do
+                if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+                    BASELINE_OK=true
+                    break
+                fi
+                sleep 2
+            done
+            if [ "$BASELINE_OK" = "true" ]; then
+                echo "   ✅ Baseline reconciled (test-namespace-001 exists)" | tee -a $RESULTS_LOG
+            else
+                echo -e "   ${RED}❌ Baseline NOT reconciled within 60s — operator idle or RBAC-blocked${NC}" | tee -a $RESULTS_LOG
+            fi
         else
             echo -e "   ${RED}❌ ERROR: Operator pod is NOT running!${NC}" | tee -a $RESULTS_LOG
             echo "      Pod: $POD_NAME" | tee -a $RESULTS_LOG
@@ -238,13 +257,17 @@ for test_id in "${TEST_LIST[@]}"; do
     export SCRIPT_DIR
     export KUBECONFIG
     
-    # Run test
-    if bash "$test_file" >/tmp/test-${test_id}-isolated.log 2>&1; then
+    # Run test. A test FAILS if the script exits non-zero OR any fail_test
+    # assertion (❌ FAIL line) fired — fail_test does not set an exit code,
+    # so exit status alone always reports PASS.
+    bash "$test_file" >/tmp/test-${test_id}-isolated.log 2>&1
+    TEST_EXIT=$?
+    if [ $TEST_EXIT -eq 0 ] && ! grep -q "❌ FAIL" /tmp/test-${test_id}-isolated.log; then
         echo "" | tee -a $RESULTS_LOG
         echo -e "${GREEN}✅ Test $test_id PASSED${NC}" | tee -a $RESULTS_LOG
         results[$test_id]="PASS"
         passed=$((passed + 1))
-        
+
         # Show summary
         grep -E "✅ PASS|Test.*Results:" /tmp/test-${test_id}-isolated.log | tail -3 | tee -a $RESULTS_LOG
     else
