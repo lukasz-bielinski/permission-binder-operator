@@ -45,9 +45,10 @@ func (r *PermissionBinderReconciler) ensureNamespace(ctx context.Context, namesp
 				ObjectMeta: metav1.ObjectMeta{
 					Name: namespace,
 					Annotations: map[string]string{
-						AnnotationManagedBy:        ManagedByValue,
-						AnnotationCreatedAt:        now,
-						AnnotationPermissionBinder: permissionBinder.Name,
+						AnnotationManagedBy:                 ManagedByValue,
+						AnnotationCreatedAt:                 now,
+						AnnotationPermissionBinder:          permissionBinder.Name,
+						AnnotationPermissionBinderNamespace: permissionBinder.Namespace,
 					},
 					Labels: map[string]string{
 						LabelManagedBy: ManagedByValue,
@@ -93,6 +94,10 @@ func (r *PermissionBinderReconciler) ensureNamespace(ctx context.Context, namesp
 		}
 		if ns.Annotations[AnnotationPermissionBinder] != permissionBinder.Name {
 			ns.Annotations[AnnotationPermissionBinder] = permissionBinder.Name
+			needsUpdate = true
+		}
+		if ns.Annotations[AnnotationPermissionBinderNamespace] != permissionBinder.Namespace {
+			ns.Annotations[AnnotationPermissionBinderNamespace] = permissionBinder.Namespace
 			needsUpdate = true
 		}
 		if ns.Annotations[AnnotationCreatedAt] == "" {
@@ -163,10 +168,11 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 			Name:      name,
 			Namespace: namespace,
 			Annotations: map[string]string{
-				AnnotationManagedBy:        ManagedByValue,
-				AnnotationCreatedAt:        now,
-				AnnotationPermissionBinder: permissionBinder.Name,
-				AnnotationRole:             role, // Store full role name to support roles with hyphens (e.g., "read-only")
+				AnnotationManagedBy:                 ManagedByValue,
+				AnnotationCreatedAt:                 now,
+				AnnotationPermissionBinder:          permissionBinder.Name,
+				AnnotationPermissionBinderNamespace: permissionBinder.Namespace,
+				AnnotationRole:                      role, // Store full role name to support roles with hyphens (e.g., "read-only")
 			},
 			Labels: map[string]string{
 				LabelManagedBy: ManagedByValue,
@@ -229,6 +235,9 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 		if existing.Annotations[AnnotationPermissionBinder] != permissionBinder.Name {
 			needsUpdate = true
 		}
+		if existing.Annotations[AnnotationPermissionBinderNamespace] != permissionBinder.Namespace {
+			needsUpdate = true
+		}
 		if existing.Annotations[AnnotationRole] != role {
 			needsUpdate = true
 		}
@@ -274,6 +283,7 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 
 		existing.Annotations[AnnotationManagedBy] = ManagedByValue
 		existing.Annotations[AnnotationPermissionBinder] = permissionBinder.Name
+		existing.Annotations[AnnotationPermissionBinderNamespace] = permissionBinder.Namespace
 		existing.Annotations[AnnotationRole] = role // Store full role name to support roles with hyphens (e.g., "read-only")
 		if existing.Annotations[AnnotationCreatedAt] == "" {
 			existing.Annotations[AnnotationCreatedAt] = now
