@@ -277,4 +277,3 @@ func BenchmarkExtractRoleFromRoleBindingName_Long(b *testing.B) {
 		_ = r.extractRoleFromRoleBindingName(name)
 	}
 }
-

@@ -19,11 +19,11 @@ package networkpolicy
 import (
 	"testing"
 
+	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
 )
 
 // ============================================================================
@@ -193,4 +193,3 @@ func TestHasNetworkPolicyStatus(t *testing.T) {
 	assert.True(t, hasNetworkPolicyStatus(permissionBinder, "my-namespace"))
 	assert.False(t, hasNetworkPolicyStatus(permissionBinder, "other-namespace"))
 }
-

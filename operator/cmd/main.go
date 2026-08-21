@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -31,6 +32,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -47,6 +49,20 @@ var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
 )
+
+// parseWatchNamespaces parses a comma-separated list of namespaces from the
+// WATCH_NAMESPACE environment variable. Empty segments and surrounding
+// whitespace are ignored; an empty value yields an empty slice (cluster-wide).
+func parseWatchNamespaces(value string) []string {
+	var namespaces []string
+	for _, ns := range strings.Split(value, ",") {
+		ns = strings.TrimSpace(ns)
+		if ns != "" {
+			namespaces = append(namespaces, ns)
+		}
+	}
+	return namespaces
+}
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -142,7 +158,7 @@ func main() {
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	managerOptions := ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -166,10 +182,35 @@ func main() {
 		// Safe for this operator as we use finalizers for cleanup and the manager
 		// stops immediately after receiving shutdown signal.
 		LeaderElectionReleaseOnCancel: true,
-	})
+	}
+
+	// WATCH_NAMESPACE (comma-separated) scopes the manager cache to the listed namespaces.
+	// When unset or empty, the operator keeps the current cluster-wide behavior.
+	// This enables running multiple isolated operator instances (e.g. parallel e2e tests),
+	// each watching only its own namespaces.
+	if watchNamespaces := parseWatchNamespaces(os.Getenv("WATCH_NAMESPACE")); len(watchNamespaces) > 0 {
+		defaultNamespaces := make(map[string]cache.Config, len(watchNamespaces))
+		for _, ns := range watchNamespaces {
+			defaultNamespaces[ns] = cache.Config{}
+		}
+		managerOptions.Cache.DefaultNamespaces = defaultNamespaces
+		setupLog.Info("Watching namespaces", "namespaces", watchNamespaces)
+	} else {
+		setupLog.Info("WATCH_NAMESPACE not set - watching all namespaces")
+	}
+
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
+	}
+
+	// MANAGED_BY_VALUE optionally overrides the value of the managed-by label/annotation
+	// that this instance stamps on resources it creates and selects in cluster-wide lists.
+	// When unset, the default value is used (single-instance deployments are unaffected).
+	if managedByValue := strings.TrimSpace(os.Getenv("MANAGED_BY_VALUE")); managedByValue != "" {
+		controller.ManagedByValue = managedByValue
+		setupLog.Info("Using custom managed-by value", "managedByValue", managedByValue)
 	}
 
 	// Check if debug mode is enabled via environment variable

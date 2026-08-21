@@ -60,53 +60,53 @@ func TestGetNetworkPolicyFilePath(t *testing.T) {
 
 func TestDetectGitProvider(t *testing.T) {
 	tests := []struct {
-		name        string
-		url         string
+		name             string
+		url              string
 		explicitProvider string
-		expected    string
-		expectError bool
+		expected         string
+		expectError      bool
 	}{
 		{
-			name:        "GitHub URL",
-			url:         "https://github.com/owner/repo.git",
+			name:             "GitHub URL",
+			url:              "https://github.com/owner/repo.git",
 			explicitProvider: "",
-			expected:    "github",
-			expectError: false,
+			expected:         "github",
+			expectError:      false,
 		},
 		{
-			name:        "Bitbucket URL",
-			url:         "https://bitbucket.org/workspace/repo.git",
+			name:             "Bitbucket URL",
+			url:              "https://bitbucket.org/workspace/repo.git",
 			explicitProvider: "",
-			expected:    "bitbucket",
-			expectError: false,
+			expected:         "bitbucket",
+			expectError:      false,
 		},
 		{
-			name:        "GitLab URL",
-			url:         "https://gitlab.com/group/project.git",
+			name:             "GitLab URL",
+			url:              "https://gitlab.com/group/project.git",
 			explicitProvider: "",
-			expected:    "gitlab",
-			expectError: false,
+			expected:         "gitlab",
+			expectError:      false,
 		},
 		{
-			name:        "Explicit provider overrides URL",
-			url:         "https://github.com/owner/repo.git",
+			name:             "Explicit provider overrides URL",
+			url:              "https://github.com/owner/repo.git",
 			explicitProvider: "bitbucket",
-			expected:    "bitbucket",
-			expectError: false,
+			expected:         "bitbucket",
+			expectError:      false,
 		},
 		{
-			name:        "Self-hosted with explicit provider",
-			url:         "https://git.cembraintra.ch/repo.git",
+			name:             "Self-hosted with explicit provider",
+			url:              "https://git.cembraintra.ch/repo.git",
 			explicitProvider: "bitbucket",
-			expected:    "bitbucket",
-			expectError: false,
+			expected:         "bitbucket",
+			expectError:      false,
 		},
 		{
-			name:        "Unknown URL, no explicit provider",
-			url:         "https://unknown-git.com/repo.git",
+			name:             "Unknown URL, no explicit provider",
+			url:              "https://unknown-git.com/repo.git",
 			explicitProvider: "",
-			expected:    "",
-			expectError: true,
+			expected:         "",
+			expectError:      true,
 		},
 	}
 
@@ -151,4 +151,3 @@ func TestGenerateBranchName(t *testing.T) {
 		})
 	}
 }
-

@@ -42,7 +42,7 @@ func hasNetworkPolicyStatus(permissionBinder *permissionv1.PermissionBinder, nam
 }
 
 // updateNetworkPolicyStatus updates or creates NetworkPolicy status for a namespace
-func updateNetworkPolicyStatus(r ReconcilerInterface, 
+func updateNetworkPolicyStatus(r ReconcilerInterface,
 	ctx context.Context,
 	permissionBinder *permissionv1.PermissionBinder,
 	namespace string,
@@ -93,7 +93,7 @@ func updateNetworkPolicyStatus(r ReconcilerInterface,
 
 // updateNetworkPolicyStatusWithPR updates NetworkPolicy status with PR information
 // Uses retry logic to handle race conditions with concurrent status updates
-func updateNetworkPolicyStatusWithPR(r ReconcilerInterface, 
+func updateNetworkPolicyStatusWithPR(r ReconcilerInterface,
 	ctx context.Context,
 	permissionBinder *permissionv1.PermissionBinder,
 	namespace string,
@@ -103,7 +103,7 @@ func updateNetworkPolicyStatusWithPR(r ReconcilerInterface,
 	state string,
 ) error {
 	logger := log.FromContext(ctx)
-	
+
 	// Retry logic to handle race conditions (max 3 attempts)
 	maxRetries := 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -117,7 +117,7 @@ func updateNetworkPolicyStatusWithPR(r ReconcilerInterface,
 			}
 			return fmt.Errorf("failed to get fresh PermissionBinder: %w", err)
 		}
-		
+
 		status := getNetworkPolicyStatus(&freshBinder, namespace)
 		if status == nil {
 			// Create new status entry
@@ -152,12 +152,12 @@ func updateNetworkPolicyStatusWithPR(r ReconcilerInterface,
 			logger.Error(err, "Failed to update NetworkPolicy status with PR after retries", "namespace", namespace)
 			return fmt.Errorf("failed to update status: %w", err)
 		}
-		
+
 		// Success - update the passed-in permissionBinder to reflect changes
 		*permissionBinder = freshBinder
 		return nil
 	}
-	
+
 	return fmt.Errorf("failed to update status after %d attempts", maxRetries)
 }
 
@@ -251,7 +251,7 @@ func CleanupStatus(
 			logger.Error(err, "Failed to cleanup status after retries")
 			return fmt.Errorf("failed to cleanup status: %w", err)
 		}
-		
+
 		// Success - update the passed-in permissionBinder to reflect changes
 		*permissionBinder = freshBinder
 		return nil
@@ -261,7 +261,7 @@ func CleanupStatus(
 }
 
 // checkStalePRs checks for PRs that have been open for too long
-func checkStalePRs(r ReconcilerInterface, 
+func checkStalePRs(r ReconcilerInterface,
 	ctx context.Context,
 	permissionBinder *permissionv1.PermissionBinder,
 ) error {

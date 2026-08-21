@@ -7,7 +7,10 @@ metadata:
     argocd.argoproj.io/sync-wave: "0"
 
 resources:
-  # Operator deployment (includes CRD)
+  # PermissionBinder CRD (extracted from operator-deployment.yaml)
+  - deployment/crd.yaml
+
+  # Operator deployment (namespace, RBAC, Deployment, Service)
   - deployment/operator-deployment.yaml
   
   # Example ConfigMap

@@ -150,4 +150,3 @@ func checkTemplateChanges(r ReconcilerInterface, ctx context.Context, permission
 	// Reprocess all managed namespaces - ProcessNetworkPolicyForNamespace will skip if files already exist
 	return ProcessNetworkPoliciesForNamespaces(ctx, r, permissionBinder, managedNamespaces)
 }
-

@@ -34,7 +34,7 @@ import (
 // 3. Modify Go Object (metadata.name, metadata.namespace, annotations)
 // 4. Validate using Kubernetes dry-run
 // 5. Convert Go Object → YAML (yaml.Marshal)
-func processTemplate(r ReconcilerInterface, 
+func processTemplate(r ReconcilerInterface,
 	ctx context.Context,
 	repoDir string,
 	templateDir string,
@@ -188,4 +188,3 @@ func isInternalKubernetesAnnotation(key string) bool {
 func getAllTemplates(r ReconcilerInterface, repoDir string, templateDir string) ([]string, error) {
 	return listFiles(repoDir, templateDir)
 }
-

@@ -186,4 +186,3 @@ func (r *PermissionBinderReconciler) updateMetrics(ctx context.Context, permissi
 
 	return nil
 }
-

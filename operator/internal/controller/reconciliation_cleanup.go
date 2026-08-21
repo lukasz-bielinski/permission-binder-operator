@@ -33,6 +33,39 @@ import (
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
 )
 
+// isOwnedByPermissionBinder reports whether the given annotations identify the
+// resource as owned by the given PermissionBinder CR.
+//
+// Ownership is matched by CR name plus, when available, CR namespace:
+//   - New-style resources carry AnnotationPermissionBinderNamespace; both the
+//     name and the namespace must match. This prevents cross-instance resource
+//     deletion when two operator instances reconcile CRs with the same name in
+//     different namespaces.
+//   - Legacy resources only carry AnnotationPermissionBinder (name-only, no
+//     namespace). They are still adopted by name match alone, preserving the
+//     pre-existing behavior (backward compatibility).
+//   - When the reconciled CR has no namespace (e.g. CRs created via plain
+//     envtest clients), matching falls back to name-only as well.
+func isOwnedByPermissionBinder(annotations map[string]string, permissionBinder *permissionv1.PermissionBinder) bool {
+	if annotations == nil {
+		return false
+	}
+	if annotations[AnnotationPermissionBinder] != permissionBinder.Name {
+		return false
+	}
+	ownerNamespace, hasNamespaceAnnotation := annotations[AnnotationPermissionBinderNamespace]
+	if !hasNamespaceAnnotation {
+		// Legacy resource annotated before ownership became namespace-aware.
+		return true
+	}
+	if permissionBinder.Namespace == "" {
+		// The reconciled CR carries no namespace (e.g. plain envtest clients).
+		// Fall back to name-only matching so existing behavior is preserved.
+		return true
+	}
+	return ownerNamespace == permissionBinder.Namespace
+}
+
 // cleanupManagedResources cleans up all resources managed by this PermissionBinder
 // SAFE MODE: We do NOT delete RoleBindings or namespaces when PermissionBinder is deleted
 // This prevents cascade failures and accidental data loss
@@ -111,8 +144,8 @@ func (r *PermissionBinderReconciler) getManagedNamespaces(ctx context.Context, p
 
 	var result []string
 	for _, ns := range namespaces.Items {
-		// Filter by permission binder annotation
-		if ns.Annotations != nil && ns.Annotations[AnnotationPermissionBinder] == permissionBinder.Name {
+		// Filter by permission binder ownership annotations (name + namespace)
+		if isOwnedByPermissionBinder(ns.Annotations, permissionBinder) {
 			result = append(result, ns.Name)
 		}
 	}
@@ -136,10 +169,10 @@ func (r *PermissionBinderReconciler) getManagedRoleBindings(ctx context.Context,
 		return nil, err
 	}
 
-	// Filter by permission binder annotation
+	// Filter by permission binder ownership annotations (name + namespace)
 	var result []rbacv1.RoleBinding
 	for _, rb := range roleBindings.Items {
-		if rb.Annotations != nil && rb.Annotations[AnnotationPermissionBinder] == permissionBinder.Name {
+		if isOwnedByPermissionBinder(rb.Annotations, permissionBinder) {
 			result = append(result, rb)
 		}
 	}
@@ -214,4 +247,3 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 
 	return nil
 }
-
