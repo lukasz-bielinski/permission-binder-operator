@@ -136,7 +136,10 @@ if [ ${#EXPLICIT_TESTS[@]} -gt 0 ]; then
     log "Explicit test list requested (${EXPLICIT_TESTS[*]}); running serially."
     log ""
     EXP_START=$(date +%s)
-    INSTANCE=1 "$RUNNER" "${EXPLICIT_TESTS[@]}" 2>&1 | tee -a "$RESULTS_LOG"
+    # Legacy mode (no INSTANCE): the caller may pick pool-C tests, which rely
+    # on unprefixed namespaces, fixed ClusterRole names (test 16) and the
+    # legacy regex namespace sweep.
+    "$RUNNER" "${EXPLICIT_TESTS[@]}" 2>&1 | tee -a "$RESULTS_LOG"
     EXP_RC=${PIPESTATUS[0]}
     EXP_END=$(date +%s)
     log ""
@@ -174,29 +177,38 @@ log ""
 declare -a SLOT_TESTS
 for i in $(seq 1 "$SLOTS"); do SLOT_TESTS[$i]=""; done
 
+# Heavy test 24 runs solo within its own slot: it creates 50 namespaces and
+# would otherwise starve slot-mates on a loaded API server. Reserve that slot
+# FIRST so the round-robin loops below never assign anything to it.
+HEAVY_SLOT=0
+if [ "$SLOTS" -ge 2 ]; then
+    HEAVY_SLOT=$SLOTS
+    SLOT_TESTS[$HEAVY_SLOT]="${HEAVY_PARALLEL[*]}"
+fi
+
+# next_slot <current> - advance round-robin, skipping the reserved heavy slot
+next_slot() {
+    local idx=$(( $1 % SLOTS + 1 ))
+    if [ "$idx" -eq "$HEAVY_SLOT" ]; then
+        idx=$(( idx % SLOTS + 1 ))
+    fi
+    echo "$idx"
+}
+
 slot_idx=1
 for t in "${POOL_A[@]}"; do
     SLOT_TESTS[$slot_idx]="${SLOT_TESTS[$slot_idx]} $t"
-    slot_idx=$(( slot_idx % SLOTS + 1 ))
+    slot_idx=$(next_slot "$slot_idx")
 done
 
-# Heavy test 24 runs solo within its own slot: it creates 50 namespaces and
-# would otherwise starve slot-mates on a loaded API server.
-HEAVY_SLOT=$(( SLOTS < 2 ? 1 : SLOTS ))
-if [ "$SLOTS" -ge 2 ]; then
-    SLOT_TESTS[$HEAVY_SLOT]="${HEAVY_PARALLEL[*]}"
-else
+# With a single slot there is no reserved slot; test 24 just joins the queue.
+if [ "$SLOTS" -lt 2 ]; then
     SLOT_TESTS[1]="${SLOT_TESTS[1]} ${HEAVY_PARALLEL[*]}"
 fi
 
-slot_idx=1
 for t in "${POOL_B[@]}"; do
-    # Skip the heavy slot when it exists so it stays solo.
-    if [ "$SLOTS" -ge 2 ] && [ "$slot_idx" -eq "$HEAVY_SLOT" ]; then
-        slot_idx=$(( slot_idx % SLOTS + 1 ))
-    fi
     SLOT_TESTS[$slot_idx]="${SLOT_TESTS[$slot_idx]} $t"
-    slot_idx=$(( slot_idx % SLOTS + 1 ))
+    slot_idx=$(next_slot "$slot_idx")
 done
 
 # Launch one runner instance per slot.
@@ -244,6 +256,20 @@ log ""
 log "Parallel phase wall-clock: $((PARALLEL_PHASE_END - PARALLEL_PHASE_START))s ($SLOTS_FAILED slot(s) failed)"
 log ""
 
+# Tear down every slot's leftovers before the serial phase: the per-test
+# cleanup runs BEFORE each test, so after a slot's LAST test its operator,
+# CR and namespaces keep running - N leftover operators would recreate their
+# whitelist namespaces during pool C and fight its legacy cleanup sweep.
+log "Tearing down parallel-slot leftovers..."
+for i in $(seq 1 "$SLOTS"); do
+    [ -z "${SLOT_PID[$i]:-}" ] && continue
+    NAMESPACE="pbo-e2e-${i}" INSTANCE="$i" TEST_NS_PREFIX="pbo${i}-" \
+        "$SCRIPT_DIR/cleanup-operator.sh" >>"/tmp/e2e-parallel-${SUITE_ID}-teardown-${i}.log" 2>&1 \
+        && log "  ✅ Slot $i torn down" \
+        || log "  ⚠️  Slot $i teardown had warnings (/tmp/e2e-parallel-${SUITE_ID}-teardown-${i}.log)"
+done
+log ""
+
 # ---------------------------------------------------------------------------
 # Pool C: serial-only tests, run at the end via the standard runner.
 # ---------------------------------------------------------------------------
@@ -253,7 +279,11 @@ SERIAL_LOG="/tmp/e2e-parallel-${SUITE_ID}-serial-pool-c.log"
 log "  log: $SERIAL_LOG"
 log "────────────────────────────────────────────────────────────────"
 SERIAL_START=$(date +%s)
-INSTANCE=serial "$RUNNER" "${POOL_C[@]}" >"$SERIAL_LOG" 2>&1
+# Pool C runs in LEGACY mode (no INSTANCE): its tests were deliberately left
+# unprefixed (serial-only), test 16 mutates the fixed-name ClusterRole that
+# only exists without the -${INSTANCE} suffix, and the NetworkPolicy tests
+# depend on the legacy regex namespace sweep between tests.
+"$RUNNER" "${POOL_C[@]}" >"$SERIAL_LOG" 2>&1
 SERIAL_RC=$?
 SERIAL_END=$(date +%s)
 if [ "$SERIAL_RC" -eq 0 ]; then

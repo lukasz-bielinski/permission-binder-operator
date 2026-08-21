@@ -20,6 +20,25 @@ info_log() {
     echo "ℹ️  $1" | tee -a ${TEST_RESULTS:-/tmp/e2e-test-results.log}
 }
 
+# E2E_WAIT_MULT (default 1) multiplies harness-owned fixed sleeps/timeouts.
+# The k3s API server on rpi4-class hardware is loaded when the suite runs in
+# parallel (issue #36); the parallel runner exports a load-aware default.
+# Tests should prefer e2e_sleep/e2e_max_wait over a bare `sleep N`/timeout so
+# the multiplier is honored. Default: 1 (identical to current behavior).
+E2E_WAIT_MULT="${E2E_WAIT_MULT:-1}"
+
+# Sleep for $1 seconds scaled by E2E_WAIT_MULT.
+e2e_sleep() {
+    local seconds="$1"
+    awk -v s="$seconds" -v m="$E2E_WAIT_MULT" 'BEGIN { d = s * m; if (d < 0) d = 0; cmd = "sleep " d; system(cmd) }'
+}
+
+# Scale a timeout/wait budget (seconds) by E2E_WAIT_MULT, rounded up, min 1.
+e2e_max_wait() {
+    local seconds="$1"
+    awk -v s="$seconds" -v m="$E2E_WAIT_MULT" 'BEGIN { d = s * m; d = (d == int(d)) ? d : int(d) + 1; if (d < 1) d = 1; print d }'
+}
+
 # ---------------------------------------------------------------------------
 # Instance-scoped helpers (issue #35)
 #

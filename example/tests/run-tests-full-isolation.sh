@@ -275,10 +275,10 @@ for test_id in "${TEST_LIST[@]}"; do
         sed "s/namespace: permissions-binder-operator/namespace: ${NAMESPACE}/" "$CREDENTIALS_FILE" | kubectl apply -f - >>"$RUN_DIR/deploy-${test_id}.log" 2>&1 || true
     fi
     
-    sleep 5
+    e2e_sleep 5
     
     # Wait for operator to be ready
-    if kubectl wait --for=condition=available --timeout=120s \
+    if kubectl wait --for=condition=available --timeout="$(e2e_max_wait 120)s" \
         deployment/operator-controller-manager -n "$NAMESPACE" >/dev/null 2>&1; then
         
         POD_NAME=$(kubectl get pods -n "$NAMESPACE" \
@@ -361,7 +361,7 @@ for test_id in "${TEST_LIST[@]}"; do
     echo -e "${BLUE}Progress: $current/${#TEST_LIST[@]} (✅ $passed passed, ❌ $failed failed)${NC}" | tee -a $RESULTS_LOG
     
     # Small pause between tests
-    sleep 2
+    e2e_sleep 2
 done
 
 # FINAL SUMMARY
