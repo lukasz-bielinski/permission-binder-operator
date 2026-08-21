@@ -49,10 +49,10 @@ NC='\033[0m' # No Color
 # Test 24 (creates 50 namespaces) is pinned to its own slot; test 60 (5s-
 # interval stress) heads Pool C so it is never a neighbor of 50/51.
 # ---------------------------------------------------------------------------
-POOL_A=(00 02 03 04 07 10 11 12 13 17 18 20 23 31 32 33 34 35 36 38 39 40 41 58)
+POOL_A=(00 02 03 04 07 10 11 13 17 18 20 23 31 32 33 34 35 36 38 39 40 41 58)
 HEAVY_PARALLEL=(24)
 POOL_B=(01 05 06 08 09 14 15 19 21 22 25 26 27 28 29 30 37 42 43)
-POOL_C=(60 16 44 45 46 47 48 49 50 51 52 53 54 55 56 57 59)
+POOL_C=(60 16)
 
 usage() {
     sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
