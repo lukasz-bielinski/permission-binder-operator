@@ -57,7 +57,7 @@ func (r *PermissionBinderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&permissionv1.PermissionBinder{}, builder.WithPredicates(permissionBinderPredicate())).
+		For(&permissionv1.PermissionBinder{}, builder.WithPredicates(r.permissionBinderPredicate())).
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -91,8 +91,14 @@ func (r *PermissionBinderReconciler) isConfigMapReferenced(c client.Client, obj 
 		return true
 	}
 
-	// If any PermissionBinders reference this ConfigMap, return true
-	return len(permissionBinders.Items) > 0
+	// Only count PermissionBinders this instance reconciles (RECONCILE_NAMESPACES,
+	// issue #43) - a ConfigMap referenced solely by foreign CRs is not ours to react to
+	for _, pb := range permissionBinders.Items {
+		if r.reconcilesNamespace(pb.Namespace) {
+			return true
+		}
+	}
+	return false
 }
 
 // mapConfigMapToPermissionBinder maps ConfigMap changes to PermissionBinder reconciliation
@@ -113,6 +119,11 @@ func (r *PermissionBinderReconciler) mapConfigMapToPermissionBinder(ctx context.
 
 	var requests []reconcile.Request
 	for _, pb := range permissionBinders.Items {
+		// Skip CRs outside RECONCILE_NAMESPACES (issue #43): this handler
+		// enqueues directly into the workqueue, bypassing the For() predicate
+		if !r.reconcilesNamespace(pb.Namespace) {
+			continue
+		}
 		// Check if this ConfigMap is referenced by this PermissionBinder
 		if pb.Spec.ConfigMapName == obj.Name && pb.Spec.ConfigMapNamespace == obj.Namespace {
 			if r.DebugMode {

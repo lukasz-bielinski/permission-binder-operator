@@ -106,8 +106,16 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 		// Create RoleBinding (use the CN value as the group subject name)
 		// OpenShift LDAP syncer creates groups with CN value as name, not full DN
 		roleBindingName := fmt.Sprintf("%s-%s", namespace, role)
-		if err := r.createRoleBinding(ctx, namespace, roleBindingName, role, cnValue, permissionBinder.Spec.RoleMapping[role], permissionBinder); err != nil {
+		managed, err := r.createRoleBinding(ctx, namespace, roleBindingName, role, cnValue, permissionBinder.Spec.RoleMapping[role], permissionBinder)
+		if err != nil {
 			logger.Error(err, "Failed to create RoleBinding", "namespace", namespace, "role", role)
+			continue
+		}
+		if !managed {
+			// Ownership gate refused the takeover (issue #43): the RoleBinding
+			// belongs to another PermissionBinder - do not report it as
+			// successfully processed by this CR.
+			configMapEntriesProcessed.WithLabelValues("ownership_conflict").Inc()
 			continue
 		}
 

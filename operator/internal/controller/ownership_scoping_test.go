@@ -102,17 +102,19 @@ func TestIsOwnedByPermissionBinder(t *testing.T) {
 			expected:    false,
 			description: "Legacy resources of a different CR must not match",
 		},
-		// Namespace-less CR (e.g. plain envtest client without namespace defaulting)
+		// Namespace-less CR: strict matching (issue #43) - the CRD is
+		// namespace-scoped, so an empty CR namespace never occurs in a real
+		// cluster; the old name-only fallback was a silent isolation-loss trap.
 		{
-			name: "namespace-less CR matches namespaced resource by name (backward compatibility)",
+			name: "namespace-less CR does NOT match a namespace-stamped resource",
 			annotations: map[string]string{
 				AnnotationPermissionBinder:          "example",
 				AnnotationPermissionBinderNamespace: "instance-a",
 			},
 			pbNamespace: "",
 			pbName:      "example",
-			expected:    true,
-			description: "CRs without namespace (existing envtest fixtures) keep name-only matching",
+			expected:    false,
+			description: "The pb.Namespace==\"\" name-only fallback was removed (issue #43)",
 		},
 		{
 			name: "namespace-less CR matches legacy resource by name",
@@ -197,5 +199,123 @@ func TestManagedByValueOverride(t *testing.T) {
 	}
 	if AnnotationPermissionBinderNamespace != "permission-binder.io/permission-binder-namespace" {
 		t.Errorf("Unexpected ownership namespace annotation key: %q", AnnotationPermissionBinderNamespace)
+	}
+}
+
+// TestCanTakeOwnership covers the write-path ownership gate (issue #43):
+// unclaimed, own, legacy and orphaned resources are manageable; a live claim
+// by another PermissionBinder is refused. The decision is annotation-based
+// only - spec drift never factors in (manual-modification protection).
+func TestCanTakeOwnership(t *testing.T) {
+	const owner, ownerNs = "example", "instance-a"
+
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		expected    bool
+	}{
+		{
+			name:        "nil annotations (unclaimed) - allowed",
+			annotations: nil,
+			expected:    true,
+		},
+		{
+			name:        "no ownership annotation (unclaimed pre-existing resource) - allowed",
+			annotations: map[string]string{AnnotationManagedBy: ManagedByValue},
+			expected:    true,
+		},
+		{
+			name: "owned by this CR (name + namespace) - allowed",
+			annotations: map[string]string{
+				AnnotationPermissionBinder:          owner,
+				AnnotationPermissionBinderNamespace: ownerNs,
+			},
+			expected: true,
+		},
+		{
+			name: "legacy name-only claim by same name - allowed (retroactive namespace stamp)",
+			annotations: map[string]string{
+				AnnotationPermissionBinder: owner,
+			},
+			expected: true,
+		},
+		{
+			name: "live claim by different CR name - refused",
+			annotations: map[string]string{
+				AnnotationPermissionBinder:          "other",
+				AnnotationPermissionBinderNamespace: ownerNs,
+			},
+			expected: false,
+		},
+		{
+			name: "live claim by same CR name in another namespace - refused (steal-then-delete prevention)",
+			annotations: map[string]string{
+				AnnotationPermissionBinder:          owner,
+				AnnotationPermissionBinderNamespace: "instance-b",
+			},
+			expected: false,
+		},
+		{
+			name: "foreign claim WITH orphan marker - allowed (explicit adoption / CR namespace migration)",
+			annotations: map[string]string{
+				AnnotationPermissionBinder:          owner,
+				AnnotationPermissionBinderNamespace: "instance-b",
+				AnnotationOrphanedAt:                "2026-08-21T00:00:00Z",
+				AnnotationOrphanedBy:                OrphanedByPermissionBinderDeletion,
+			},
+			expected: true,
+		},
+		{
+			name: "foreign NAME with orphan marker - allowed (orphans are adoptable by anyone)",
+			annotations: map[string]string{
+				AnnotationPermissionBinder: "other",
+				AnnotationOrphanedAt:       "2026-08-21T00:00:00Z",
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := canTakeOwnership(tt.annotations, owner, ownerNs); got != tt.expected {
+				t.Errorf("canTakeOwnership() = %v, expected %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestIsOwnedByStrictNamespace pins the strictness introduced by issue #43:
+// an empty owner namespace no longer falls back to name-only matching against
+// namespace-stamped resources.
+func TestIsOwnedByStrictNamespace(t *testing.T) {
+	stamped := map[string]string{
+		AnnotationPermissionBinder:          "example",
+		AnnotationPermissionBinderNamespace: "instance-a",
+	}
+	if isOwnedBy(stamped, "example", "") {
+		t.Error("empty owner namespace must NOT match a namespace-stamped resource")
+	}
+	legacy := map[string]string{AnnotationPermissionBinder: "example"}
+	if !isOwnedBy(legacy, "example", "") {
+		t.Error("legacy name-only resources must still match by name")
+	}
+	if !isOwnedBy(legacy, "example", "instance-a") {
+		t.Error("legacy name-only resources must match a namespaced owner by name")
+	}
+}
+
+// TestIsOwnedByEmptyNamespaceValue pins the degenerate-stamp handling: a
+// present-but-empty namespace annotation is treated as legacy (name match)
+// instead of permanently wedging the resource against every real CR.
+func TestIsOwnedByEmptyNamespaceValue(t *testing.T) {
+	degenerate := map[string]string{
+		AnnotationPermissionBinder:          "example",
+		AnnotationPermissionBinderNamespace: "",
+	}
+	if !isOwnedBy(degenerate, "example", "instance-a") {
+		t.Error("empty-value namespace annotation must fall back to name matching")
+	}
+	if isOwnedBy(degenerate, "other", "instance-a") {
+		t.Error("empty-value namespace annotation must still require a name match")
 	}
 }

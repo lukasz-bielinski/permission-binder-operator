@@ -62,6 +62,13 @@ func TestParseWatchNamespaces(t *testing.T) {
 			value:    "e2e-test-a,",
 			expected: []string{"e2e-test-a"},
 		},
+		{
+			// The same parser backs RECONCILE_NAMESPACES (issue #43); the
+			// semantics (trim, drop empties, empty = no restriction) are shared.
+			name:     "RECONCILE_NAMESPACES-style CR allowlist",
+			value:    "pbo-e2e-1, pbo-e2e-2",
+			expected: []string{"pbo-e2e-1", "pbo-e2e-2"},
+		},
 	}
 
 	for _, tt := range tests {

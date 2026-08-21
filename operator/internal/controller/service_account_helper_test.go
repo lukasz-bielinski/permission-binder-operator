@@ -1,7 +1,17 @@
 package controller
 
 import (
+	"context"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // TestGenerateServiceAccountName tests the GenerateServiceAccountName function
@@ -437,5 +447,184 @@ func BenchmarkGenerateServiceAccountName_LongNames(b *testing.B) {
 			"this-is-a-very-long-namespace-name-with-many-segments",
 			"very-long-service-account-name",
 		)
+	}
+}
+
+// ============================================================================
+// ProcessServiceAccounts tests (fake K8s client) - issue #43 ownership gate
+// ============================================================================
+
+func newSAFakeClient(objs ...client.Object) client.Client {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		Build()
+}
+
+func saRoleBindingFixture(namespace, saName, roleName string, annotations map[string]string) *rbacv1.RoleBinding {
+	fullSAName := GenerateServiceAccountName("", namespace, saName)
+	return &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "sa-" + namespace + "-" + saName,
+			Namespace:   namespace,
+			Annotations: annotations,
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     roleName,
+		},
+		Subjects: []rbacv1.Subject{
+			{Kind: "ServiceAccount", Name: fullSAName, Namespace: namespace},
+		},
+	}
+}
+
+// TestProcessServiceAccounts_ForeignOwnedRoleBindingNotStolen verifies the
+// issue #43 gate: an SA RoleBinding claimed by ANOTHER PermissionBinder must
+// not be delete+recreated even when its RoleRef differs from the mapping.
+func TestProcessServiceAccounts_ForeignOwnedRoleBindingNotStolen(t *testing.T) {
+	const ns = "team-a"
+	existing := saRoleBindingFixture(ns, "deploy", "view", map[string]string{
+		AnnotationPermissionBinder:          "other-binder",
+		AnnotationPermissionBinderNamespace: "other-namespace",
+	})
+	k8sClient := newSAFakeClient(existing)
+
+	conflictsBefore := testutil.ToFloat64(ownershipConflictsTotal.WithLabelValues("serviceaccount_rolebinding"))
+
+	processed, err := ProcessServiceAccounts(context.Background(), k8sClient, ns,
+		map[string]string{"deploy": "edit"}, "", "my-binder", "my-namespace")
+	if err != nil {
+		t.Fatalf("ProcessServiceAccounts returned error: %v", err)
+	}
+
+	var rb rbacv1.RoleBinding
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "sa-" + ns + "-deploy", Namespace: ns}, &rb); err != nil {
+		t.Fatalf("RoleBinding disappeared - it was stolen/deleted: %v", err)
+	}
+	if rb.RoleRef.Name != "view" {
+		t.Errorf("RoleBinding RoleRef was overwritten: expected view, got %s", rb.RoleRef.Name)
+	}
+	if rb.Annotations[AnnotationPermissionBinder] != "other-binder" ||
+		rb.Annotations[AnnotationPermissionBinderNamespace] != "other-namespace" {
+		t.Errorf("Foreign ownership annotations were rewritten: %v", rb.Annotations)
+	}
+	if len(processed) != 0 {
+		t.Errorf("Refused RoleBinding must not be reported as processed, got %v", processed)
+	}
+
+	conflictsAfter := testutil.ToFloat64(ownershipConflictsTotal.WithLabelValues("serviceaccount_rolebinding"))
+	if conflictsAfter != conflictsBefore+1 {
+		t.Errorf("Expected ownership conflict counter to increase by 1, got %v -> %v", conflictsBefore, conflictsAfter)
+	}
+}
+
+// TestProcessServiceAccounts_OwnedRoleBindingRoleChangeRecreated verifies the
+// pre-existing behavior survives the gate: a RoleBinding owned by the calling
+// PermissionBinder IS delete+recreated when the mapped role changes.
+func TestProcessServiceAccounts_OwnedRoleBindingRoleChangeRecreated(t *testing.T) {
+	const ns = "team-a"
+	existing := saRoleBindingFixture(ns, "deploy", "view", map[string]string{
+		AnnotationPermissionBinder:          "my-binder",
+		AnnotationPermissionBinderNamespace: "my-namespace",
+	})
+	k8sClient := newSAFakeClient(existing)
+
+	processed, err := ProcessServiceAccounts(context.Background(), k8sClient, ns,
+		map[string]string{"deploy": "edit"}, "", "my-binder", "my-namespace")
+	if err != nil {
+		t.Fatalf("ProcessServiceAccounts returned error: %v", err)
+	}
+
+	var rb rbacv1.RoleBinding
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "sa-" + ns + "-deploy", Namespace: ns}, &rb); err != nil {
+		t.Fatalf("RoleBinding not found after update: %v", err)
+	}
+	if rb.RoleRef.Name != "edit" {
+		t.Errorf("Owned RoleBinding was not updated: expected edit, got %s", rb.RoleRef.Name)
+	}
+	if rb.Annotations[AnnotationPermissionBinder] != "my-binder" ||
+		rb.Annotations[AnnotationPermissionBinderNamespace] != "my-namespace" {
+		t.Errorf("Ownership annotations missing after recreate: %v", rb.Annotations)
+	}
+	if len(processed) != 1 {
+		t.Errorf("Expected 1 processed SA, got %v", processed)
+	}
+}
+
+// TestProcessServiceAccounts_LegacyNameOnlyRoleBindingTakeable verifies
+// backward compatibility: a legacy RoleBinding annotated with the owner name
+// only (no namespace annotation) is still updated, and the recreate stamps the
+// namespace annotation retroactively.
+func TestProcessServiceAccounts_LegacyNameOnlyRoleBindingTakeable(t *testing.T) {
+	const ns = "team-a"
+	existing := saRoleBindingFixture(ns, "deploy", "view", map[string]string{
+		AnnotationPermissionBinder: "my-binder", // legacy: no namespace annotation
+	})
+	k8sClient := newSAFakeClient(existing)
+
+	if _, err := ProcessServiceAccounts(context.Background(), k8sClient, ns,
+		map[string]string{"deploy": "edit"}, "", "my-binder", "my-namespace"); err != nil {
+		t.Fatalf("ProcessServiceAccounts returned error: %v", err)
+	}
+
+	var rb rbacv1.RoleBinding
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "sa-" + ns + "-deploy", Namespace: ns}, &rb); err != nil {
+		t.Fatalf("RoleBinding not found after update: %v", err)
+	}
+	if rb.RoleRef.Name != "edit" {
+		t.Errorf("Legacy-owned RoleBinding was not updated: expected edit, got %s", rb.RoleRef.Name)
+	}
+	if rb.Annotations[AnnotationPermissionBinderNamespace] != "my-namespace" {
+		t.Errorf("Namespace annotation not stamped retroactively on legacy RoleBinding: %v", rb.Annotations)
+	}
+}
+
+// TestProcessServiceAccounts_ManagedByValueOverrideStamping verifies that an
+// overridden MANAGED_BY_VALUE is actually stamped on created ServiceAccounts
+// and RoleBindings (issue #43: the SA flow used to hardcode the default).
+func TestProcessServiceAccounts_ManagedByValueOverrideStamping(t *testing.T) {
+	original := ManagedByValue
+	t.Cleanup(func() { ManagedByValue = original })
+	ManagedByValue = "permission-binder-operator-e2e-7"
+
+	const ns = "team-a"
+	k8sClient := newSAFakeClient()
+
+	if _, err := ProcessServiceAccounts(context.Background(), k8sClient, ns,
+		map[string]string{"deploy": "edit"}, "", "my-binder", "my-namespace"); err != nil {
+		t.Fatalf("ProcessServiceAccounts returned error: %v", err)
+	}
+
+	fullSAName := GenerateServiceAccountName("", ns, "deploy")
+	var sa corev1.ServiceAccount
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: fullSAName, Namespace: ns}, &sa); err != nil {
+		t.Fatalf("ServiceAccount not created: %v", err)
+	}
+	if got := sa.Labels["app.kubernetes.io/managed-by"]; got != "permission-binder-operator-e2e-7" {
+		t.Errorf("SA managed-by label ignores MANAGED_BY_VALUE override: %q", got)
+	}
+	if got := sa.Annotations[AnnotationCreatedBy]; got != "permission-binder-operator-e2e-7" {
+		t.Errorf("SA created-by annotation ignores MANAGED_BY_VALUE override: %q", got)
+	}
+	if sa.Annotations[AnnotationPermissionBinder] != "my-binder" ||
+		sa.Annotations[AnnotationPermissionBinderNamespace] != "my-namespace" {
+		t.Errorf("SA ownership annotations wrong: %v", sa.Annotations)
+	}
+
+	var rb rbacv1.RoleBinding
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "sa-" + ns + "-deploy", Namespace: ns}, &rb); err != nil {
+		t.Fatalf("RoleBinding not created: %v", err)
+	}
+	if got := rb.Labels["app.kubernetes.io/managed-by"]; got != "permission-binder-operator-e2e-7" {
+		t.Errorf("RB managed-by label ignores MANAGED_BY_VALUE override: %q", got)
+	}
+	if got := rb.Annotations[AnnotationCreatedBy]; got != "permission-binder-operator-e2e-7" {
+		t.Errorf("RB created-by annotation ignores MANAGED_BY_VALUE override: %q", got)
 	}
 }

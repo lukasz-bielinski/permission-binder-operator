@@ -48,6 +48,14 @@ const (
 	// name collision between instances no longer causes cross-instance deletion.
 	AnnotationPermissionBinderNamespace = "permission-binder.io/permission-binder-namespace"
 	AnnotationRole                      = "permission-binder.io/role"
+	// Orphan markers set by SAFE-MODE cleanup when a PermissionBinder is
+	// deleted; their presence makes a resource adoptable by another CR.
+	AnnotationOrphanedAt = "permission-binder.io/orphaned-at"
+	AnnotationOrphanedBy = "permission-binder.io/orphaned-by"
+
+	// OrphanedByPermissionBinderDeletion is the AnnotationOrphanedBy value
+	// stamped by SAFE-MODE cleanup.
+	OrphanedByPermissionBinderDeletion = "permission-binder-deletion"
 
 	// Label keys
 	LabelManagedBy = "permission-binder.io/managed-by"
@@ -72,6 +80,27 @@ type PermissionBinderReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	DebugMode bool
+	// ReconcileNamespaces optionally restricts which PermissionBinder CRs this
+	// instance reconciles, by CR namespace (RECONCILE_NAMESPACES env,
+	// comma-separated). Empty = reconcile CRs from all namespaces (default).
+	// Unlike WATCH_NAMESPACE it does NOT scope the cache, so dynamically
+	// created target namespaces stay visible - this is the knob that makes
+	// MANAGED_BY_VALUE safe in multi-instance deployments.
+	ReconcileNamespaces []string
+}
+
+// reconcilesNamespace reports whether this instance reconciles PermissionBinder
+// CRs living in the given namespace.
+func (r *PermissionBinderReconciler) reconcilesNamespace(namespace string) bool {
+	if len(r.ReconcileNamespaces) == 0 {
+		return true
+	}
+	for _, ns := range r.ReconcileNamespaces {
+		if ns == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // Status returns the StatusWriter for updating subresource status
@@ -95,6 +124,12 @@ func (r *PermissionBinderReconciler) Status() client.StatusWriter {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+
+	// RECONCILE_NAMESPACES backstop (issue #43): covers every enqueue path,
+	// including RequeueAfter items and future handlers, not just watch events
+	if !r.reconcilesNamespace(req.Namespace) {
+		return ctrl.Result{}, nil
+	}
 
 	// Log reconciliation trigger in debug mode
 	if r.DebugMode {
@@ -268,7 +303,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Process NetworkPolicies if enabled
 	if permissionBinder.Spec.NetworkPolicy != nil && permissionBinder.Spec.NetworkPolicy.Enabled {
 		// Check for multiple PermissionBinder CRs with NetworkPolicy enabled
-		if err := networkpolicy.CheckMultiplePermissionBinders(ctx, r); err != nil {
+		if err := networkpolicy.CheckMultiplePermissionBinders(ctx, r, r.ReconcileNamespaces); err != nil {
 			logger.Error(err, "Failed to check multiple PermissionBinders (non-fatal)")
 			// Continue - not blocking
 		}

@@ -31,8 +31,12 @@ EOF
 
 sleep 15
 
-# Get managed namespaces (owned by THIS test's CR - issue #35)
-MANAGED_NAMESPACES=$(list_owned_namespaces "test-sa-cross-ns" | tr '\n' ' ')
+# Enumerate namespaces via the ServiceAccounts this CR actually created:
+# under the ownership gate (issue #43) shared namespaces stay claimed by the
+# baseline CR, so namespace-ownership listing would be empty and the test
+# vacuous. SAs carry app.kubernetes.io/name=<cr-name>.
+MANAGED_NAMESPACES=$(kubectl get sa -A -l "app.kubernetes.io/name=test-sa-cross-ns" \
+    -o custom-columns=NS:.metadata.namespace --no-headers 2>/dev/null | sort -u | tr '\n' ' ')
 
 if [ -n "$MANAGED_NAMESPACES" ]; then
     SA_COUNT=0
