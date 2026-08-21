@@ -68,11 +68,11 @@ wait_for_pr_in_status() {
     
     while [ $waited -lt $max_wait ]; do
         # Check if PR number exists in status
-        local pr_number=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+        local pr_number=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
             -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prNumber}" 2>/dev/null || echo "")
         
         # Also check PR state - if PR is already merged, we're done
-        local pr_state=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+        local pr_state=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
             -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].state}" 2>/dev/null || echo "")
         
         # If PR number exists, return it (PR created or merged)
@@ -84,7 +84,7 @@ wait_for_pr_in_status() {
         # If PR state is pr-merged, we can also return (PR was merged before status update)
         if [ "$pr_state" == "pr-merged" ]; then
             # Try to get PR number one more time
-            pr_number=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+            pr_number=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
                 -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prNumber}" 2>/dev/null || echo "")
             if [ -n "$pr_number" ] && [ "$pr_number" != "null" ] && [ "$pr_number" != "" ]; then
                 echo "$pr_number"
@@ -104,13 +104,13 @@ get_pr_from_status() {
     local namespace=$1
     local test_namespace=$2
     
-    local pr_number=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+    local pr_number=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prNumber}" 2>/dev/null || echo "")
-    local pr_url=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+    local pr_url=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prUrl}" 2>/dev/null || echo "")
-    local pr_branch=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+    local pr_branch=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prBranch}" 2>/dev/null || echo "")
-    local pr_state=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+    local pr_state=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].state}" 2>/dev/null || echo "")
     
     echo "$pr_number|$pr_url|$pr_branch|$pr_state"
@@ -282,7 +282,7 @@ wait_for_pr_state() {
     local waited=0
     
     while [ $waited -lt $max_wait ]; do
-        local current_state=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+        local current_state=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
             -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].state}" 2>/dev/null || echo "")
         
         if [ "$current_state" == "$expected_state" ]; then
@@ -478,7 +478,7 @@ cleanup_networkpolicy_test_artifacts() {
     cleanup_networkpolicy_files_from_repo "$github_repo" "$test_namespace" "$cluster_name"
     
     # Get PR number from PermissionBinder status (for PR/branch cleanup)
-    local pr_number=$(kubectl get permissionbinder "$permissionbinder_name" -n permissions-binder-operator \
+    local pr_number=$(kubectl get permissionbinder "$permissionbinder_name" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prNumber}" 2>/dev/null || echo "")
     
     # If PR number not in status, try to find it from GitHub by branch name
@@ -541,7 +541,7 @@ cleanup_all_networkpolicy_test_artifacts() {
     info_log "Cleaning up all NetworkPolicy test artifacts from GitHub..."
     
     # Get all namespaces with PRs from PermissionBinder status
-    local namespaces=$(kubectl get permissionbinder "$permissionbinder_name" -n permissions-binder-operator \
+    local namespaces=$(kubectl get permissionbinder "$permissionbinder_name" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath='{.status.networkPolicies[*].namespace}' 2>/dev/null || echo "")
     
     if [ -z "$namespaces" ] || [ "$namespaces" == "" ]; then
