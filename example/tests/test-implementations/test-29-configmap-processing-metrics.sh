@@ -18,8 +18,10 @@ if [ -z "$PROM_POD" ]; then
     info_log "Install Prometheus to enable this test"
     echo ""
 else
+    # Instance-scoped query (issue #35): only this operator namespace's series
+    Q_CM=$(printf '%s' "permission_binder_configmap_entries_processed_total{namespace=\"${NAMESPACE:?}\"}" | jq -sRr @uri)
     # Query ConfigMap entries processed metric
-    CM_PROCESSED=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=permission_binder_configmap_entries_processed_total" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo "0")
+    CM_PROCESSED=$(kubectl_retry kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_CM}" 2>/dev/null | jq -r '.data.result[0].value[1]' 2>/dev/null | tr -d '\n' | grep -E '^[0-9]+$' || echo "0")
     info_log "ConfigMap entries processed: $CM_PROCESSED"
     
     if [ "$CM_PROCESSED" != "0" ] && [ "$CM_PROCESSED" -gt 0 ] 2>/dev/null; then

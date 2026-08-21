@@ -11,8 +11,10 @@ source "$SCRIPT_DIR/test-common.sh"
 echo "Test 22: Metrics Endpoint Verification"
 echo "----------------------------------------"
 
-# Use port-forward to access metrics endpoint
-kubectl port-forward -n $NAMESPACE svc/operator-controller-manager-metrics-service 8080:8080 >/dev/null 2>&1 &
+# Use port-forward to access metrics endpoint on a free local port
+# (fixed :8080 collides between parallel instances - issue #35)
+LOCAL_PORT=$(pick_free_port)
+kubectl port-forward -n $NAMESPACE svc/operator-controller-manager-metrics-service ${LOCAL_PORT}:8080 >/dev/null 2>&1 &
 PORT_FORWARD_PID=$!
 
 # Wait longer for port-forward to establish (increased from 3s to 10s)
@@ -22,7 +24,7 @@ sleep 10
 # Query metrics endpoint with retry logic
 METRICS_RESPONSE=0
 for attempt in 1 2 3; do
-    METRICS_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 http://localhost:8080/metrics 2>/dev/null | grep -c "permission_binder" || echo "0")
+    METRICS_RESPONSE=$(curl -s --connect-timeout 5 --max-time 10 "http://localhost:${LOCAL_PORT}/metrics" 2>/dev/null | grep -c "permission_binder" || echo "0")
     METRICS_RESPONSE=$(echo "$METRICS_RESPONSE" | tr -d '\n' | head -1)
     
     if [ "$METRICS_RESPONSE" -gt 0 ]; then

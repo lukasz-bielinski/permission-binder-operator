@@ -11,11 +11,13 @@ source "$SCRIPT_DIR/test-common.sh"
 echo "Test 10: Conflict Handling"
 echo "----------------------------"
 
-# Add duplicate entry to ConfigMap
-kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > /tmp/whitelist-dup.txt
-echo "CN=COMPANY-K8S-project1-engineer,OU=Test,DC=example,DC=com" >> /tmp/whitelist-dup.txt
-kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt=/tmp/whitelist-dup.txt --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
-rm -f /tmp/whitelist-dup.txt
+# Add duplicate entry to ConfigMap (duplicates the baseline project1 entry,
+# which carries $TEST_NS_PREFIX under per-instance isolation)
+WHITELIST_DUP="${RUN_DIR:-/tmp}/whitelist-dup.txt"
+kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' > "$WHITELIST_DUP"
+echo "CN=COMPANY-K8S-${TEST_NS_PREFIX}project1-engineer,OU=Test,DC=example,DC=com" >> "$WHITELIST_DUP"
+kubectl create configmap permission-config -n $NAMESPACE --from-file=whitelist.txt="$WHITELIST_DUP" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+rm -f "$WHITELIST_DUP"
 
 kubectl_retry kubectl annotate permissionbinder permissionbinder-example -n $NAMESPACE test-conflict="$(date +%s)" --overwrite >/dev/null 2>&1
 sleep 15
@@ -28,8 +30,8 @@ else
     fail_test "Operator encountered errors: $CRASH_ERRORS panic/crash logs"
 fi
 
-# Verify RoleBindings still managed
-RB_CONFLICT=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator --no-headers | wc -l)
+# Verify RoleBindings still managed (own CR only - issue #35 scoping)
+RB_CONFLICT=$(count_owned_rolebindings "permissionbinder-example")
 if [ "$RB_CONFLICT" -gt 0 ]; then
     pass_test "RoleBindings still managed despite duplicates"
 else

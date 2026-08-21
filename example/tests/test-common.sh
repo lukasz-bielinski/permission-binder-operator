@@ -20,23 +20,86 @@ info_log() {
     echo "ℹ️  $1" | tee -a ${TEST_RESULTS:-/tmp/e2e-test-results.log}
 }
 
-# E2E_WAIT_MULT (default 1) multiplies harness-owned fixed sleeps/timeouts.
-# The k3s API server on rpi4-class hardware is loaded when the suite runs in
-# parallel (issue #36); the parallel runner exports a load-aware default.
-# Tests should prefer e2e_sleep/e2e_max_wait over a bare `sleep N`/timeout so
-# the multiplier is honored. Default: 1 (identical to current behavior).
-E2E_WAIT_MULT="${E2E_WAIT_MULT:-1}"
+# ---------------------------------------------------------------------------
+# Instance-scoped helpers (issue #35)
+#
+# Under parallel instances, cluster-wide label queries and unfiltered metrics
+# see SIBLING instances' resources. These helpers scope every read to the
+# calling instance: label by MANAGED_BY_VALUE (unique per instance, see the
+# runner) and ownership by the permission-binder + permission-binder-namespace
+# annotations (namespace-aware since PR #38; legacy name-only resources match
+# by name for backward compatibility).
+# ---------------------------------------------------------------------------
 
-# Sleep for $1 seconds scaled by E2E_WAIT_MULT.
-e2e_sleep() {
-    local seconds="$1"
-    awk -v s="$seconds" -v m="$E2E_WAIT_MULT" 'BEGIN { d = s * m; if (d < 0) d = 0; cmd = "sleep " d; system(cmd) }'
+MANAGED_BY_VALUE="${MANAGED_BY_VALUE:-permission-binder-operator}"
+if [ -n "${INSTANCE:-}" ]; then
+    MANAGED_BY_VALUE="permission-binder-operator-${INSTANCE}"
+fi
+MANAGED_BY_LABEL="permission-binder.io/managed-by=${MANAGED_BY_VALUE}"
+
+# jq filter selecting resources owned by PermissionBinder $1 in $NAMESPACE.
+# Matches new-style (name + namespace annotation) and legacy (name-only).
+_OWNED_JQ='.items[] | select(
+    .metadata.annotations["permission-binder.io/permission-binder"] == $pb and
+    ((.metadata.annotations["permission-binder.io/permission-binder-namespace"] // $ns) == $ns))'
+
+# count_owned_rolebindings <pb_name> - RoleBindings owned by this instance's CR
+count_owned_rolebindings() {
+    kubectl get rolebindings -A -l "$MANAGED_BY_LABEL" -o json 2>/dev/null \
+        | jq --arg pb "$1" --arg ns "${NAMESPACE:?}" "[${_OWNED_JQ}] | length"
 }
 
-# Scale a timeout/wait budget (seconds) by E2E_WAIT_MULT, rounded up, min 1.
-e2e_max_wait() {
-    local seconds="$1"
-    awk -v s="$seconds" -v m="$E2E_WAIT_MULT" 'BEGIN { d = s * m; d = (d == int(d)) ? d : int(d) + 1; if (d < 1) d = 1; print d }'
+# list_owned_rolebindings <pb_name> - "namespace name" lines, own CR only
+list_owned_rolebindings() {
+    kubectl get rolebindings -A -l "$MANAGED_BY_LABEL" -o json 2>/dev/null \
+        | jq -r --arg pb "$1" --arg ns "${NAMESPACE:?}" "${_OWNED_JQ} | .metadata.namespace + \" \" + .metadata.name"
+}
+
+# count_owned_namespaces <pb_name> - Namespaces owned by this instance's CR
+count_owned_namespaces() {
+    kubectl get namespaces -l "$MANAGED_BY_LABEL" -o json 2>/dev/null \
+        | jq --arg pb "$1" --arg ns "${NAMESPACE:?}" "[${_OWNED_JQ}] | length"
+}
+
+# list_owned_namespaces <pb_name> - namespace names, own CR only
+list_owned_namespaces() {
+    kubectl get namespaces -l "$MANAGED_BY_LABEL" -o json 2>/dev/null \
+        | jq -r --arg pb "$1" --arg ns "${NAMESPACE:?}" "${_OWNED_JQ} | .metadata.name"
+}
+
+# prom_query_raw <promql> - full JSON response from the shared Prometheus
+# (same exec+wget transport the metrics tests use; no -c flag, kubectl picks
+# the default container exactly like the tests always did).
+prom_query_raw() {
+    local prom_pod
+    prom_pod=$(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    [ -z "$prom_pod" ] && return 1
+    kubectl exec -n monitoring "$prom_pod" -- \
+        wget -q -O- "http://localhost:9090/api/v1/query?query=$(printf '%s' "$1" | jq -sRr @uri)" 2>/dev/null
+}
+
+# prom_query <promql> - value of the FIRST series or empty. Callers must
+# already scope the expression with {namespace="$NAMESPACE"} (see prom_metric).
+prom_query() {
+    prom_query_raw "$1" | jq -r '.data.result[0].value[1] // empty'
+}
+
+# prom_metric <metric_name> - instance-scoped gauge/counter value: the metric
+# filtered to THIS instance's operator namespace (empty if no sample yet).
+prom_metric() {
+    prom_query "${1}{namespace=\"${NAMESPACE:?}\"}"
+}
+
+# pick_free_port - free local TCP port for kubectl port-forward (avoids the
+# fixed :8080 cross-instance collision)
+pick_free_port() {
+    python3 - <<'PYPORT' 2>/dev/null || echo $((20000 + RANDOM % 20000))
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PYPORT
 }
 
 # Retry kubectl commands with exponential backoff (for RPi k3s restarts)
@@ -87,11 +150,11 @@ wait_for_pr_in_status() {
     
     while [ $waited -lt $max_wait ]; do
         # Check if PR number exists in status
-        local pr_number=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+        local pr_number=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
             -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prNumber}" 2>/dev/null || echo "")
         
         # Also check PR state - if PR is already merged, we're done
-        local pr_state=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+        local pr_state=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
             -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].state}" 2>/dev/null || echo "")
         
         # If PR number exists, return it (PR created or merged)
@@ -103,7 +166,7 @@ wait_for_pr_in_status() {
         # If PR state is pr-merged, we can also return (PR was merged before status update)
         if [ "$pr_state" == "pr-merged" ]; then
             # Try to get PR number one more time
-            pr_number=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+            pr_number=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
                 -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prNumber}" 2>/dev/null || echo "")
             if [ -n "$pr_number" ] && [ "$pr_number" != "null" ] && [ "$pr_number" != "" ]; then
                 echo "$pr_number"
@@ -123,13 +186,13 @@ get_pr_from_status() {
     local namespace=$1
     local test_namespace=$2
     
-    local pr_number=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+    local pr_number=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prNumber}" 2>/dev/null || echo "")
-    local pr_url=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+    local pr_url=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prUrl}" 2>/dev/null || echo "")
-    local pr_branch=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+    local pr_branch=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prBranch}" 2>/dev/null || echo "")
-    local pr_state=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+    local pr_state=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].state}" 2>/dev/null || echo "")
     
     echo "$pr_number|$pr_url|$pr_branch|$pr_state"
@@ -301,7 +364,7 @@ wait_for_pr_state() {
     local waited=0
     
     while [ $waited -lt $max_wait ]; do
-        local current_state=$(kubectl get permissionbinder "$namespace" -n permissions-binder-operator \
+        local current_state=$(kubectl get permissionbinder "$namespace" -n "${NAMESPACE:?NAMESPACE must be set}" \
             -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].state}" 2>/dev/null || echo "")
         
         if [ "$current_state" == "$expected_state" ]; then
@@ -497,7 +560,7 @@ cleanup_networkpolicy_test_artifacts() {
     cleanup_networkpolicy_files_from_repo "$github_repo" "$test_namespace" "$cluster_name"
     
     # Get PR number from PermissionBinder status (for PR/branch cleanup)
-    local pr_number=$(kubectl get permissionbinder "$permissionbinder_name" -n permissions-binder-operator \
+    local pr_number=$(kubectl get permissionbinder "$permissionbinder_name" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$test_namespace\")].prNumber}" 2>/dev/null || echo "")
     
     # If PR number not in status, try to find it from GitHub by branch name
@@ -560,7 +623,7 @@ cleanup_all_networkpolicy_test_artifacts() {
     info_log "Cleaning up all NetworkPolicy test artifacts from GitHub..."
     
     # Get all namespaces with PRs from PermissionBinder status
-    local namespaces=$(kubectl get permissionbinder "$permissionbinder_name" -n permissions-binder-operator \
+    local namespaces=$(kubectl get permissionbinder "$permissionbinder_name" -n "${NAMESPACE:?NAMESPACE must be set}" \
         -o jsonpath='{.status.networkPolicies[*].namespace}' 2>/dev/null || echo "")
     
     if [ -z "$namespaces" ] || [ "$namespaces" == "" ]; then

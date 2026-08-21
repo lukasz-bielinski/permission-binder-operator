@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Per-instance test namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+
 # ============================================================================
 # ============================================================================
 echo "Test 35: ServiceAccount Protection (SAFE MODE)"
@@ -33,9 +36,9 @@ EOF
 sleep 15
 
 # Verify ServiceAccounts exist
-if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
-    SA_DEPLOY_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
-    SA_RUNTIME_UID=$(kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
+    SA_DEPLOY_UID=$(kubectl get sa ${TEST_NS}-sa-deploy -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
+    SA_RUNTIME_UID=$(kubectl get sa ${TEST_NS}-sa-runtime -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
     
     if [ -n "$SA_DEPLOY_UID" ] && [ -n "$SA_RUNTIME_UID" ]; then
         info_log "ServiceAccounts created (deploy: ${SA_DEPLOY_UID:0:8}..., runtime: ${SA_RUNTIME_UID:0:8}...)"
@@ -60,14 +63,14 @@ EOF
         sleep 15
         
         # Verify SAs still exist (SAFE MODE)
-        NEW_SA_DEPLOY_UID=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
-        NEW_SA_RUNTIME_UID=$(kubectl get sa test-namespace-001-sa-runtime -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+        NEW_SA_DEPLOY_UID=$(kubectl get sa ${TEST_NS}-sa-deploy -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
+        NEW_SA_RUNTIME_UID=$(kubectl get sa ${TEST_NS}-sa-runtime -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
         
         if [ "$SA_DEPLOY_UID" == "$NEW_SA_DEPLOY_UID" ] && [ "$SA_RUNTIME_UID" == "$NEW_SA_RUNTIME_UID" ]; then
             pass_test "ServiceAccounts NEVER deleted (SAFE MODE)"
             
             # Check orphaned annotations
-            ORPHANED_ANNOTATION=$(kubectl get sa test-namespace-001-sa-deploy -n test-namespace-001 -o jsonpath='{.metadata.annotations.permission-binder\.io/orphaned-at}' 2>/dev/null)
+            ORPHANED_ANNOTATION=$(kubectl get sa ${TEST_NS}-sa-deploy -n "$TEST_NS" -o jsonpath='{.metadata.annotations.permission-binder\.io/orphaned-at}' 2>/dev/null)
             if [ -n "$ORPHANED_ANNOTATION" ]; then
                 pass_test "Orphaned annotation added to ServiceAccounts"
             else
@@ -80,7 +83,7 @@ EOF
         info_log "ServiceAccounts not created in previous tests"
     fi
 else
-    info_log "test-namespace-001 does not exist, skipping SA protection test"
+    info_log "$TEST_NS does not exist, skipping SA protection test"
 fi
 
 echo ""

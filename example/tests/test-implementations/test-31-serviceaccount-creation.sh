@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Per-instance test namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+
 # ============================================================================
 # ============================================================================
 echo "Test 31: ServiceAccount Creation"
@@ -33,10 +36,10 @@ EOF
 sleep 10
 
 # Check if test-namespace-001 exists and has SA
-if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
-    SA_DEPLOY=$(kubectl get sa -n test-namespace-001 --no-headers 2>/dev/null | grep "sa-deploy" | wc -l)
+if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
+    SA_DEPLOY=$(kubectl get sa -n "$TEST_NS" --no-headers 2>/dev/null | grep "sa-deploy" | wc -l)
     SA_DEPLOY=$(echo "$SA_DEPLOY" | tr -d ' \n')
-    SA_RUNTIME=$(kubectl get sa -n test-namespace-001 --no-headers 2>/dev/null | grep "sa-runtime" | wc -l)
+    SA_RUNTIME=$(kubectl get sa -n "$TEST_NS" --no-headers 2>/dev/null | grep "sa-runtime" | wc -l)
     SA_RUNTIME=$(echo "$SA_RUNTIME" | tr -d ' \n')
     
     if [ "$SA_DEPLOY" -gt 0 ] && [ "$SA_RUNTIME" -gt 0 ]; then
@@ -44,8 +47,8 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         
         # Check RoleBindings
         # Use grep with name filter to find RoleBindings for ServiceAccounts
-        RB_DEPLOY=$(kubectl get rolebinding -n test-namespace-001 -o name 2>/dev/null | grep -c "sa-.*-deploy" || echo "0")
-        RB_RUNTIME=$(kubectl get rolebinding -n test-namespace-001 -o name 2>/dev/null | grep -c "sa-.*-runtime" || echo "0")
+        RB_DEPLOY=$(kubectl get rolebinding -n "$TEST_NS" -o name 2>/dev/null | grep -c "sa-.*-deploy" || echo "0")
+        RB_RUNTIME=$(kubectl get rolebinding -n "$TEST_NS" -o name 2>/dev/null | grep -c "sa-.*-runtime" || echo "0")
         
         if [ "$RB_DEPLOY" -gt 0 ] && [ "$RB_RUNTIME" -gt 0 ]; then
             pass_test "ServiceAccount RoleBindings created"
@@ -56,7 +59,7 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         fail_test "ServiceAccounts not created (deploy: $SA_DEPLOY, runtime: $SA_RUNTIME)"
     fi
 else
-    info_log "test-namespace-001 does not exist, skipping SA creation test"
+    info_log "$TEST_NS does not exist, skipping SA creation test"
 fi
 
 echo ""

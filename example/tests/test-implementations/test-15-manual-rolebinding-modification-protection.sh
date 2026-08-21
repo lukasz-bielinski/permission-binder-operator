@@ -11,8 +11,8 @@ source "$SCRIPT_DIR/test-common.sh"
 echo "Test 15: Manual RoleBinding Modification (Protection)"
 echo "-------------------------------------------------------"
 
-# Find a managed RoleBinding
-SAMPLE_RB=$(kubectl_retry kubectl get rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator -o json | jq -r '.items[0] | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null)
+# Find a managed RoleBinding (sample from this instance's own CR - issue #35)
+SAMPLE_RB=$(list_owned_rolebindings "permissionbinder-example" | head -1 | awk '{print $1 "/" $2}')
 
 if [ -n "$SAMPLE_RB" ] && [ "$SAMPLE_RB" != "null/" ]; then
     RB_NAMESPACE=$(echo $SAMPLE_RB | cut -d/ -f1)

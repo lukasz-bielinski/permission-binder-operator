@@ -29,7 +29,7 @@ else
 fi
 
 # Verify RoleBinding was still created (operator should create it despite missing ClusterRole)
-SECURITY_RB=$(kubectl_retry kubectl get rolebinding --all-namespaces -l permission-binder.io/managed-by=permission-binder-operator -o json | jq '[.items[] | select(.roleRef.name=="nonexistent-clusterrole")] | length')
+SECURITY_RB=$(kubectl_retry kubectl get rolebinding --all-namespaces -l "$MANAGED_BY_LABEL" -o json | jq '[.items[] | select(.roleRef.name=="nonexistent-clusterrole")] | length')
 if [ "$SECURITY_RB" -gt 0 ]; then
     pass_test "RoleBinding created despite missing ClusterRole"
 else

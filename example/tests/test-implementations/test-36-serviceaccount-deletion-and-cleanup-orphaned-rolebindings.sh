@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Per-instance test namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+
 # ============================================================================
 # ============================================================================
 echo "Test 36: ServiceAccount Deletion and Cleanup"
@@ -31,14 +34,14 @@ EOF
 
 sleep 15
 
-if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
+if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
     # Check if SA and RoleBinding exist
-    if kubectl get sa test-namespace-001-sa-cleanup-test -n test-namespace-001 >/dev/null 2>&1; then
-        RB_NAME=$(kubectl get rolebinding -n test-namespace-001 -o json 2>/dev/null | jq -r '.items[] | select(.subjects[0].name | contains("sa-cleanup-test")) | .metadata.name' | head -1)
+    if kubectl get sa ${TEST_NS}-sa-cleanup-test -n "$TEST_NS" >/dev/null 2>&1; then
+        RB_NAME=$(kubectl get rolebinding -n "$TEST_NS" -o json 2>/dev/null | jq -r '.items[] | select(.subjects[0].name | contains("sa-cleanup-test")) | .metadata.name' | head -1)
         info_log "RoleBinding: $RB_NAME"
         
         # Manually delete ServiceAccount
-        kubectl delete sa test-namespace-001-sa-cleanup-test -n test-namespace-001 >/dev/null 2>&1
+        kubectl delete sa ${TEST_NS}-sa-cleanup-test -n "$TEST_NS" >/dev/null 2>&1
         
         # Trigger full reconciliation by deleting operator pod and forcing reconciliation
         OPERATOR_POD=$(kubectl get pods -n $NAMESPACE -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
@@ -56,14 +59,14 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         sleep 15
         
         # Verify SA recreated (operator should recreate it)
-        if kubectl get sa test-namespace-001-sa-cleanup-test -n test-namespace-001 >/dev/null 2>&1; then
+        if kubectl get sa ${TEST_NS}-sa-cleanup-test -n "$TEST_NS" >/dev/null 2>&1; then
             pass_test "ServiceAccount automatically recreated after deletion"
         else
             fail_test "ServiceAccount not recreated"
         fi
         
         # Verify RoleBinding recreated
-        if kubectl get rolebinding -n test-namespace-001 2>/dev/null | grep -q "sa-cleanup-test"; then
+        if kubectl get rolebinding -n "$TEST_NS" 2>/dev/null | grep -q "sa-cleanup-test"; then
             pass_test "RoleBinding recreated for ServiceAccount"
         else
             info_log "RoleBinding not yet recreated (may need more time)"
@@ -72,7 +75,7 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         info_log "ServiceAccount cleanup-test not created"
     fi
 else
-    info_log "test-namespace-001 does not exist, skipping cleanup test"
+    info_log "$TEST_NS does not exist, skipping cleanup test"
 fi
 
 echo ""
