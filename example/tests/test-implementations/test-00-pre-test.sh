@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Test namespaces carry the per-instance prefix (empty in legacy mode)
+TEST_NS_001="${TEST_NS_PREFIX}test-namespace-001"
+
 # ============================================================================
 # ============================================================================
 echo "Pre-Test: Initial State Verification"
@@ -38,7 +41,7 @@ metadata:
   namespace: $NAMESPACE
 data:
   whitelist.txt: |
-    CN=COMPANY-K8S-test-namespace-001-developer,OU=Groups,DC=example,DC=com
+    CN=COMPANY-K8S-${TEST_NS_001}-developer,OU=Groups,DC=example,DC=com
 EOF
 fi
 

@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Per-instance test namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+
 # ============================================================================
 # ============================================================================
 echo "Test 40: ServiceAccount Recreation After Deletion"
@@ -31,14 +34,14 @@ EOF
 
 sleep 15
 
-if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
-    if kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1; then
+if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
+    if kubectl get sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" >/dev/null 2>&1; then
         # Record original UID
-        ORIGINAL_SA_UID=$(kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+        ORIGINAL_SA_UID=$(kubectl get sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
         info_log "Original SA UID: ${ORIGINAL_SA_UID:0:8}..."
         
         # Delete ServiceAccount
-        kubectl delete sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1
+        kubectl delete sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" >/dev/null 2>&1
         
         # Trigger full reconciliation by deleting operator pod and forcing reconciliation
         OPERATOR_POD=$(kubectl get pods -n $NAMESPACE -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
@@ -59,7 +62,7 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         # Verify recreated - retry a few times if needed
         RECREATED=false
         for i in {1..5}; do
-            if kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 >/dev/null 2>&1; then
+            if kubectl get sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" >/dev/null 2>&1; then
                 RECREATED=true
                 break
             fi
@@ -71,7 +74,7 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
             pass_test "ServiceAccount automatically recreated"
             
             # Verify new UID (new instance)
-            NEW_SA_UID=$(kubectl get sa test-namespace-001-sa-recreation-test -n test-namespace-001 -o jsonpath='{.metadata.uid}' 2>/dev/null)
+            NEW_SA_UID=$(kubectl get sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
             
             if [ "$ORIGINAL_SA_UID" != "$NEW_SA_UID" ]; then
                 pass_test "New ServiceAccount instance created (different UID)"
@@ -80,7 +83,7 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
             fi
             
             # Verify RoleBinding still works
-            if kubectl get rolebinding -n test-namespace-001 2>/dev/null | grep -q "sa-recreation-test"; then
+            if kubectl get rolebinding -n "$TEST_NS" 2>/dev/null | grep -q "sa-recreation-test"; then
                 pass_test "RoleBinding references recreated ServiceAccount"
             else
                 info_log "RoleBinding not yet created"
@@ -92,7 +95,7 @@ if kubectl get namespace test-namespace-001 >/dev/null 2>&1; then
         info_log "ServiceAccount recreation-test not created"
     fi
 else
-    info_log "test-namespace-001 does not exist, skipping recreation test"
+    info_log "$TEST_NS does not exist, skipping recreation test"
 fi
 
 echo ""

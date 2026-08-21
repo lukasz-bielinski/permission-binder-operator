@@ -6,6 +6,9 @@ if [ -z "$SCRIPT_DIR" ]; then
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+# Test namespaces carry the per-instance prefix (empty in legacy mode)
+TEST_NS_DEV="${TEST_NS_PREFIX}test-namespace"
+
 # ============================================================================
 # ============================================================================
 echo "Test 1: Role Mapping Changes"
@@ -23,7 +26,7 @@ kubectl_retry kubectl patch permissionbinder permissionbinder-example -n $NAMESP
 # Get current whitelist and append new entry
 CURRENT_WHITELIST=$(kubectl_retry kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')
 kubectl_retry kubectl patch configmap permission-config -n $NAMESPACE --type=merge \
-  -p="{\"data\":{\"whitelist.txt\":\"${CURRENT_WHITELIST}\nCN=COMPANY-K8S-test-namespace-developer,OU=Example,DC=example,DC=com\"}}" >/dev/null 2>&1
+  -p="{\"data\":{\"whitelist.txt\":\"${CURRENT_WHITELIST}\nCN=COMPANY-K8S-${TEST_NS_DEV}-developer,OU=Example,DC=example,DC=com\"}}" >/dev/null 2>&1
 
 sleep 20
 
