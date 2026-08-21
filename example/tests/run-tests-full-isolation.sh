@@ -8,15 +8,37 @@
 #   ./run-tests-full-isolation.sh           # Run all tests
 #   ./run-tests-full-isolation.sh 44        # Run single test
 #   ./run-tests-full-isolation.sh 44 45 46  # Run specific tests
+#
+# Per-instance isolation (for parallel test slots):
+#   INSTANCE=1 ./run-tests-full-isolation.sh ...
+# When INSTANCE is set, the harness derives an isolated operator namespace,
+# test-namespace prefix and scratch/log directory so that one instance's
+# cleanup never touches another instance's resources:
+#   NAMESPACE=pbo-e2e-${INSTANCE}
+#   TEST_NS_PREFIX=pbo${INSTANCE}-
+#   RUN_DIR=/tmp/pbo-e2e-${INSTANCE}/
+# Without INSTANCE the behavior is exactly as before (defaults below).
 
 set +e  # Don't exit on errors - we want to run all tests
 
 # Respect the caller's KUBECONFIG; fall back to the default k3s kubeconfig.
 export KUBECONFIG="${KUBECONFIG:-$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULTS_LOG="/tmp/e2e-full-isolation-$(date +%Y%m%d-%H%M%S).log"
-NAMESPACE="permissions-binder-operator"
-TEST_RESULTS="/tmp/e2e-test-results-$(date +%Y%m%d-%H%M%S).log"
+
+# Per-instance isolation settings (defaults preserve current behavior).
+if [ -n "${INSTANCE:-}" ]; then
+    NAMESPACE="pbo-e2e-${INSTANCE}"
+    TEST_NS_PREFIX="pbo${INSTANCE}-"
+    RUN_DIR="/tmp/pbo-e2e-${INSTANCE}"
+else
+    NAMESPACE="permissions-binder-operator"
+    TEST_NS_PREFIX=""
+    RUN_DIR="/tmp"
+fi
+mkdir -p "$RUN_DIR"
+
+RESULTS_LOG="$RUN_DIR/e2e-full-isolation-$(date +%Y%m%d-%H%M%S).log"
+TEST_RESULTS="$RUN_DIR/e2e-test-results-$(date +%Y%m%d-%H%M%S).log"
 
 # Source common functions
 source "$SCRIPT_DIR/test-common.sh"
@@ -133,6 +155,12 @@ echo "Started: $(date)" | tee -a $RESULTS_LOG
 echo "Tests to run: ${#TEST_LIST[@]}" | tee -a $RESULTS_LOG
 echo "Tests: ${TEST_LIST[*]}" | tee -a $RESULTS_LOG
 echo "Results log: $RESULTS_LOG" | tee -a $RESULTS_LOG
+if [ -n "${INSTANCE:-}" ]; then
+    echo "Instance: $INSTANCE" | tee -a $RESULTS_LOG
+    echo "Operator namespace: $NAMESPACE" | tee -a $RESULTS_LOG
+    echo "Test namespace prefix: $TEST_NS_PREFIX" | tee -a $RESULTS_LOG
+    echo "Run dir: $RUN_DIR" | tee -a $RESULTS_LOG
+fi
 echo "" | tee -a $RESULTS_LOG
 
 declare -A results
@@ -141,6 +169,47 @@ declare -A pod_names
 passed=0
 failed=0
 current=0
+
+# Per-instance rendered manifests live under $RUN_DIR so parallel instances
+# never overwrite each other's copies. In default mode these point at the
+# source manifests (no rendering needed).
+DEPLOYMENT_MANIFEST="$SCRIPT_DIR/../deployment/operator-deployment.yaml"
+SERVICEMONITOR_MANIFEST="$SCRIPT_DIR/../deployment/servicemonitor.yaml"
+
+# Render the deployment manifest for this instance: point every namespace
+# field at $NAMESPACE and suffix the cluster-scoped RBAC objects (ClusterRoles
+# and ClusterRoleBindings, including their roleRefs and subject namespaces)
+# with -$INSTANCE so instances never share or clobber them.
+render_instance_manifests() {
+    DEPLOYMENT_MANIFEST="$RUN_DIR/operator-deployment-${INSTANCE}.yaml"
+    SERVICEMONITOR_MANIFEST="$RUN_DIR/servicemonitor-${INSTANCE}.yaml"
+
+    # Namespace fields: the Namespace object's name plus every "namespace:"
+    # reference (ServiceAccount, Role, RoleBindings, CRB subjects, Service,
+    # Deployment). Names of namespaced objects are intentionally untouched.
+    sed -e "s/^  name: permissions-binder-operator\$/  name: ${NAMESPACE}/" \
+        -e "s/^  namespace: permissions-binder-operator\$/  namespace: ${NAMESPACE}/" \
+        -e "s/^  name: operator-manager-role\$/  name: operator-manager-role-${INSTANCE}/" \
+        -e "s/^  name: operator-metrics-auth-role\$/  name: operator-metrics-auth-role-${INSTANCE}/" \
+        -e "s/^  name: operator-metrics-reader\$/  name: operator-metrics-reader-${INSTANCE}/" \
+        -e "s/^  name: operator-permissionbinder-editor-role\$/  name: operator-permissionbinder-editor-role-${INSTANCE}/" \
+        -e "s/^  name: operator-permissionbinder-viewer-role\$/  name: operator-permissionbinder-viewer-role-${INSTANCE}/" \
+        -e "s/^  name: operator-manager-rolebinding\$/  name: operator-manager-rolebinding-${INSTANCE}/" \
+        -e "s/^  name: operator-metrics-auth-rolebinding\$/  name: operator-metrics-auth-rolebinding-${INSTANCE}/" \
+        -e "s/^    name: operator-metrics-auth-role\$/    name: operator-metrics-auth-role-${INSTANCE}/" \
+        "$SCRIPT_DIR/../deployment/operator-deployment.yaml" > "$DEPLOYMENT_MANIFEST"
+
+    # ServiceMonitor: unique name and point namespaceSelector at this instance's
+    # operator namespace. It stays in the shared "monitoring" namespace (where
+    # Prometheus discovers it); only the selector is per-instance.
+    sed -e "s/^  name: permission-binder-operator-metrics\$/  name: permission-binder-operator-metrics-${INSTANCE}/" \
+        -e "s/^    - permissions-binder-operator\$/    - ${NAMESPACE}/" \
+        "$SCRIPT_DIR/../deployment/servicemonitor.yaml" > "$SERVICEMONITOR_MANIFEST"
+}
+
+if [ -n "${INSTANCE:-}" ]; then
+    render_instance_manifests
+fi
 
 # ONE-TIME SUITE SETUP: Install the PermissionBinder CRD once for the whole run.
 # The CRD is cluster-scoped and shared by every test, so there is no need to
@@ -171,15 +240,15 @@ for test_id in "${TEST_LIST[@]}"; do
     echo "═════════════════════════════════════════════════════════════════" | tee -a $RESULTS_LOG
     echo "" | tee -a $RESULTS_LOG
     
-    # STEP 1: CLEANUP CLUSTER
+    # STEP 1: CLEANUP CLUSTER (instance-scoped when INSTANCE is set)
     echo -e "${YELLOW}🧹 Step 1/3: Cleaning cluster...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR
-    ./cleanup-operator.sh >/tmp/cleanup-${test_id}.log 2>&1
-    
-    if grep -q "CLEANUP COMPLETE" /tmp/cleanup-${test_id}.log; then
+    ./cleanup-operator.sh >"$RUN_DIR/cleanup-${test_id}.log" 2>&1
+
+    if grep -q "CLEANUP COMPLETE" "$RUN_DIR/cleanup-${test_id}.log"; then
         echo "   ✅ Cluster cleaned" | tee -a $RESULTS_LOG
     else
-        echo "   ⚠️  Cleanup had warnings (check /tmp/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
+        echo "   ⚠️  Cleanup had warnings (check $RUN_DIR/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
     fi
     
     # STEP 2: DEPLOY FRESH OPERATOR (namespace/RBAC/Deployment only - CRD was
