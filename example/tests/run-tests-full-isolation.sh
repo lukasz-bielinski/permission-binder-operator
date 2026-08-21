@@ -14,9 +14,20 @@ set +e  # Don't exit on errors - we want to run all tests
 # Respect the caller's KUBECONFIG; fall back to the default k3s kubeconfig.
 export KUBECONFIG="${KUBECONFIG:-$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RESULTS_LOG="/tmp/e2e-full-isolation-$(date +%Y%m%d-%H%M%S).log"
+
+# Per-instance log isolation: when INSTANCE is set (parallel runner, issue
+# #36), per-test scratch logs live under /tmp/pbo-e2e-<INSTANCE>/ so parallel
+# instances never clobber each other. Default (unset) keeps today's /tmp paths.
+if [ -n "${INSTANCE:-}" ]; then
+    RUN_DIR="/tmp/pbo-e2e-${INSTANCE}"
+else
+    RUN_DIR="/tmp"
+fi
+mkdir -p "$RUN_DIR"
+
+RESULTS_LOG="${RUN_DIR}/e2e-full-isolation-$(date +%Y%m%d-%H%M%S).log"
 NAMESPACE="permissions-binder-operator"
-TEST_RESULTS="/tmp/e2e-test-results-$(date +%Y%m%d-%H%M%S).log"
+TEST_RESULTS="${RUN_DIR}/e2e-test-results-$(date +%Y%m%d-%H%M%S).log"
 
 # Source common functions
 source "$SCRIPT_DIR/test-common.sh"
@@ -174,31 +185,31 @@ for test_id in "${TEST_LIST[@]}"; do
     # STEP 1: CLEANUP CLUSTER
     echo -e "${YELLOW}🧹 Step 1/3: Cleaning cluster...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR
-    ./cleanup-operator.sh >/tmp/cleanup-${test_id}.log 2>&1
+    ./cleanup-operator.sh >"${RUN_DIR}/cleanup-${test_id}.log" 2>&1
     
-    if grep -q "CLEANUP COMPLETE" /tmp/cleanup-${test_id}.log; then
+    if grep -q "CLEANUP COMPLETE" "${RUN_DIR}/cleanup-${test_id}.log"; then
         echo "   ✅ Cluster cleaned" | tee -a $RESULTS_LOG
     else
-        echo "   ⚠️  Cleanup had warnings (check /tmp/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
+        echo "   ⚠️  Cleanup had warnings (check ${RUN_DIR}/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
     fi
     
     # STEP 2: DEPLOY FRESH OPERATOR (namespace/RBAC/Deployment only - CRD was
     # installed once at suite start and is intentionally NOT re-applied here)
     echo -e "${YELLOW}📦 Step 2/3: Deploying fresh operator...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR/..
-    kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonitor.yaml >/tmp/deploy-${test_id}.log 2>&1
+    kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonitor.yaml >"${RUN_DIR}/deploy-${test_id}.log" 2>&1
     
     # Create GitHub GitOps credentials Secret for NetworkPolicy tests (if file exists)
     CREDENTIALS_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml"
     if [ -f "$CREDENTIALS_FILE" ]; then
         echo "   Creating GitHub GitOps credentials Secret..." | tee -a $RESULTS_LOG
-        sed "s/namespace: permissions-binder-operator/namespace: permissions-binder-operator/" "$CREDENTIALS_FILE" | kubectl apply -f - >>/tmp/deploy-${test_id}.log 2>&1 || true
+        sed "s/namespace: permissions-binder-operator/namespace: permissions-binder-operator/" "$CREDENTIALS_FILE" | kubectl apply -f - >>"${RUN_DIR}/deploy-${test_id}.log" 2>&1 || true
     fi
     
-    sleep 5
+    e2e_sleep 5
     
     # Wait for operator to be ready
-    if kubectl wait --for=condition=available --timeout=120s \
+    if kubectl wait --for=condition=available --timeout="$(e2e_max_wait 120)s" \
         deployment/operator-controller-manager -n permissions-binder-operator >/dev/null 2>&1; then
         
         POD_NAME=$(kubectl get pods -n permissions-binder-operator \
@@ -257,14 +268,14 @@ for test_id in "${TEST_LIST[@]}"; do
     export KUBECONFIG
     
     # Run test
-    if bash "$test_file" >/tmp/test-${test_id}-isolated.log 2>&1; then
+    if bash "$test_file" >"${RUN_DIR}/test-${test_id}-isolated.log" 2>&1; then
         echo "" | tee -a $RESULTS_LOG
         echo -e "${GREEN}✅ Test $test_id PASSED${NC}" | tee -a $RESULTS_LOG
         results[$test_id]="PASS"
         passed=$((passed + 1))
         
         # Show summary
-        grep -E "✅ PASS|Test.*Results:" /tmp/test-${test_id}-isolated.log | tail -3 | tee -a $RESULTS_LOG
+        grep -E "✅ PASS|Test.*Results:" "${RUN_DIR}/test-${test_id}-isolated.log" | tail -3 | tee -a $RESULTS_LOG
     else
         echo "" | tee -a $RESULTS_LOG
         echo -e "${RED}❌ Test $test_id FAILED${NC}" | tee -a $RESULTS_LOG
@@ -273,7 +284,7 @@ for test_id in "${TEST_LIST[@]}"; do
         
         # Show failures
         echo "   Last errors:" | tee -a $RESULTS_LOG
-        grep -E "❌ FAIL|error|Error" /tmp/test-${test_id}-isolated.log | tail -5 | sed 's/^/   /' | tee -a $RESULTS_LOG
+        grep -E "❌ FAIL|error|Error" "${RUN_DIR}/test-${test_id}-isolated.log" | tail -5 | sed 's/^/   /' | tee -a $RESULTS_LOG
     fi
     
     # Show progress
@@ -281,7 +292,7 @@ for test_id in "${TEST_LIST[@]}"; do
     echo -e "${BLUE}Progress: $current/${#TEST_LIST[@]} (✅ $passed passed, ❌ $failed failed)${NC}" | tee -a $RESULTS_LOG
     
     # Small pause between tests
-    sleep 2
+    e2e_sleep 2
 done
 
 # FINAL SUMMARY
@@ -311,9 +322,9 @@ echo "Success Rate: ${success_rate}%" | tee -a $RESULTS_LOG
 echo "" | tee -a $RESULTS_LOG
 echo "Results log: $RESULTS_LOG" | tee -a $RESULTS_LOG
 echo "Individual logs:" | tee -a $RESULTS_LOG
-echo "  - Cleanup: /tmp/cleanup-<test_id>.log" | tee -a $RESULTS_LOG
-echo "  - Deploy:  /tmp/deploy-<test_id>.log" | tee -a $RESULTS_LOG
-echo "  - Test:    /tmp/test-<test_id>-isolated.log" | tee -a $RESULTS_LOG
+echo "  - Cleanup: ${RUN_DIR}/cleanup-<test_id>.log" | tee -a $RESULTS_LOG
+echo "  - Deploy:  ${RUN_DIR}/deploy-<test_id>.log" | tee -a $RESULTS_LOG
+echo "  - Test:    ${RUN_DIR}/test-<test_id>-isolated.log" | tee -a $RESULTS_LOG
 echo "" | tee -a $RESULTS_LOG
 echo "Completed: $(date)" | tee -a $RESULTS_LOG
 echo "═════════════════════════════════════════════════════════════════" | tee -a $RESULTS_LOG
