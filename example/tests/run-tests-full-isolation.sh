@@ -306,7 +306,8 @@ for test_id in "${TEST_LIST[@]}"; do
             sed -e "s/namespace: permissions-binder-operator/namespace: ${NAMESPACE}/" \
                 -e "s/COMPANY-K8S-test-namespace-001-developer/COMPANY-K8S-${TEST_NS_PREFIX}test-namespace-001-developer/" \
                 "$SCRIPT_DIR/fixtures/permission-config.yaml" > "$RUN_DIR/fixture-cm-${test_id}.yaml"
-            sed -e "s/namespace: permissions-binder-operator/namespace: ${NAMESPACE}/" \
+            sed -e "s/configMapNamespace: permissions-binder-operator/configMapNamespace: ${NAMESPACE}/" \
+                -e "s/namespace: permissions-binder-operator/namespace: ${NAMESPACE}/" \
                 "$SCRIPT_DIR/fixtures/permissionbinder-base.yaml" > "$RUN_DIR/fixture-pb-${test_id}.yaml"
             kubectl apply -f "$RUN_DIR/fixture-cm-${test_id}.yaml" -f "$RUN_DIR/fixture-pb-${test_id}.yaml" >>"$RUN_DIR/deploy-${test_id}.log" 2>&1
             BASELINE_OK=false
