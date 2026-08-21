@@ -208,11 +208,16 @@ kubectl logs -n permissions-binder-operator deployment/operator-controller-manag
    # Check operator RBAC
    kubectl get clusterrolebinding operator-manager-rolebinding -o yaml
    
-   # Verify it uses cluster-admin
-   # If not, fix:
+   # Verify it references the least-privilege operator-manager-role
+   # (cluster-admin is NOT required; if the binding points to cluster-admin, fix it):
    kubectl patch clusterrolebinding operator-manager-rolebinding \
-     --type='json' -p='[{"op":"replace","path":"/roleRef/name","value":"cluster-admin"}]'
+     --type='json' -p='[{"op":"replace","path":"/roleRef/name","value":"operator-manager-role"}]'
    ```
+
+   Note: The operator needs read-only (`get`) access to Secrets referenced via
+   `ldapSecretRef` / `credentialsSecretRef`. If you see "secrets is forbidden"
+   errors, ensure the `operator-manager-role` ClusterRole includes the
+   `secrets: get` rule (see `operator/config/rbac/role.yaml`).
 
 2. **Invalid ConfigMap entries**:
    ```bash

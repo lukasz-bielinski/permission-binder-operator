@@ -529,6 +529,12 @@ rules:
   - update
   - patch
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
   - permission.permission-binder.io
   resources:
   - permissionbinders
@@ -680,7 +686,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: operator-manager-role
 subjects:
 - kind: ServiceAccount
   name: operator-controller-manager
