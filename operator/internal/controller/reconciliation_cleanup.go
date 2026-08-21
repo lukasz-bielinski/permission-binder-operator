@@ -42,10 +42,10 @@ import (
 //     deletion when two operator instances reconcile CRs with the same name in
 //     different namespaces.
 //   - Legacy resources only carry AnnotationPermissionBinder (name-only, no
-//     namespace). They are still adopted (backward compatibility) but only
-//     matched by namespace when the reconciled CR has no namespace (e.g. CRs
-//     created via plain envtest clients); with a namespaced CR, legacy resources
-//     are adopted by name only, preserving the pre-existing behavior.
+//     namespace). They are still adopted by name match alone, preserving the
+//     pre-existing behavior (backward compatibility).
+//   - When the reconciled CR has no namespace (e.g. CRs created via plain
+//     envtest clients), matching falls back to name-only as well.
 func isOwnedByPermissionBinder(annotations map[string]string, permissionBinder *permissionv1.PermissionBinder) bool {
 	if annotations == nil {
 		return false

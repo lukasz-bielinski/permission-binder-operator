@@ -424,6 +424,24 @@ cosign verify-attestation \
 - Memory: 128Mi-512Mi
 - CPU: 100m-500m
 
+### Multi-Instance Isolation (e.g. parallel e2e tests)
+
+By default the operator watches all namespaces. For running multiple isolated
+instances in one cluster, each instance can be scoped to its own namespaces:
+
+- `WATCH_NAMESPACE` (comma-separated) restricts the operator cache to the listed
+  namespaces. Unset = cluster-wide behavior (unchanged default).
+- `MANAGED_BY_VALUE` overrides the `permission-binder.io/managed-by` value this
+  instance stamps on resources it creates and selects in cluster-wide lists.
+  Give each instance a unique value.
+
+Managed resources are owned per PermissionBinder instance: in addition to
+`permission-binder.io/permission-binder: <cr-name>`, new resources carry
+`permission-binder.io/permission-binder-namespace: <cr-namespace>`. Resources
+annotated the old (name-only) way are still adopted. A PermissionBinder name
+collision between two instances therefore no longer causes cross-instance
+RoleBinding deletion.
+
 ### GitOps (ArgoCD)
 
 ```bash
@@ -455,6 +473,7 @@ All managed resources have annotations:
 - `permission-binder.io/managed-by: permission-binder-operator`
 - `permission-binder.io/created-at: 2025-10-15T12:00:00Z`
 - `permission-binder.io/permission-binder: permissionbinder-example`
+- `permission-binder.io/permission-binder-namespace: <namespace of the PermissionBinder CR>`
 - `permission-binder.io/orphaned-at: ...` (when orphaned)
 - `permission-binder.io/orphaned-by: permission-binder-deletion` (why orphaned)
 
