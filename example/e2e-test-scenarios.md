@@ -1,7 +1,7 @@
 # E2E Test Scenarios for Permission Binder Operator
 
 ## Test Suite Overview
-This document contains **60 comprehensive end-to-end test scenarios** (Pre-Test + Tests 1-60) for the Permission Binder Operator to ensure it behaves correctly in all situations.
+This document contains **62 comprehensive end-to-end test scenarios** (Pre-Test + Tests 1-61) for the Permission Binder Operator to ensure it behaves correctly in all situations.
 
 **Test Categories:**
 - **Basic Functionality (Tests 1-11)**: Core operator features, role mapping, prefixes, ConfigMap handling
@@ -10,6 +10,7 @@ This document contains **60 comprehensive end-to-end test scenarios** (Pre-Test 
 - **ServiceAccount Management (Tests 31-41)**: ServiceAccount creation, protection, updates
 - **Bug Fixes (Tests 42-43)**: RoleBindings with hyphenated roles, invalid whitelist entry handling
 - **NetworkPolicy Management (Tests 44-60)**: GitOps-driven NetworkPolicy lifecycle (variants A-C), metrics, rate limiting, multi-CR validation, template drift, Git failure handling, disabled mode, read-only repos, cleanup flows, and high-frequency reconciliation
+- **LDAP Integration (Test 61)**: createLdapGroups end-to-end against an LDAPS mock with verified TLS (`ldapTlsVerify: true` + custom CA via the `ca.crt` Secret key)
 
 ## Prerequisites
 - K3s cluster with mixed architectures (ARM64 and AMD64)
@@ -27,7 +28,7 @@ This document contains **60 comprehensive end-to-end test scenarios** (Pre-Test 
 > - `tests/scenarios/00-pre-test.md` - Pre-Test: Initial State Verification
 > - `tests/scenarios/01-role-mapping-changes.md` - Test 1: Role Mapping Changes
 > - `tests/scenarios/02-prefix-changes.md` - Test 2: Prefix Changes
-> - ... (and additional test files covering Tests 3-60)
+> - ... (and additional test files covering Tests 3-61)
 > 
 > **Why split?** Reading individual test files is much faster than parsing a 2000+ line document. Each test file contains only the relevant test scenario.
 
@@ -39,6 +40,7 @@ This document contains **60 comprehensive end-to-end test scenarios** (Pre-Test 
 - [Tests 31-41: ServiceAccount Management](tests/scenarios/README.md#serviceaccount-management-tests-31-41)
 - [Tests 42-43: Bug Fixes](tests/scenarios/README.md#bug-fixes-tests-42-43)
 - [Tests 44-60: NetworkPolicy Management](tests/scenarios/README.md#networkpolicy-management-tests-44-60)
+- [Test 61: LDAP Integration](tests/scenarios/README.md#ldap-integration-test-61)
 
 ## Test Execution Commands
 

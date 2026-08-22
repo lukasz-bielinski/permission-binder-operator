@@ -1,0 +1,155 @@
+# OpenLDAP mock server (osixia/openldap:1.5.0, amd64) pinned to n5pro.
+#
+# TEMPLATE: rendered by test-61 via sed before apply:
+#   __MOCK_NS__     -> mock namespace (default "ldap-mock", instance-aware:
+#                      "${TEST_NS_PREFIX}ldap-mock")
+#   __CERT_SECRET__ -> name of the kubernetes.io/tls-style Secret holding the
+#                      test-generated server cert (tls.crt/tls.key/ca.crt)
+#
+# LDAPS on :636 with a CUSTOM server certificate whose SAN covers the Service
+# FQDN (openldap.__MOCK_NS__.svc.cluster.local). This is required because the
+# operator side runs with ldapTlsVerify: true — the osixia auto-generated cert
+# (CN = container hostname) would fail Go's hostname verification.
+#
+# Custom-cert mount convention (osixia/openldap:1.5.0):
+#   The image expects certs in /container/service/slapd/assets/certs and picks
+#   filenames from LDAP_TLS_CRT_FILENAME / LDAP_TLS_KEY_FILENAME /
+#   LDAP_TLS_CA_CRT_FILENAME. The entrypoint's ssl-helper CHOWNS/CHMODS the
+#   files and GENERATES dhparam.pem inside that same directory, so a read-only
+#   Secret volume mounted there breaks bootstrap. Therefore: the Secret is
+#   mounted read-only at /tls-secret and an initContainer copies the files
+#   into a writable emptyDir that is mounted at the assets/certs path.
+#
+# LDAP_TLS_VERIFY_CLIENT=never is required: the osixia default 'demand'
+# rejects TLS clients without client certificates (the operator has none).
+#
+# osixia bootstrap with LDAP_DOMAIN=example.com creates:
+#   base DN:  dc=example,dc=com
+#   admin DN: cn=admin,dc=example,dc=com  (password = LDAP_ADMIN_PASSWORD)
+# slapd listens on ldap://*, ldapi:/// — ldapi + SASL EXTERNAL as root (uid 0)
+# has manage access on cn=config, which is how 02-init-schema.ldif is loaded.
+#
+# No persistence: pod recreation loses schema/data — the test loads the LDIFs
+# after every rollout.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openldap
+  namespace: __MOCK_NS__
+  labels:
+    app: openldap
+    app.kubernetes.io/name: openldap-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openldap
+  template:
+    metadata:
+      labels:
+        app: openldap
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: n5pro
+      initContainers:
+        # Copy the Secret-provided certs into a writable dir so the osixia
+        # entrypoint can chown them and generate dhparam.pem next to them.
+        - name: copy-certs
+          image: osixia/openldap:1.5.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - >
+              cp /tls-secret/tls.crt /tls-secret/tls.key /tls-secret/ca.crt /certs/ &&
+              chmod 640 /certs/tls.crt /certs/tls.key /certs/ca.crt
+          volumeMounts:
+            - name: tls-secret
+              mountPath: /tls-secret
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+      containers:
+        - name: openldap
+          image: osixia/openldap:1.5.0
+          imagePullPolicy: IfNotPresent
+          args: ["--loglevel", "info"]
+          env:
+            - name: LDAP_ORGANISATION
+              value: "Example Mock Org"
+            - name: LDAP_DOMAIN
+              value: "example.com"
+            - name: LDAP_ADMIN_PASSWORD
+              value: "MockAdmin123!"
+            - name: LDAP_CONFIG_PASSWORD
+              value: "MockConfig123!"
+            - name: LDAP_TLS
+              value: "true"
+            - name: LDAP_TLS_VERIFY_CLIENT
+              value: "never"
+            - name: LDAP_TLS_CRT_FILENAME
+              value: "tls.crt"
+            - name: LDAP_TLS_KEY_FILENAME
+              value: "tls.key"
+            - name: LDAP_TLS_CA_CRT_FILENAME
+              value: "ca.crt"
+            - name: LDAP_RFC2307BIS_SCHEMA
+              value: "false"
+            - name: LDAP_READONLY_USER
+              value: "false"
+          ports:
+            - name: ldap
+              containerPort: 389
+              protocol: TCP
+            - name: ldaps
+              containerPort: 636
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 389
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 389
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          volumeMounts:
+            - name: certs
+              mountPath: /container/service/slapd/assets/certs
+      volumes:
+        - name: tls-secret
+          secret:
+            secretName: __CERT_SECRET__
+        - name: certs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openldap
+  namespace: __MOCK_NS__
+  labels:
+    app: openldap
+spec:
+  type: ClusterIP
+  selector:
+    app: openldap
+  ports:
+    - name: ldap
+      port: 389
+      targetPort: 389
+      protocol: TCP
+    - name: ldaps
+      port: 636
+      targetPort: 636
+      protocol: TCP

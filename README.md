@@ -217,7 +217,7 @@ subjects:
 ### For Operations
 - [**Runbook**](docs/RUNBOOK.md) - Operational procedures and troubleshooting
 - [**Backup & Recovery**](docs/BACKUP.md) - DR procedures with Kasten K10
-- [E2E Test Scenarios](example/tests/scenarios/) - 61 comprehensive test scenarios (Pre + Tests 1-60)
+- [E2E Test Scenarios](example/tests/scenarios/) - 62 comprehensive test scenarios (Pre + Tests 1-61)
 - [Monitoring Guide](example/monitoring/README.md) - Metrics, alerts, dashboards
 
 ### For Features
@@ -382,6 +382,7 @@ make test
 - **ServiceAccount Management (31-41)**: Creation, protection, updates
 - **Bug Fixes (42-43)**: Regression tests for fixed bugs
 - **NetworkPolicy Management (44-60)**: GitOps-based NetworkPolicy management (17 tests)
+- **LDAP Integration (61)**: createLdapGroups against an LDAPS mock with verified TLS (custom CA)
 
 See [NetworkPolicy Testing Guide](example/tests/NETWORKPOLICY_TESTING.md) for details.
 
