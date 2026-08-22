@@ -1,0 +1,19 @@
+# Baseline PermissionBinder for the full-isolation e2e runner.
+# Mirrors what test-00 (pre-test) creates so every isolated test starts
+# from a reconciled operator with one managed namespace + RoleBinding.
+# NetworkPolicy management is deliberately NOT enabled here — the
+# NetworkPolicy tests (44-60) provision their own PermissionBinder.
+apiVersion: permission.permission-binder.io/v1
+kind: PermissionBinder
+metadata:
+  name: permissionbinder-example
+  namespace: permissions-binder-operator
+spec:
+  configMapName: permission-config
+  configMapNamespace: permissions-binder-operator
+  prefixes:
+    - "COMPANY-K8S"
+  roleMapping:
+    admin: admin
+    developer: edit
+    viewer: view

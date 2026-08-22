@@ -1,25 +1,41 @@
 #!/bin/bash
-# Test 34: Serviceaccount Status Tracking
+# Test 34: ServiceAccount Status Tracking
+#
+# Self-contained under the first-owner-wins ownership gate (issue #43, PR #45):
+# provisions its OWN ConfigMap resolving to a DEDICATED namespace. Reusing the
+# baseline ConfigMap left this CR with zero owned namespaces, so
+# status.processedServiceAccounts stayed empty and the test failed for the
+# wrong reason (test harness collision, not an operator bug).
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
+PB_NAME="test-sa-status-tracking"
+CM_NAME="sa-test-config-34"
+# Dedicated namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}sa-test-34"
+SA_NAME="${TEST_NS}-sa-status-test"
+
 # ============================================================================
 # ============================================================================
 echo "Test 34: ServiceAccount Status Tracking"
 echo "-----------------------------------------"
 
-# Create PermissionBinder for status tracking test
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+if ! create_sa_test_configmap "$CM_NAME" "$TEST_NS"; then
+    fail_test "Could not create test ConfigMap $CM_NAME"
+    exit 1
+fi
+
+apply_yaml_with_retry <<EOF
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-sa-status-tracking
+  name: $PB_NAME
   namespace: $NAMESPACE
 spec:
-  configMapName: permission-config
+  configMapName: $CM_NAME
   configMapNamespace: $NAMESPACE
   prefixes:
     - "COMPANY-K8S"
@@ -29,38 +45,30 @@ spec:
     status-test: edit
 EOF
 
-# Give operator time to process and update status
-sleep 15
+# The SA itself must exist before the status can legitimately report it
+if ! wait_for_sa "$TEST_NS" "$SA_NAME" 90; then
+    fail_test "ServiceAccount $SA_NAME not created within $(e2e_max_wait 90)s"
+    exit 1
+fi
 
-SA_STATUS=$(kubectl get permissionbinder test-sa-status-tracking -n $NAMESPACE -o jsonpath='{.status.processedServiceAccounts}' 2>/dev/null)
+# status.processedServiceAccounts entries have the form "<namespace>/<sa-name>"
+EXPECTED_ENTRY="${TEST_NS}/${SA_NAME}"
+status_has_entry() {
+    kubectl get permissionbinder "$PB_NAME" -n "$NAMESPACE" -o json 2>/dev/null \
+        | jq -e --arg e "$EXPECTED_ENTRY" \
+            '.status.processedServiceAccounts // [] | index($e) != null' >/dev/null
+}
 
-if [ ! -z "$SA_STATUS" ] && [ "$SA_STATUS" != "null" ]; then
-    SA_COUNT=$(echo "$SA_STATUS" | jq '. | length' 2>/dev/null || echo "0")
+if wait_for_cmd 60 status_has_entry; then
+    SA_COUNT=$(kubectl get permissionbinder "$PB_NAME" -n "$NAMESPACE" -o json 2>/dev/null \
+        | jq '.status.processedServiceAccounts // [] | length')
     info_log "Processed ServiceAccounts tracked: $SA_COUNT"
-    
-    if [ "$SA_COUNT" -gt 0 ]; then
-        pass_test "ServiceAccount status tracking works"
-    else
-        fail_test "ServiceAccount status empty"
-    fi
+    pass_test "ServiceAccount status tracking works"
 else
-    # Try to force reconciliation by updating ConfigMap (triggers reconciliation via watch)
-    kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')"'\n"}}' >/dev/null 2>&1
-    sleep 2
-    # Revert the change
-    kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | sed 's/\n$//')"'"}}' >/dev/null 2>&1
-    sleep 5
-    SA_STATUS=$(kubectl get permissionbinder test-sa-status-tracking -n $NAMESPACE -o jsonpath='{.status.processedServiceAccounts}' 2>/dev/null)
-    if [ ! -z "$SA_STATUS" ] && [ "$SA_STATUS" != "null" ]; then
-        SA_COUNT=$(echo "$SA_STATUS" | jq '. | length' 2>/dev/null || echo "0")
-        if [ "$SA_COUNT" -gt 0 ]; then
-            pass_test "ServiceAccount status tracking works"
-        else
-            fail_test "ServiceAccount status empty"
-        fi
-    else
-        fail_test "ServiceAccount status field not populated"
-    fi
+    CURRENT=$(kubectl get permissionbinder "$PB_NAME" -n "$NAMESPACE" \
+        -o jsonpath='{.status.processedServiceAccounts}' 2>/dev/null)
+    fail_test "status.processedServiceAccounts missing entry $EXPECTED_ENTRY (current: ${CURRENT:-<empty>})"
+    exit 1
 fi
 
 echo ""

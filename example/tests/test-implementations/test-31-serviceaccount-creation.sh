@@ -1,28 +1,42 @@
 #!/bin/bash
-# Test 31: Serviceaccount Creation
+# Test 31: ServiceAccount Creation
+#
+# Self-contained under the first-owner-wins ownership gate (issue #43, PR #45):
+# provisions its OWN ConfigMap resolving to a DEDICATED namespace instead of
+# reusing the runner's baseline ConfigMap (permission-config), whose namespace
+# is already owned by the baseline PermissionBinder - a second CR referencing
+# it is refused ownership and its ServiceAccount loop runs over zero namespaces.
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
-# Per-instance test namespace (prefix empty in legacy single-instance mode)
-TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+PB_NAME="test-sa-basic"
+CM_NAME="sa-test-config-31"
+# Dedicated namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}sa-test-31"
 
 # ============================================================================
 # ============================================================================
 echo "Test 31: ServiceAccount Creation"
 echo "----------------------------------"
 
+# Own ConfigMap -> this CR is the first (and only) owner of $TEST_NS
+if ! create_sa_test_configmap "$CM_NAME" "$TEST_NS"; then
+    fail_test "Could not create test ConfigMap $CM_NAME"
+    exit 1
+fi
+
 # Create PermissionBinder with SA mapping
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+apply_yaml_with_retry <<EOF
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-sa-basic
+  name: $PB_NAME
   namespace: $NAMESPACE
 spec:
-  configMapName: permission-config
+  configMapName: $CM_NAME
   configMapNamespace: $NAMESPACE
   prefixes:
     - "COMPANY-K8S"
@@ -33,33 +47,24 @@ spec:
     runtime: view
 EOF
 
-sleep 10
+# Default naming pattern is {namespace}-sa-{name}
+if ! wait_for_sa "$TEST_NS" "${TEST_NS}-sa-deploy" 90; then
+    fail_test "ServiceAccount ${TEST_NS}-sa-deploy not created within $(e2e_max_wait 90)s"
+    exit 1
+fi
+if ! wait_for_sa "$TEST_NS" "${TEST_NS}-sa-runtime" 60; then
+    fail_test "ServiceAccount ${TEST_NS}-sa-runtime not created within $(e2e_max_wait 60)s"
+    exit 1
+fi
+pass_test "ServiceAccounts created (deploy and runtime)"
 
-# Check if test-namespace-001 exists and has SA
-if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
-    SA_DEPLOY=$(kubectl get sa -n "$TEST_NS" --no-headers 2>/dev/null | grep "sa-deploy" | wc -l)
-    SA_DEPLOY=$(echo "$SA_DEPLOY" | tr -d ' \n')
-    SA_RUNTIME=$(kubectl get sa -n "$TEST_NS" --no-headers 2>/dev/null | grep "sa-runtime" | wc -l)
-    SA_RUNTIME=$(echo "$SA_RUNTIME" | tr -d ' \n')
-    
-    if [ "$SA_DEPLOY" -gt 0 ] && [ "$SA_RUNTIME" -gt 0 ]; then
-        pass_test "ServiceAccounts created (deploy and runtime)"
-        
-        # Check RoleBindings
-        # Use grep with name filter to find RoleBindings for ServiceAccounts
-        RB_DEPLOY=$(kubectl get rolebinding -n "$TEST_NS" -o name 2>/dev/null | grep -c "sa-.*-deploy" || echo "0")
-        RB_RUNTIME=$(kubectl get rolebinding -n "$TEST_NS" -o name 2>/dev/null | grep -c "sa-.*-runtime" || echo "0")
-        
-        if [ "$RB_DEPLOY" -gt 0 ] && [ "$RB_RUNTIME" -gt 0 ]; then
-            pass_test "ServiceAccount RoleBindings created"
-        else
-            fail_test "ServiceAccount RoleBindings not created"
-        fi
-    else
-        fail_test "ServiceAccounts not created (deploy: $SA_DEPLOY, runtime: $SA_RUNTIME)"
-    fi
+# SA RoleBindings are named sa-<namespace>-<mapping-key>
+if wait_for_cmd 60 kubectl get rolebinding "sa-${TEST_NS}-deploy" -n "$TEST_NS" \
+    && wait_for_cmd 30 kubectl get rolebinding "sa-${TEST_NS}-runtime" -n "$TEST_NS"; then
+    pass_test "ServiceAccount RoleBindings created"
 else
-    info_log "$TEST_NS does not exist, skipping SA creation test"
+    fail_test "ServiceAccount RoleBindings not created"
+    exit 1
 fi
 
 echo ""

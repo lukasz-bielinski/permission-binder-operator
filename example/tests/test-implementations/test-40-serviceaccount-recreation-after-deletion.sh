@@ -1,28 +1,41 @@
 #!/bin/bash
-# Test 40: Serviceaccount Recreation After Deletion
+# Test 40: ServiceAccount Recreation After Deletion
+#
+# Self-contained under the first-owner-wins ownership gate (issue #43, PR #45):
+# provisions its OWN ConfigMap resolving to a DEDICATED namespace. Reconcile is
+# re-triggered by annotating the test's own ConfigMap (the operator does not
+# watch ServiceAccounts) instead of deleting the operator pod.
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
 
-# Per-instance test namespace (prefix empty in legacy single-instance mode)
-TEST_NS="${TEST_NS_PREFIX}test-namespace-001"
+PB_NAME="test-sa-recreation"
+CM_NAME="sa-test-config-40"
+# Dedicated namespace (prefix empty in legacy single-instance mode)
+TEST_NS="${TEST_NS_PREFIX}sa-test-40"
+SA_NAME="${TEST_NS}-sa-recreation-test"
+RB_NAME="sa-${TEST_NS}-recreation-test"
 
 # ============================================================================
 # ============================================================================
 echo "Test 40: ServiceAccount Recreation After Deletion"
 echo "---------------------------------------------------"
 
-# Create PermissionBinder for recreation test
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
+if ! create_sa_test_configmap "$CM_NAME" "$TEST_NS"; then
+    fail_test "Could not create test ConfigMap $CM_NAME"
+    exit 1
+fi
+
+apply_yaml_with_retry <<EOF
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-sa-recreation
+  name: $PB_NAME
   namespace: $NAMESPACE
 spec:
-  configMapName: permission-config
+  configMapName: $CM_NAME
   configMapNamespace: $NAMESPACE
   prefixes:
     - "COMPANY-K8S"
@@ -32,70 +45,49 @@ spec:
     recreation-test: edit
 EOF
 
-sleep 15
+if ! wait_for_sa "$TEST_NS" "$SA_NAME" 90; then
+    fail_test "ServiceAccount $SA_NAME not created within $(e2e_max_wait 90)s"
+    exit 1
+fi
 
-if kubectl get namespace "$TEST_NS" >/dev/null 2>&1; then
-    if kubectl get sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" >/dev/null 2>&1; then
-        # Record original UID
-        ORIGINAL_SA_UID=$(kubectl get sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
-        info_log "Original SA UID: ${ORIGINAL_SA_UID:0:8}..."
-        
-        # Delete ServiceAccount
-        kubectl delete sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" >/dev/null 2>&1
-        
-        # Trigger full reconciliation by deleting operator pod and forcing reconciliation
-        OPERATOR_POD=$(kubectl get pods -n $NAMESPACE -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-        if [ -n "$OPERATOR_POD" ]; then
-            info_log "Deleting operator pod to trigger full reconciliation: $OPERATOR_POD"
-            kubectl delete pod $OPERATOR_POD -n $NAMESPACE >/dev/null 2>&1
-            # Wait for operator to restart and be ready
-            kubectl wait --for=condition=ready --timeout=60s pod -l control-plane=controller-manager -n $NAMESPACE >/dev/null 2>&1
-            # Force reconciliation by updating ConfigMap (triggers reconciliation via watch)
-            kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}')"'\n"}}' >/dev/null 2>&1
-            sleep 2
-            # Revert the change
-            kubectl patch configmap permission-config -n $NAMESPACE --type merge -p '{"data":{"whitelist.txt":"'"$(kubectl get configmap permission-config -n $NAMESPACE -o jsonpath='{.data.whitelist\.txt}' | sed 's/\n$//')"'"}}' >/dev/null 2>&1
-        fi
-        # Wait for reconciliation to complete
-        sleep 20
-        
-        # Verify recreated - retry a few times if needed
-        RECREATED=false
-        for i in {1..5}; do
-            if kubectl get sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" >/dev/null 2>&1; then
-                RECREATED=true
-                break
-            fi
-            info_log "Waiting for ServiceAccount recreation (attempt $i/5)..."
-            sleep 3
-        done
-        
-        if [ "$RECREATED" = true ]; then
-            pass_test "ServiceAccount automatically recreated"
-            
-            # Verify new UID (new instance)
-            NEW_SA_UID=$(kubectl get sa ${TEST_NS}-sa-recreation-test -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
-            
-            if [ "$ORIGINAL_SA_UID" != "$NEW_SA_UID" ]; then
-                pass_test "New ServiceAccount instance created (different UID)"
-            else
-                info_log "ServiceAccount UID unchanged (unexpected)"
-            fi
-            
-            # Verify RoleBinding still works
-            if kubectl get rolebinding -n "$TEST_NS" 2>/dev/null | grep -q "sa-recreation-test"; then
-                pass_test "RoleBinding references recreated ServiceAccount"
-            else
-                info_log "RoleBinding not yet created"
-            fi
-        else
-            fail_test "ServiceAccount not recreated"
-        fi
-    else
-        info_log "ServiceAccount recreation-test not created"
-    fi
+ORIGINAL_SA_UID=$(kubectl get sa "$SA_NAME" -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
+if [ -z "$ORIGINAL_SA_UID" ]; then
+    fail_test "Could not read UID of ServiceAccount $SA_NAME"
+    exit 1
+fi
+info_log "Original SA UID: ${ORIGINAL_SA_UID:0:8}..."
+
+# Delete the ServiceAccount (kubectl delete waits for actual removal)
+kubectl_retry kubectl delete sa "$SA_NAME" -n "$TEST_NS" >/dev/null 2>&1
+
+# Trigger reconciliation (operator does not watch ServiceAccounts)
+kubectl_retry kubectl annotate configmap "$CM_NAME" -n "$NAMESPACE" \
+    test-reconcile="$(date +%s)" --overwrite >/dev/null 2>&1
+
+if wait_for_sa "$TEST_NS" "$SA_NAME" 90; then
+    pass_test "ServiceAccount automatically recreated"
 else
-    info_log "$TEST_NS does not exist, skipping recreation test"
+    fail_test "ServiceAccount not recreated within $(e2e_max_wait 90)s"
+    exit 1
+fi
+
+# The recreated SA must be a NEW object instance (different UID)
+NEW_SA_UID=$(kubectl get sa "$SA_NAME" -n "$TEST_NS" -o jsonpath='{.metadata.uid}' 2>/dev/null)
+if [ -n "$NEW_SA_UID" ] && [ "$ORIGINAL_SA_UID" != "$NEW_SA_UID" ]; then
+    pass_test "New ServiceAccount instance created (different UID)"
+else
+    fail_test "ServiceAccount UID unchanged - deletion/recreation did not happen"
+    exit 1
+fi
+
+# RoleBinding must reference the recreated ServiceAccount
+RB_SUBJECT=$(kubectl get rolebinding "$RB_NAME" -n "$TEST_NS" \
+    -o jsonpath='{.subjects[0].name}' 2>/dev/null)
+if [ "$RB_SUBJECT" == "$SA_NAME" ]; then
+    pass_test "RoleBinding references recreated ServiceAccount"
+else
+    fail_test "RoleBinding missing or references wrong subject (got: ${RB_SUBJECT:-<none>}, want: $SA_NAME)"
+    exit 1
 fi
 
 echo ""

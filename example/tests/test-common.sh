@@ -155,6 +155,78 @@ kubectl_retry() {
     return $exitCode
 }
 
+# ---------------------------------------------------------------------------
+# ServiceAccount test fixtures (tests 31-41, issue #43 / PR #45)
+#
+# Under the first-owner-wins ownership gate, a PermissionBinder that references
+# the SAME ConfigMap as the runner's baseline CR (permissionbinder-example) is
+# refused ownership of the baseline-owned namespace/RoleBinding. Its entry
+# never lands in processedRoleBindings, the ServiceAccount loop (which derives
+# namespaces from processedRoleBindings) runs over zero namespaces, and the
+# test passes or fails vacuously. Every SA test therefore provisions its OWN
+# ConfigMap whose whitelist resolves to a DEDICATED namespace, making the CR
+# under test the first (and only) owner of everything it manages.
+# ---------------------------------------------------------------------------
+
+# apply_yaml_with_retry - apply a manifest given on stdin. The manifest is
+# staged to a temp file so kubectl_retry can safely re-run the command on
+# connection errors (a piped stdin would be empty on the second attempt).
+apply_yaml_with_retry() {
+    local manifest rc
+    manifest=$(mktemp)
+    cat > "$manifest"
+    kubectl_retry kubectl apply -f "$manifest" >/dev/null
+    rc=$?
+    rm -f "$manifest"
+    return $rc
+}
+
+# create_sa_test_configmap <configmap_name> <managed_namespace> [more_ns...]
+# ConfigMap in $NAMESPACE whose whitelist.txt CNs resolve to the given
+# dedicated namespace(s) with the "developer" role (the PermissionBinder under
+# test must map developer to some ClusterRole).
+create_sa_test_configmap() {
+    local cm_name=$1
+    shift
+    local whitelist="" ns
+    for ns in "$@"; do
+        whitelist="${whitelist}    CN=COMPANY-K8S-${ns}-developer,OU=Groups,DC=example,DC=com"$'\n'
+    done
+    whitelist=${whitelist%$'\n'}
+    apply_yaml_with_retry <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${cm_name}
+  namespace: ${NAMESPACE:?}
+data:
+  whitelist.txt: |
+${whitelist}
+EOF
+}
+
+# wait_for_cmd <timeout_s> <cmd...> - poll every 2s until cmd succeeds.
+# Timeout is scaled by E2E_WAIT_MULT. Returns 1 on timeout.
+wait_for_cmd() {
+    local max waited=0
+    max=$(e2e_max_wait "$1")
+    shift
+    while [ "$waited" -lt "$max" ]; do
+        if "$@" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    return 1
+}
+
+# wait_for_sa <namespace> <sa_name> [timeout_s=60] - poll until the
+# ServiceAccount exists (also covers waiting for the namespace itself).
+wait_for_sa() {
+    wait_for_cmd "${3:-60}" kubectl get serviceaccount "$2" -n "$1"
+}
+
 # GitHub PR verification functions
 # These functions use gh CLI to verify PRs created by the operator
 
