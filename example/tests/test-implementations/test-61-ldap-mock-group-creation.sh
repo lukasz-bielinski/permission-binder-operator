@@ -45,9 +45,9 @@ cleanup_resources() {
         --ignore-not-found=true >/dev/null 2>&1
     kubectl delete secret "$CREDS_SECRET" -n "$NAMESPACE" \
         --ignore-not-found=true >/dev/null 2>&1
-    # The mock ns deliberately dodges the suite cleanup sweeps ("ldap-mock"
-    # matches neither the legacy regex nor a test- prefix rule) — this trap is
-    # its only teardown path.
+    # In legacy mode the mock ns ("ldap-mock") dodges the cleanup sweep, so
+    # this trap is its only teardown path; in instance mode the prefix sweep
+    # would also catch it between tests, but the trap remains the primary path.
     kubectl delete namespace "$TARGET_NS" --ignore-not-found=true --wait=false >/dev/null 2>&1
     kubectl delete namespace "$MOCK_NS" --ignore-not-found=true --wait=false >/dev/null 2>&1
     e2e_sleep 5

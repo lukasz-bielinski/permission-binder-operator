@@ -361,13 +361,13 @@ make build-static
 
 ### Testing
 
-**Comprehensive E2E Test Suite - 61 Tests** ✅
+**Comprehensive E2E Test Suite - 62 Tests** ✅
 
 ```bash
 cd example/tests
 
 # Run tests with full isolation (fresh operator deployment per test) - RECOMMENDED
-./run-tests-full-isolation.sh              # All tests (pre + 1-60)
+./run-tests-full-isolation.sh              # All tests (pre + 1-61)
 ./run-tests-full-isolation.sh 44 45 46     # Specific tests (e.g., NetworkPolicy)
 
 # Run unit tests
