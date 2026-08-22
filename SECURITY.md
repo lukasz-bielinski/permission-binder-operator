@@ -92,7 +92,11 @@ The operator processes ConfigMap data to create RoleBindings. Ensure:
 
 ### By Design
 
-1. **Operator Permissions**: Operator requires cluster-admin or equivalent permissions to create RoleBindings across all namespaces
+1. **Operator Permissions**: Operator does NOT require cluster-admin. It runs under a dedicated, least-privilege ClusterRole (`manager-role` / `operator-manager-role`) that grants:
+   - RoleBindings: full management (create/update/delete) in all namespaces — required to bind LDAP groups to ClusterRoles
+   - Secrets: **get only** (read-only) — required to fetch LDAP credentials (`ldapSecretRef`) and Git credentials (`credentialsSecretRef`) referenced in PermissionBinder resources; the operator cannot list, watch, or modify Secrets
+   - ServiceAccounts, Namespaces: management as required by its features
+   - ClusterRoles: read-only (get/list/watch) to validate role mappings — the operator does NOT create ClusterRoles
 2. **ConfigMap Trust**: Operator trusts ConfigMap content - ensure proper RBAC on ConfigMap
 3. **ClusterRole Creation**: Operator does NOT create ClusterRoles, only references them
 

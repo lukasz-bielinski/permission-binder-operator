@@ -20,7 +20,15 @@ rules:
   - create
   - get
   - list
+  - patch
+  - update
   - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
 - apiGroups:
   - ""
   resources:
@@ -32,6 +40,15 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - get
+  - list
   - watch
 - apiGroups:
   - permission.permission-binder.io
@@ -64,6 +81,7 @@ rules:
   resources:
   - clusterroles
   verbs:
+  - bind
   - get
   - list
   - watch
