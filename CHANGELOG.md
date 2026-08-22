@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-22
+
+### 🚀 Highlights
+- **Least-Privilege RBAC**: The operator no longer requires `cluster-admin`. It runs under a scoped `operator-manager-role` (RoleBindings CRUD, `bind` on ClusterRoles, ServiceAccounts, Namespaces incl. update/patch, NetworkPolicies, ConfigMaps read, Secrets **get-only** via a direct API read — the informer cache is disabled for Secrets). Validated end-to-end on a live cluster (43/43 scenarios + LDAPS mock).
+- **Multi-Instance Support**: `WATCH_NAMESPACE` cache scoping, `RECONCILE_NAMESPACES` CR scoping, `MANAGED_BY_VALUE` override, and namespace-aware, **first-owner-wins** resource ownership (`permission-binder.io/permission-binder[-namespace]` annotations) with symmetric enforcement on create/update/delete paths — multiple isolated operator instances can now share a cluster.
+- **LDAPS Custom CA**: `ca.crt` key in the LDAP credentials Secret enables `ldapTlsVerify: true` against private PKI.
+- **Full Dependency Refresh**: all 33 open Dependabot alerts fixed (golang.org/x/crypto 0.55, go-git 5.19.2, go-billy 5.9.0, gRPC 1.82.1, cel-go 0.30.0, otel 1.44.0, k8s.io 0.35.x stack, and more); `govulncheck` clean; Docker base image on golang 1.26; GitHub Actions bumped.
+
+### 🔐 Security
+- Removed the `cluster-admin` ClusterRoleBinding from the example deployment; added the missing `bind` verb on ClusterRoles (without it, RBAC escalation prevention rejects every RoleBinding create — previously masked by cluster-admin).
+- Secrets are read via direct API GET under get-only RBAC (`DisableFor` cache bypass); the operator can no longer list or watch Secrets.
+- Fixed stale `zz_generated.deepcopy.go` (missing `GitTlsVerify` *bool deepcopy — pointer aliasing between copies).
+- First-owner-wins ownership closes the cross-instance steal-then-delete window (issue #43).
+
+### ⚙️ Operator
+- `WATCH_NAMESPACE` (comma-separated) scopes the manager cache; `RECONCILE_NAMESPACES` restricts which namespaces' PermissionBinder CRs are reconciled; `MANAGED_BY_VALUE` customizes the managed-by label value per instance.
+- Ownership annotations are stamped on managed Namespaces, RoleBindings, and ServiceAccounts; foreign-owned resources are never adopted or deleted.
+
+### 🧪 Testing & CI
+- E2E harness overhaul: per-test baseline fixtures (ConfigMap + PermissionBinder) with per-instance rendering, honest grading (exit code **and** `❌ FAIL` assertion lines), CRD installed once per suite run, per-instance harness parameterization, and a parallel runner with test pools (~3× wall-clock speedup on a 3-slot run).
+- ServiceAccount tests (31-41) rewritten as self-contained under first-owner-wins semantics (own ConfigMap + dedicated namespace per test, hard polled assertions replacing silent `info_log` escapes).
+- Batch namespace deletion in cleanup (`--wait=false` + drain poll) and fixed result counting in the parallel runner summary.
+- Unit test suite hermetic on clean environments (explicit go-git authors, gofmt-clean under Go 1.27).
+
+### 📦 Upgrade Notes
+- **In-place upgrades**: `roleRef` of a ClusterRoleBinding is immutable — delete and recreate `operator-manager-rolebinding` when switching from `cluster-admin` to `operator-manager-role` (`kubectl apply` alone will not flip it).
+- `controller-runtime` remains pinned at 0.19.0 (upgrade tracked in #28/#31).
+- Resources created by pre-1.7.0 operators are adopted on first reconcile via legacy name matching and re-stamped with ownership annotations.
+
 ## [1.6.6] - 2025-11-24
 
 ### 🚀 Highlights

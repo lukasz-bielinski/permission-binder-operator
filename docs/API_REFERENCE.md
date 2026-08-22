@@ -820,5 +820,5 @@ networkPolicy:
 ---
 
 **Last Updated**: 2025-11-24  
-**Version**: v1.6.7
+**Version**: v1.7.0
 

@@ -4,34 +4,32 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.6.7-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
-[![GitHub Release](https://img.shields.io/badge/Release-v1.6.7-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.7)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.7.0-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![GitHub Release](https://img.shields.io/badge/Release-v1.7.0-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.7.0)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
-## 🚀 What's New in v1.6.7
+## 🚀 What's New in v1.7.0
 
-### 🔁 Toolchain & Dependency Refresh
-- ✅ **Go 1.25 Everywhere** – Dockerfile, go.mod, and CI now build/test with Go 1.25.
-- ✅ **Dependencies Updated** – Kubernetes 0.34.2 stack, Prometheus client 1.23.2, Ginkgo/Gomega, zap, testify, kustomize, yaml.
-- ⚠️ `controller-runtime` intentionally pinned at 0.19.0 (ignore rule added) pending focused upgrade window.
+### 🔐 Least-Privilege RBAC
+- ✅ **No more cluster-admin** – the operator runs under a scoped `operator-manager-role` (incl. the `bind` verb required by RBAC escalation prevention).
+- ✅ **Secrets get-only** – LDAP/Git credentials are read via direct API GET; the informer cache is disabled for Secrets (no list/watch).
+- ⚠️ In-place upgrade: delete + recreate `operator-manager-rolebinding` (ClusterRoleBinding `roleRef` is immutable).
 
-### 🔐 Security & CI Hardening
-- ✅ Trivy FS/Image scans in GitHub Actions with SARIF uploads + unique categories.
-- ✅ Dependabot configuration for gomod, docker, and github-actions ecosystems.
-- ✅ Digest hand-off between jobs, BUILD_DATE fix for all triggers, amd64-by-default builds, and clear PR skip logs.
-- ✅ Removed deprecated `apt-key` usage; adopted `signed-by` gpg key installation.
+### 🧩 Multi-Instance Support
+- ✅ `WATCH_NAMESPACE` cache scoping, `RECONCILE_NAMESPACES` CR scoping, `MANAGED_BY_VALUE` label override.
+- ✅ Namespace-aware **first-owner-wins** ownership annotations — instances never adopt or delete each other's resources.
 
-### 📚 Documentation & Observability
-- ✅ README, docs, deployment manifests, and badges all reference `v1.6.7`.
-- ✅ Unit Test philosophy + architecture docs highlight Go 1.25 + go-git BasicAuth flow.
+### 🔁 Dependency & Security Refresh
+- ✅ All 33 Dependabot alerts fixed (x/crypto 0.55, go-git 5.19.2, gRPC 1.82.1, cel-go 0.30.0, k8s.io 0.35.x, otel 1.44.0, …); `govulncheck` clean.
+- ✅ LDAPS custom CA support (`ca.crt` in the credentials Secret) for `ldapTlsVerify: true` with private PKI.
 
 ### 🧪 Testing
-- ✅ `go test ./... -short` (Go 1.25).
-- ✅ Full-isolation E2E suite: **61/61** scenarios using image `lukaszbielinski/permission-binder-operator:1.6.7`.
+- ✅ E2E harness: baseline fixtures, honest grading, CRD-once, per-instance isolation, parallel runner (~3× faster).
+- ✅ ServiceAccount tests self-contained under first-owner-wins; live-validated on a real k3s cluster (incl. LDAPS mock end-to-end).
 
-📖 **Full Release Notes**: [v1.6.7 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.6.7) | [Changelog](CHANGELOG.md)
+📖 **Full Release Notes**: [v1.7.0 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.7.0) | [Changelog](CHANGELOG.md)
 
 ---
 
@@ -411,14 +409,14 @@ All Docker images are **cryptographically signed** and include **supply chain at
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:1.6.7
+  lukaszbielinski/permission-binder-operator:1.7.0
 ```
 
 **Using GitHub CLI (for attestations):**
 ```bash
 # Verify GitHub Attestations
 gh attestation verify \
-  oci://lukaszbielinski/permission-binder-operator:1.6.7 \
+  oci://lukaszbielinski/permission-binder-operator:1.7.0 \
   --owner lukasz-bielinski
 ```
 
@@ -429,7 +427,7 @@ cosign verify-attestation \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   --type slsaprovenance \
-  lukaszbielinski/permission-binder-operator:1.6.7 | jq .
+  lukaszbielinski/permission-binder-operator:1.7.0 | jq .
 ```
 
 ### 📋 What's Verified?
@@ -647,17 +645,16 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** v1.6.7  
-**Last Updated:** 2025-11-15  
+**Version:** v1.7.0  
+**Last Updated:** 2026-08-22  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes (v1.6.7)
-- ✅ **Go 1.25 Upgrade** - Upgraded from Go 1.24.0 to 1.25
-- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.6.7`
-- ✅ **E2E Tests** - All 61 tests passing (100% success rate) with Go 1.25
-- ✅ **Unit Test Coverage** - ~20% overall, ~96% pure logic (17 functions)
-- ✅ **Code Quality** - Controller refactoring verified, 8-module architecture
-- ✅ **Security** - Token leak prevention, banking/SOC2/GDPR compliant
+### Recent Changes (v1.7.0)
+- ✅ **Least-Privilege RBAC** - cluster-admin binding removed; scoped role validated live (43/43 E2E + LDAPS mock)
+- ✅ **Multi-Instance Mode** - WATCH_NAMESPACE / RECONCILE_NAMESPACES / MANAGED_BY_VALUE + first-owner-wins ownership
+- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.7.0`
+- ✅ **Dependency Refresh** - 33 Dependabot alerts fixed, govulncheck clean, golang 1.26 base image
+- ✅ **E2E Harness** - baseline fixtures, honest grading, parallel runner (~3× faster)
 
 ---
 
