@@ -1,0 +1,14 @@
+# Parent OU for the group DN used in 05-permission-config.yaml.
+# The operator does NOT create parent entries — CreateLdapGroup() adds the leaf
+# group at its FullDN, so 'OU=Kubernetes,DC=example,DC=com' must pre-exist.
+# (dc=example,dc=com itself is created by the osixia bootstrap via LDAP_DOMAIN.)
+#
+# Load (simple bind as the same admin DN the operator will use):
+#   kubectl -n ldap-mock exec -i deploy/openldap -- \
+#     ldapadd -x -H ldap://localhost:389 \
+#       -D "cn=admin,dc=example,dc=com" -w "MockAdmin123!" < 02b-init-data.ldif
+dn: ou=Kubernetes,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: Kubernetes
+description: Parent OU for permission-binder-operator managed groups (mock)

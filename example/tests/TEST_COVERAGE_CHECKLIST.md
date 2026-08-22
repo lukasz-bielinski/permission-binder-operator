@@ -93,6 +93,10 @@ This document tracks test coverage for all Permission Binder Operator features. 
 - [x] **Namespace Removal Cleanup** (Test 59)
 - [x] **High Frequency Reconciliation Stress** (Test 60)
 
+### ✅ LDAP Integration
+
+- [x] **LDAP Mock Group Creation (LDAPS + custom CA, verified TLS)** (Test 61)
+
 ## Coverage Gaps (Potential Future Tests)
 
 ### NetworkPolicy Features
@@ -121,7 +125,7 @@ This document tracks test coverage for all Permission Binder Operator features. 
 ## Test Statistics
 
 **Current Coverage**:
-- **Total Tests**: 61 (Pre-Test + Tests 1-60)
+- **Total Tests**: 62 (Pre-Test + Tests 1-61)
 - **Test Categories**: 6
 - **Coverage Areas**: 
   - ✅ Core RBAC: 100%

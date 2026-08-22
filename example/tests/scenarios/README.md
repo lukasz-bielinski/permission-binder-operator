@@ -86,6 +86,9 @@ Each test scenario is documented in a separate file for easy navigation and fast
 - [Test 59: NetworkPolicy - Namespace Removal Cleanup](59-networkpolicy---namespace-removal-cleanup.md)
 - [Test 60: NetworkPolicy - High Frequency Reconciliation](60-networkpolicy---high-frequency-reconciliation.md)
 
+### LDAP Integration (Test 61) {#ldap-integration-test-61}
+- [Test 61: LDAP Mock Group Creation (LDAPS + custom CA)](61-ldap-mock-group-creation.md)
+
 ## Adding New Tests
 
 See [ADDING_NEW_TESTS.md](../ADDING_NEW_TESTS.md) for step-by-step guide on adding new tests.

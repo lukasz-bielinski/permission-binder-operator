@@ -1,0 +1,34 @@
+# AD-compat mock schema for OpenLDAP cn=config.
+#
+# Why: CreateLdapGroup() (operator/internal/controller/ldap_helper.go:186-190)
+# writes an Active-Directory-shaped entry:
+#   objectClass: top, group        <- 'group' does NOT exist in stock OpenLDAP
+#   cn: <group name>
+#   sAMAccountName: <group name>   <- AD-only attribute, not in stock OpenLDAP
+#   description: <text>
+# Without this schema the Add fails with result 17 (undefined attribute type)
+# or 65 (objectClassViolation). This file defines both, using the real AD OIDs.
+#
+# Load (SASL EXTERNAL over ldapi as root — osixia grants uid0/gid0 manage on cn=config):
+#   kubectl -n ldap-mock exec -i deploy/openldap -- \
+#     ldapadd -Y EXTERNAL -H ldapi:/// < 02-init-schema.ldif
+#
+# 'cn', 'member', 'description' already exist in the core schema, so they are
+# only referenced, not redefined.
+dn: cn=microsoft-ad-mock,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: microsoft-ad-mock
+olcAttributeTypes: ( 1.2.840.113556.1.4.221
+  NAME 'sAMAccountName'
+  DESC 'AD account name (mock for permission-binder-operator e2e)'
+  EQUALITY caseIgnoreMatch
+  SUBSTR caseIgnoreSubstringsMatch
+  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15
+  SINGLE-VALUE )
+olcObjectClasses: ( 1.2.840.113556.1.5.8
+  NAME 'group'
+  DESC 'AD group (mock for permission-binder-operator e2e)'
+  SUP top
+  STRUCTURAL
+  MUST ( cn )
+  MAY ( sAMAccountName $ member $ description ) )
