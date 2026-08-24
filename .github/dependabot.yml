@@ -34,12 +34,8 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
-    # Ignore specific dependencies (if needed)
-    ignore:
-      # controller-runtime: Major version jump (0.19.0 -> 0.22.4) requires careful testing
-      # and may have breaking changes. Defer update until we have time for thorough testing.
-      - dependency-name: "sigs.k8s.io/controller-runtime"
-        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+    # No ignored dependencies. controller-runtime was ignored while pinned to
+    # v0.19.x; the pin was lifted by PRs #28 and #51 (v0.24.1, issue #31).
 
   # Enable version updates for GitHub Actions
   - package-ecosystem: "github-actions"
