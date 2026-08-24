@@ -1,10 +1,22 @@
 #!/bin/bash
 # Test 49: NetworkPolicy - Auto-Merge PR
+#
+# Self-contained under the first-owner-wins ownership gate (issues #45/#59):
+# own ConfigMap + dedicated namespace instead of the shared permission-config
+# ConfigMap already owned by the runner's baseline PermissionBinder.
+# NOTE: the auto-merge-label assertion stays red until operator bug #56 is
+# fixed (labels sent in the PR-create payload are silently dropped by GitHub).
 # Source common functions (SCRIPT_DIR should be set by parent script)
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
+
+BINDER_NAME="test-permissionbinder-networkpolicy"
+CONFIGMAP_NAME="np-test-config-49"
+# Dedicated namespace (prefix empty in legacy single-instance mode; name
+# contains "test-" so both cleanup sweeps catch it)
+AUTOMERGE_NS="${TEST_NS_PREFIX}np-test-49"
 
 # ============================================================================
 # ============================================================================
@@ -27,13 +39,13 @@ else
 fi
 
 # Setup: Create PermissionBinder with NetworkPolicy enabled and auto-merge enabled
-if ! kubectl_retry kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE >/dev/null 2>&1; then
+if ! kubectl_retry kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE >/dev/null 2>&1; then
     info_log "Creating PermissionBinder with NetworkPolicy enabled and auto-merge enabled"
     cat <<EOF | kubectl apply -f - >/dev/null 2>&1
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-permissionbinder-networkpolicy
+  name: $BINDER_NAME
   namespace: $NAMESPACE
 spec:
   prefixes:
@@ -41,7 +53,7 @@ spec:
   roleMapping:
     engineer: "edit"
     viewer: "view"
-  configMapName: "permission-config"
+  configMapName: "$CONFIGMAP_NAME"
   configMapNamespace: "$NAMESPACE"
   networkPolicy:
     enabled: true
@@ -69,17 +81,11 @@ spec:
 EOF
 fi
 
-# Update ConfigMap with test namespace
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: permission-config
-  namespace: $NAMESPACE
-data:
-  whitelist.txt: |
-    CN=COMPANY-K8S-test-automerge-engineer,OU=Openshift,DC=example,DC=com
-EOF
+# Own ConfigMap -> this CR is the first (and only) owner of $AUTOMERGE_NS
+if ! create_np_test_configmap "$CONFIGMAP_NAME" "$AUTOMERGE_NS"; then
+    fail_test "Could not create test ConfigMap $CONFIGMAP_NAME"
+    exit 1
+fi
 
 # Wait for reconciliation
 info_log "Waiting for PermissionBinder to process ConfigMap (5s)"
@@ -91,7 +97,7 @@ WAITED=0
 POLL_INTERVAL=2
 NAMESPACES_FOUND=""
 while [ $WAITED -lt $MAX_WAIT ]; do
-    NAMESPACES_FOUND=$(kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE -o jsonpath='{.status.networkPolicies[*].namespace}' 2>/dev/null || echo "")
+    NAMESPACES_FOUND=$(kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE -o jsonpath='{.status.networkPolicies[*].namespace}' 2>/dev/null || echo "")
     if [ -n "$NAMESPACES_FOUND" ] && [ "$NAMESPACES_FOUND" != "" ]; then
         break
     fi
@@ -110,11 +116,11 @@ fi
 # VERIFICATION: Wait for PR creation and auto-merge
 # ============================================================================
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
-TEST_NAMESPACE="test-automerge"
+TEST_NAMESPACE="$AUTOMERGE_NS"
 PR_VERIFICATION_FAILED=0
 
 info_log "Waiting for PR to be created and auto-merged for $TEST_NAMESPACE (up to 180s)..."
-pr_number=$(wait_for_pr_in_status "test-permissionbinder-networkpolicy" "$TEST_NAMESPACE" 180)
+pr_number=$(wait_for_pr_in_status "$BINDER_NAME" "$TEST_NAMESPACE" 180)
 
 if [ -z "$pr_number" ] || [ "$pr_number" == "" ]; then
     fail_test "PR number not found for namespace $TEST_NAMESPACE after 180s"
@@ -124,7 +130,7 @@ fi
 pass_test "PR number found: $pr_number"
 
 # Get PR details from status
-pr_details=$(get_pr_from_status "test-permissionbinder-networkpolicy" "$TEST_NAMESPACE")
+pr_details=$(get_pr_from_status "$BINDER_NAME" "$TEST_NAMESPACE")
 parse_pr_details() {
     local data="$1"
     IFS='|' read -r pr_num pr_url pr_branch pr_state <<< "$data"
@@ -229,7 +235,7 @@ info_log "Cleaning up test artifacts..."
 info_log "=========================================="
 
 # Cleanup files from main branch (PR was merged)
-cleanup_networkpolicy_test_artifacts "test-permissionbinder-networkpolicy" "$TEST_NAMESPACE" "$GITHUB_REPO"
+cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "$TEST_NAMESPACE" "$GITHUB_REPO"
 
 # Final cleanup: Remove entire cluster directory
 info_log "Final cleanup: Removing entire DEV-cluster directory..."

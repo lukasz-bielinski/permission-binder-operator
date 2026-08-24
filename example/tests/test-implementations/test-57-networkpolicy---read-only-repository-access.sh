@@ -15,7 +15,9 @@ echo "-------------------------------------------------------------------"
 BINDER_NAME="test-permissionbinder-networkpolicy-readonly"
 CONFIGMAP_NAME="permission-config-readonly"
 SECRET_NAME="github-gitops-credentials-readonly"
-TEST_NAMESPACE="test-readonly"
+# Dedicated namespace (prefix empty in legacy single-instance mode; name
+# contains "test-" so both cleanup sweeps catch it)
+TEST_NAMESPACE="${TEST_NS_PREFIX}np-test-57"
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
 
 cleanup_resources() {

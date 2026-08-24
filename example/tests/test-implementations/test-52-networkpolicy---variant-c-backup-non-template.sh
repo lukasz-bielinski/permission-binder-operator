@@ -1,10 +1,20 @@
 #!/bin/bash
 # Test 52: NetworkPolicy - Variant C (Backup Non-Template NetworkPolicy)
+#
+# Self-contained under the first-owner-wins ownership gate (issues #45/#59):
+# own ConfigMap + dedicated namespace instead of the shared permission-config
+# ConfigMap already owned by the runner's baseline PermissionBinder.
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
+
+BINDER_NAME="test-permissionbinder-networkpolicy"
+CONFIGMAP_NAME="np-test-config-52"
+# Dedicated namespace (prefix empty in legacy single-instance mode; name
+# contains "test-" so both cleanup sweeps catch it)
+VARIANT_NS="${TEST_NS_PREFIX}np-test-52-variant-c"
 
 # ============================================================================
 # ============================================================================
@@ -29,13 +39,13 @@ else
 fi
 
 # Setup: Create PermissionBinder with NetworkPolicy enabled and backupExisting: true
-if ! kubectl_retry kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE >/dev/null 2>&1; then
+if ! kubectl_retry kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE >/dev/null 2>&1; then
     info_log "Creating PermissionBinder with NetworkPolicy enabled and backupExisting: true"
     cat <<EOF | kubectl apply -f - >/dev/null 2>&1
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-permissionbinder-networkpolicy
+  name: $BINDER_NAME
   namespace: $NAMESPACE
 spec:
   prefixes:
@@ -43,7 +53,7 @@ spec:
   roleMapping:
     engineer: "edit"
     viewer: "view"
-  configMapName: "permission-config"
+  configMapName: "$CONFIGMAP_NAME"
   configMapNamespace: "$NAMESPACE"
   networkPolicy:
     enabled: true
@@ -72,8 +82,8 @@ EOF
 fi
 
 # Create namespace with existing NetworkPolicy WITHOUT template annotation (non-template policy)
-if ! kubectl get namespace test-variant-c-ns >/dev/null 2>&1; then
-    kubectl create namespace test-variant-c-ns >/dev/null 2>&1
+if ! kubectl get namespace $VARIANT_NS >/dev/null 2>&1; then
+    kubectl create namespace $VARIANT_NS >/dev/null 2>&1
 fi
 
 # Create existing NetworkPolicy WITHOUT template annotation (custom policy - Variant C)
@@ -82,7 +92,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: custom-policy
-  namespace: test-variant-c-ns
+  namespace: $VARIANT_NS
   # NO template annotation - this is a custom policy (Variant C)
 spec:
   podSelector:
@@ -100,35 +110,23 @@ spec:
       port: 8080
 EOF
 
-# Update ConfigMap to include test-variant-c-ns namespace
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: permission-config
-  namespace: $NAMESPACE
-data:
-  whitelist.txt: |
-    CN=COMPANY-K8S-test-app-engineer,OU=Openshift,DC=example,DC=com
-    CN=COMPANY-K8S-test-app-2-viewer,OU=Openshift,DC=example,DC=com
-    CN=COMPANY-K8S-test-variant-c-ns-engineer,OU=Openshift,DC=example,DC=com
-EOF
+# Own ConfigMap resolving to the dedicated variant-c namespace
+if ! create_np_test_configmap "$CONFIGMAP_NAME" "$VARIANT_NS"; then
+    fail_test "Could not create test ConfigMap $CONFIGMAP_NAME"
+    exit 1
+fi
 
 # Wait for reconciliation to process backup (increased to allow operator time to create PRs)
 info_log "Waiting for reconciliation to process backup (15s)"
 sleep 15
 
 # ============================================================================
-# VERIFICATION: Check PR for test-variant-c-ns namespace (main test objective)
-# NOTE: test-app and test-app-2 may be skipped by operator if they already have status
-#       from previous tests (operator optimization - skips already processed namespaces)
-#       The main objective of this test is to verify backup variant for test-variant-c-ns
+# VERIFICATION: Check PR for $VARIANT_NS namespace (main test objective)
 # ============================================================================
 
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
-# Main test objective: verify backup for test-variant-c-ns
-# Other namespaces (test-app, test-app-2) may be skipped if already processed
-MAIN_TEST_NAMESPACE="test-variant-c-ns"
+# Main test objective: verify backup for $VARIANT_NS
+MAIN_TEST_NAMESPACE="$VARIANT_NS"
 PR_VERIFICATION_FAILED=0
 
 # Function to verify PR for a namespace (reuse from test-44 pattern)
@@ -142,11 +140,11 @@ verify_pr_for_namespace() {
     
     # Wait for PR to be created and get PR number from status
     info_log "Waiting for PR to be created for $namespace (polling every 2s, up to 120s)..."
-    pr_number=$(wait_for_pr_in_status "test-permissionbinder-networkpolicy" "$namespace" 120)
+    pr_number=$(wait_for_pr_in_status "$BINDER_NAME" "$namespace" 120)
     
     # If PR number not found, check if PR state indicates it was merged (may need to get PR from GitHub)
     if [ -z "$pr_number" ] || [ "$pr_number" == "" ]; then
-        local pr_state=$(kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$namespace\")].state}" 2>/dev/null || echo "")
+        local pr_state=$(kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$namespace\")].state}" 2>/dev/null || echo "")
         if [ "$pr_state" == "pr-merged" ] || [ "$pr_state" == "pr-pending" ]; then
             info_log "PR state found: $pr_state, but PR number missing. Checking GitHub for recent PRs..."
             if command -v gh &> /dev/null; then
@@ -167,7 +165,7 @@ verify_pr_for_namespace() {
     pass_test "PR number found for $namespace: $pr_number"
     
     # Get PR details from status
-    local pr_details=$(get_pr_from_status "test-permissionbinder-networkpolicy" "$namespace")
+    local pr_details=$(get_pr_from_status "$BINDER_NAME" "$namespace")
     local pr_num pr_url pr_branch pr_state
     IFS='|' read -r pr_num pr_url pr_branch pr_state <<< "$pr_details"
     
@@ -206,8 +204,8 @@ verify_pr_for_namespace() {
             PR_VERIFICATION_FAILED=1
         fi
         
-        # Special verification for test-variant-c-ns (backup variant)
-        if [ "$namespace" == "test-variant-c-ns" ]; then
+        # Special verification for $VARIANT_NS (backup variant)
+        if [ "$namespace" == "$VARIANT_NS" ]; then
             if echo "$pr_title" | grep -qi "backup"; then
                 pass_test "PR title indicates backup variant"
             else
@@ -216,7 +214,7 @@ verify_pr_for_namespace() {
             
             # Verify PR contains backup files
             info_log "Verifying backup PR files..."
-            local expected_files="networkpolicies/DEV-cluster/test-variant-c-ns/custom-policy.yaml networkpolicies/DEV-cluster/kustomization.yaml"
+            local expected_files="networkpolicies/DEV-cluster/$VARIANT_NS/custom-policy.yaml networkpolicies/DEV-cluster/kustomization.yaml"
             if verify_pr_files "$GITHUB_REPO" "$pr_number" "$expected_files"; then
                 pass_test "Backup PR contains expected files"
             else
@@ -231,7 +229,7 @@ verify_pr_for_namespace() {
     fi
     
     # Verify PR state in PermissionBinder status
-    local namespace_state=$(kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$namespace\")].state}" 2>/dev/null || echo "")
+    local namespace_state=$(kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$namespace\")].state}" 2>/dev/null || echo "")
     if [ -n "$namespace_state" ]; then
         case "$namespace_state" in
             "pr-created"|"pr-pending"|"pr-merged")
@@ -248,40 +246,22 @@ verify_pr_for_namespace() {
     return 0
 }
 
-# Verify PR for main test namespace (test-variant-c-ns)
+# Verify PR for main test namespace ($VARIANT_NS)
 # This is the main objective: verify backup variant works
 if ! verify_pr_for_namespace "$MAIN_TEST_NAMESPACE"; then
     PR_VERIFICATION_FAILED=1
 fi
 
-# Optional: Check if other namespaces were processed or skipped
-# (operator may skip them if they already have status from previous tests)
-info_log "Checking status of other namespaces (may be skipped if already processed)..."
-for ns in "test-app" "test-app-2"; do
-    NS_STATE=$(kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$ns\")].state}" 2>/dev/null || echo "")
-    if [ -n "$NS_STATE" ]; then
-        info_log "Namespace $ns has state: $NS_STATE (already processed - operator optimization)"
-    else
-        info_log "Namespace $ns not in status (may be skipped by operator if already processed)"
-    fi
-done
-
 # ============================================================================
 # CLEANUP: Remove PRs and branches from GitHub (test isolation)
 # IMPORTANT: Cleanup is done AFTER all GitHub verifications are complete
-# IMPORTANT: Cleanup ALL namespaces from ConfigMap and remove entire cluster directory
 # ============================================================================
 info_log "=========================================="
 info_log "All PR verifications completed. Starting cleanup..."
 info_log "=========================================="
 
-# Cleanup: Clean up all namespaces that might have been processed
-# (including test-app and test-app-2 if they were processed)
 info_log "Cleaning up test namespaces..."
-cleanup_networkpolicy_test_artifacts "test-permissionbinder-networkpolicy" "$MAIN_TEST_NAMESPACE" "$GITHUB_REPO"
-# Also cleanup test-app and test-app-2 if they exist (may have been processed)
-cleanup_networkpolicy_test_artifacts "test-permissionbinder-networkpolicy" "test-app" "$GITHUB_REPO" 2>/dev/null || true
-cleanup_networkpolicy_test_artifacts "test-permissionbinder-networkpolicy" "test-app-2" "$GITHUB_REPO" 2>/dev/null || true
+cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "$MAIN_TEST_NAMESPACE" "$GITHUB_REPO"
 
 # Final cleanup: Remove entire cluster directory
 info_log "Final cleanup: Removing entire DEV-cluster directory..."
@@ -294,8 +274,8 @@ if [ $PR_VERIFICATION_FAILED -eq 1 ]; then
 fi
 
 # Cleanup Kubernetes resources (always, regardless of PR status)
-kubectl delete networkpolicy custom-policy -n test-variant-c-ns --ignore-not-found=true >/dev/null 2>&1
-kubectl delete namespace test-variant-c-ns --ignore-not-found=true >/dev/null 2>&1
+kubectl delete networkpolicy custom-policy -n $VARIANT_NS --ignore-not-found=true >/dev/null 2>&1
+kubectl delete namespace $VARIANT_NS --ignore-not-found=true >/dev/null 2>&1
 
 echo ""
 

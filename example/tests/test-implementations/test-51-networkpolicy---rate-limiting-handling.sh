@@ -1,10 +1,20 @@
 #!/bin/bash
 # Test 51: NetworkPolicy - Rate Limiting Handling
+#
+# Self-contained under the first-owner-wins ownership gate (issues #45/#59):
+# own ConfigMap + dedicated namespaces instead of the shared permission-config
+# ConfigMap already owned by the runner's baseline PermissionBinder.
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
+
+BINDER_NAME="test-permissionbinder-networkpolicy"
+CONFIGMAP_NAME="np-test-config-51"
+# Dedicated namespace base (prefix empty in legacy single-instance mode; names
+# contain "test-" so both cleanup sweeps catch them)
+RATELIMIT_BASE="${TEST_NS_PREFIX}np-test-51-r"
 
 # ============================================================================
 # ============================================================================
@@ -29,13 +39,13 @@ if ! kubectl_retry kubectl get secret github-gitops-credentials -n $NAMESPACE >/
 fi
 
 # Setup: Create PermissionBinder with NetworkPolicy enabled
-if ! kubectl_retry kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE >/dev/null 2>&1; then
+if ! kubectl_retry kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE >/dev/null 2>&1; then
     info_log "Creating PermissionBinder with NetworkPolicy enabled"
     cat <<EOF | kubectl apply -f - >/dev/null 2>&1
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-permissionbinder-networkpolicy
+  name: $BINDER_NAME
   namespace: $NAMESPACE
 spec:
   prefixes:
@@ -43,7 +53,7 @@ spec:
   roleMapping:
     engineer: "edit"
     viewer: "view"
-  configMapName: "permission-config"
+  configMapName: "$CONFIGMAP_NAME"
   configMapNamespace: "$NAMESPACE"
   networkPolicy:
     enabled: true
@@ -81,16 +91,7 @@ fi
 # (Note: This may not actually trigger rate limit, but tests error handling)
 info_log "Creating multiple namespaces rapidly to test rate limit handling..."
 for i in {1..5}; do
-    cat <<EOF | kubectl apply -f - >/dev/null 2>&1
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: permission-config
-  namespace: $NAMESPACE
-data:
-  whitelist.txt: |
-    CN=COMPANY-K8S-test-ratelimit-$i-engineer,OU=Openshift,DC=example,DC=com
-EOF
+    create_np_test_configmap "$CONFIGMAP_NAME" "${RATELIMIT_BASE}$i" || true
     sleep 1
 done
 
@@ -129,7 +130,7 @@ else
 fi
 
 # Verify operator continues processing other namespaces
-NAMESPACES_PROCESSED=$(kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE -o jsonpath='{.status.networkPolicies[*].namespace}' 2>/dev/null | wc -w || echo "0")
+NAMESPACES_PROCESSED=$(kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE -o jsonpath='{.status.networkPolicies[*].namespace}' 2>/dev/null | wc -w || echo "0")
 if [ "$NAMESPACES_PROCESSED" -gt 0 ]; then
     pass_test "Operator continues processing namespaces (graceful degradation)"
 else
@@ -139,7 +140,7 @@ fi
 # Cleanup test artifacts
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
 for i in {1..5}; do
-    cleanup_networkpolicy_test_artifacts "test-permissionbinder-networkpolicy" "test-ratelimit-$i" "$GITHUB_REPO" 2>/dev/null || true
+    cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "${RATELIMIT_BASE}$i" "$GITHUB_REPO" 2>/dev/null || true
 done
 cleanup_networkpolicy_files_from_repo "$GITHUB_REPO" "" "DEV-cluster" 2>/dev/null || true
 
