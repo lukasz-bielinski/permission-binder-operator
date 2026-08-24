@@ -20,12 +20,23 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
 )
+
+// syncStatusFromFresh refreshes the caller's view of status (and the
+// resourceVersion the write bumped) WITHOUT replacing Spec/metadata: a
+// reconcile pass must keep operating on the spec snapshot it started from -
+// swapping the whole object mid-pass would let a concurrent spec edit tear
+// the batch loop (e.g. nil out Spec.NetworkPolicy underfoot).
+func syncStatusFromFresh(permissionBinder, freshBinder *permissionv1.PermissionBinder) {
+	permissionBinder.Status = freshBinder.Status
+	permissionBinder.ResourceVersion = freshBinder.ResourceVersion
+}
 
 func getNetworkPolicyStatus(permissionBinder *permissionv1.PermissionBinder, namespace string) *permissionv1.NetworkPolicyStatus {
 	for i := range permissionBinder.Status.NetworkPolicies {
@@ -34,11 +45,6 @@ func getNetworkPolicyStatus(permissionBinder *permissionv1.PermissionBinder, nam
 		}
 	}
 	return nil
-}
-
-// hasNetworkPolicyStatus checks if namespace has a status entry
-func hasNetworkPolicyStatus(permissionBinder *permissionv1.PermissionBinder, namespace string) bool {
-	return getNetworkPolicyStatus(permissionBinder, namespace) != nil
 }
 
 // isRetryableNetworkPolicyState reports whether a status entry in the given
@@ -64,9 +70,19 @@ func updateNetworkPolicyStatus(r ReconcilerInterface,
 ) error {
 	logger := log.FromContext(ctx)
 
-	// Bound the message stored in the CR (git errors can be long)
+	// Defense in depth: the CR status is readable by a wider audience than
+	// the logs. Callers pass sanitized errors, but e.g. detectGitProvider
+	// failures embed the raw repo URL, which may carry inline credentials.
+	errorMessage = sanitizeString(errorMessage, nil)
+
+	// Bound the message stored in the CR (git errors can be long), without
+	// splitting a multi-byte UTF-8 rune at the cut
 	if len(errorMessage) > maxStatusErrorMessageLength {
-		errorMessage = errorMessage[:maxStatusErrorMessageLength]
+		cut := maxStatusErrorMessageLength
+		for cut > 0 && !utf8.RuneStart(errorMessage[cut]) {
+			cut--
+		}
+		errorMessage = errorMessage[:cut]
 	}
 
 	// Retry logic to handle race conditions (max 3 attempts)
@@ -119,7 +135,7 @@ func updateNetworkPolicyStatus(r ReconcilerInterface,
 		}
 
 		// Success - update the passed-in permissionBinder to reflect changes
-		*permissionBinder = freshBinder
+		syncStatusFromFresh(permissionBinder, &freshBinder)
 
 		logger.V(1).Info("Updated NetworkPolicy status",
 			"namespace", namespace,
@@ -162,7 +178,7 @@ func clearNetworkPolicyStatusEntry(r ReconcilerInterface,
 		// leave it alone.
 		status := getNetworkPolicyStatus(&freshBinder, namespace)
 		if status == nil || !isRetryableNetworkPolicyState(status.State) {
-			*permissionBinder = freshBinder
+			syncStatusFromFresh(permissionBinder, &freshBinder)
 			return nil
 		}
 
@@ -185,7 +201,7 @@ func clearNetworkPolicyStatusEntry(r ReconcilerInterface,
 		}
 
 		// Success - update the passed-in permissionBinder to reflect changes
-		*permissionBinder = freshBinder
+		syncStatusFromFresh(permissionBinder, &freshBinder)
 
 		logger.V(1).Info("Cleared stale NetworkPolicy error status entry", "namespace", namespace)
 		return nil
@@ -260,7 +276,7 @@ func updateNetworkPolicyStatusWithPR(r ReconcilerInterface,
 		}
 
 		// Success - update the passed-in permissionBinder to reflect changes
-		*permissionBinder = freshBinder
+		syncStatusFromFresh(permissionBinder, &freshBinder)
 		return nil
 	}
 
@@ -359,7 +375,7 @@ func CleanupStatus(
 		}
 
 		// Success - update the passed-in permissionBinder to reflect changes
-		*permissionBinder = freshBinder
+		syncStatusFromFresh(permissionBinder, &freshBinder)
 		return nil
 	}
 

@@ -93,7 +93,7 @@ curl -s http://localhost:8080/metrics | grep 'permission_binder_networkpolicy_gi
 - ✅ Operator does not crash on Git operation failures
 - ✅ Error messages include context (operation type, namespace)
 - ✅ Git operation errors are logged with audit trail
-- ✅ Metrics track Git operation failures (if implemented)
+- ✅ Metrics track Git operation failures (`permission_binder_networkpolicy_git_operations_total{operation="clone",status="error"}`)
 - ✅ Operator continues processing other namespaces (if applicable)
 - ✅ RBAC reconciliation continues to work (graceful degradation)
 

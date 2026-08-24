@@ -26,6 +26,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,6 +156,42 @@ func TestUpdateNetworkPolicyStatus_TruncatesLongMessage(t *testing.T) {
 	persisted := getPersistedBinder(t, r)
 	require.Len(t, persisted.Status.NetworkPolicies, 1)
 	assert.Len(t, persisted.Status.NetworkPolicies[0].ErrorMessage, maxStatusErrorMessageLength)
+}
+
+// TestUpdateNetworkPolicyStatus_SanitizesMessage: the CR status is readable
+// by a wider audience than the logs, so inline URL credentials (e.g. from a
+// detectGitProvider error embedding the raw repo URL) must never land there.
+func TestUpdateNetworkPolicyStatus_SanitizesMessage(t *testing.T) {
+	binder := newStatusTestBinder()
+	r := setupStatusFakeClient(binder)
+
+	err := updateNetworkPolicyStatus(r, context.Background(), binder, "some-ns", "error",
+		"cannot auto-detect git provider from URL: https://x:ghp_supersecret@git.corp/a/b.git")
+	require.NoError(t, err)
+
+	persisted := getPersistedBinder(t, r)
+	require.Len(t, persisted.Status.NetworkPolicies, 1)
+	msg := persisted.Status.NetworkPolicies[0].ErrorMessage
+	assert.NotContains(t, msg, "ghp_supersecret")
+	assert.Contains(t, msg, "://[REDACTED]:[REDACTED]@git.corp")
+}
+
+// TestUpdateNetworkPolicyStatus_TruncationIsRuneSafe: the 1KiB cap must not
+// split a multi-byte UTF-8 rune (which would render as U+FFFD in consumers).
+func TestUpdateNetworkPolicyStatus_TruncationIsRuneSafe(t *testing.T) {
+	binder := newStatusTestBinder()
+	r := setupStatusFakeClient(binder)
+
+	// 2-byte rune spanning the 1024-byte boundary
+	msg := strings.Repeat("x", maxStatusErrorMessageLength-1) + "żZZZZ"
+	err := updateNetworkPolicyStatus(r, context.Background(), binder, "some-ns", "error", msg)
+	require.NoError(t, err)
+
+	persisted := getPersistedBinder(t, r)
+	require.Len(t, persisted.Status.NetworkPolicies, 1)
+	stored := persisted.Status.NetworkPolicies[0].ErrorMessage
+	assert.True(t, utf8.ValidString(stored), "truncated message must remain valid UTF-8")
+	assert.Len(t, stored, maxStatusErrorMessageLength-1, "the split rune must be dropped, not cut")
 }
 
 func TestIsRetryableNetworkPolicyState(t *testing.T) {

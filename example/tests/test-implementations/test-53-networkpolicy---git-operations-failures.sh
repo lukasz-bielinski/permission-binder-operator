@@ -131,8 +131,13 @@ if ! lsof -Pi :$METRICS_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
     sleep 3
 fi
 
-METRIC_VALUE=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_pr_creation_errors_total' | grep 'namespace="'$TEST_NAMESPACE'"' | awk '{print $2}' | head -1 || echo "0")
-GIT_METRIC_VALUE=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_git_operations_total' | grep 'status="error"' | awk '{print $2}' | head -1 || echo "0")
+# ${VAR:-0} defaults: when curl fails the pipeline still exits 0 (head's
+# status), so `|| echo 0` never fires and an empty value would spuriously pass
+# the != "0" check below
+METRIC_VALUE=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_pr_creation_errors_total' | grep 'namespace="'$TEST_NAMESPACE'"' | awk '{print $2}' | head -1)
+METRIC_VALUE=${METRIC_VALUE:-0}
+GIT_METRIC_VALUE=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_git_operations_total' | grep 'status="error"' | awk '{print $2}' | head -1)
+GIT_METRIC_VALUE=${GIT_METRIC_VALUE:-0}
 
 if [ "$METRIC_VALUE" != "0" ] || [ "$GIT_METRIC_VALUE" != "0" ]; then
     pass_test "Metrics captured Git failure (PR error: $METRIC_VALUE, git errors: $GIT_METRIC_VALUE)"

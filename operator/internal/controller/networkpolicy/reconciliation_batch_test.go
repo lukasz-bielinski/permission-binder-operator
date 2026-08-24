@@ -24,6 +24,7 @@ package networkpolicy
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -203,4 +204,6 @@ func TestProcessNetworkPoliciesForNamespaces_CloneFailureEndToEnd(t *testing.T) 
 	require.NotNil(t, entry, "clone failure must be recorded in status.networkPolicies")
 	assert.Equal(t, "error", entry.State)
 	assert.Contains(t, entry.ErrorMessage, "failed to clone repository")
+	assert.Equal(t, 1, strings.Count(entry.ErrorMessage, "failed to clone repository"),
+		"the clone error must not be double-prefixed by re-wrapping")
 }
