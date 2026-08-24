@@ -128,10 +128,20 @@ if ! load_ldif_ok "$SCHEMA_OUT" "$SCHEMA_RC"; then
     exit 1
 fi
 
-DATA_OUT=$(kubectl exec -i -n "$MOCK_NS" deploy/openldap -- \
-    ldapadd -x -H ldap://localhost:389 \
-    -D "$LDAP_ADMIN_DN" -w "$LDAP_ADMIN_PW" < "$MOCK_DIR/02b-init-data.ldif" 2>&1)
-DATA_RC=$?
+# Retry like the schema load above: slapd over ldap:// can still refuse
+# connections for a few seconds after the TCP probe passes (observed:
+# "Can't contact LDAP server (-1)" flake). Not kubectl_retry - it re-invokes
+# the command for its error check and only matches connection-refused-style
+# API server errors, the wrong failure mode here.
+DATA_OUT=""; DATA_RC=1
+for attempt in 1 2 3; do
+    DATA_OUT=$(kubectl exec -i -n "$MOCK_NS" deploy/openldap -- \
+        ldapadd -x -H ldap://localhost:389 \
+        -D "$LDAP_ADMIN_DN" -w "$LDAP_ADMIN_PW" < "$MOCK_DIR/02b-init-data.ldif" 2>&1)
+    DATA_RC=$?
+    load_ldif_ok "$DATA_OUT" "$DATA_RC" && break
+    e2e_sleep 5
+done
 if ! load_ldif_ok "$DATA_OUT" "$DATA_RC"; then
     fail_test "OU seed load failed: $DATA_OUT"
     exit 1
