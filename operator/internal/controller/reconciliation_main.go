@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -80,6 +81,11 @@ type PermissionBinderReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	DebugMode bool
+	// APIReader reads directly from the API server, bypassing the informer
+	// cache. Used to re-read objects after a Create returned AlreadyExists on
+	// a stale cached Get, and to re-fetch the CR on status-update conflicts.
+	// Optional: falls back to the (cached) Client when unset (unit tests).
+	APIReader client.Reader
 	// ReconcileNamespaces optionally restricts which PermissionBinder CRs this
 	// instance reconciles, by CR namespace (RECONCILE_NAMESPACES env,
 	// comma-separated). Empty = reconcile CRs from all namespaces (default).
@@ -87,6 +93,15 @@ type PermissionBinderReconciler struct {
 	// created target namespaces stay visible - this is the knob that makes
 	// MANAGED_BY_VALUE safe in multi-instance deployments.
 	ReconcileNamespaces []string
+}
+
+// uncachedReader returns the direct API reader when configured, falling back
+// to the regular (cached) client otherwise.
+func (r *PermissionBinderReconciler) uncachedReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
 }
 
 // reconcilesNamespace reports whether this instance reconciles PermissionBinder
@@ -395,15 +410,17 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		newRoleMappingHash = currentHash
 	}
 
-	// Partial ServiceAccount processing must never be stamped into status:
-	// with LastProcessedConfigMapVersion set, the skip guard would pin the
-	// partial result permanently (an unchanged ConfigMap fires no further
-	// events to retry the missing pieces). Keep the previous ConfigMap
-	// version, role-mapping hash and ServiceAccount list (this pass's list is
-	// incomplete), but still publish RoleBindings and a Processed=False
-	// condition so the CR stays observable under persistent failures. The
-	// error return at the end requeues the reconcile with backoff.
-	if result.ServiceAccountsError != nil {
+	// An incomplete pass (dropped whitelist entries or failed ServiceAccounts)
+	// must never be stamped into status: with LastProcessedConfigMapVersion
+	// set, the skip guard would pin the partial result permanently (an
+	// unchanged ConfigMap fires no further events to retry the dropped
+	// pieces). Keep the previous ConfigMap version, role-mapping hash and
+	// resource lists (this pass's lists are lower bounds, publishing them
+	// would shrink a previously-complete status), but still publish a
+	// Processed=False condition so the CR stays observable under persistent
+	// failures. The error return at the end requeues the reconcile.
+	if result.IncompleteError != nil {
+		newProcessedRoleBindings = permissionBinder.Status.ProcessedRoleBindings
 		newProcessedServiceAccounts = permissionBinder.Status.ProcessedServiceAccounts
 		newConfigMapVersion = permissionBinder.Status.LastProcessedConfigMapVersion
 		newRoleMappingHash = permissionBinder.Status.LastProcessedRoleMappingHash
@@ -437,10 +454,10 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	conditionStatus := metav1.ConditionTrue
 	conditionReason := "ConfigMapProcessed"
 	conditionMessage := fmt.Sprintf("Successfully processed %d role bindings and %d service accounts", len(newProcessedRoleBindings), len(newProcessedServiceAccounts))
-	if result.ServiceAccountsError != nil {
+	if result.IncompleteError != nil {
 		conditionStatus = metav1.ConditionFalse
-		conditionReason = "ServiceAccountProcessingIncomplete"
-		conditionMessage = fmt.Sprintf("Processed %d role bindings; ServiceAccount processing incomplete (retrying): %v", len(newProcessedRoleBindings), result.ServiceAccountsError)
+		conditionReason = "ProcessingIncomplete"
+		conditionMessage = fmt.Sprintf("Reconciliation incomplete (retrying): %v", result.IncompleteError)
 	}
 	existingCondition := findCondition(permissionBinder.Status.Conditions, "Processed")
 	if existingCondition == nil || existingCondition.Status != conditionStatus || existingCondition.Message != conditionMessage ||
@@ -484,7 +501,22 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			},
 		}
 
-		if err := r.Status().Update(ctx, &permissionBinder); err != nil {
+		// Retry conflicts in place with an uncached re-fetch: a failed/retried
+		// status write is the pass-1 trigger of the stale-cache wedge (the
+		// priority queue retries within milliseconds, before informers catch
+		// up), so resolving the conflict here avoids a whole extra pass.
+		desiredStatus := permissionBinder.Status
+		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			updateErr := r.Status().Update(ctx, &permissionBinder)
+			if updateErr != nil && errors.IsConflict(updateErr) {
+				var fresh permissionv1.PermissionBinder
+				if getErr := r.uncachedReader().Get(ctx, req.NamespacedName, &fresh); getErr == nil {
+					fresh.Status = desiredStatus
+					permissionBinder = fresh
+				}
+			}
+			return updateErr
+		}); err != nil {
 			logger.Error(err, "Failed to update PermissionBinder status")
 			return ctrl.Result{}, err
 		}
@@ -504,13 +536,13 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		// Don't fail reconciliation on metrics error
 	}
 
-	// Requeue on partial ServiceAccount processing: the ConfigMap version was
-	// deliberately not stamped above, so the retry reprocesses it and
-	// completes the missing pieces.
-	if result.ServiceAccountsError != nil {
-		logger.Error(result.ServiceAccountsError,
-			"ServiceAccount processing incomplete - partial status published without ConfigMap version stamp, requeuing")
-		return ctrl.Result{}, result.ServiceAccountsError
+	// Requeue on an incomplete pass: the ConfigMap version was deliberately
+	// not stamped above, so the retry reprocesses it and completes the
+	// dropped pieces.
+	if result.IncompleteError != nil {
+		logger.Error(result.IncompleteError,
+			"Reconciliation incomplete - status published without ConfigMap version stamp, requeuing")
+		return ctrl.Result{}, result.IncompleteError
 	}
 
 	logger.Info("Successfully processed ConfigMap",

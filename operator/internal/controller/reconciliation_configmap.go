@@ -34,12 +34,20 @@ import (
 type ProcessConfigMapResult struct {
 	ProcessedRoleBindings    []string
 	ProcessedServiceAccounts []string
-	// ServiceAccountsError carries the first per-namespace ServiceAccount
-	// processing failure. The reconciler must NOT stamp
+	// IncompleteError carries the first entry-level failure from ANY of the
+	// three processing loops (ensureNamespace, createRoleBinding,
+	// ProcessServiceAccounts). The reconciler must NOT stamp
 	// LastProcessedConfigMapVersion when it is set: the skip guard would pin
 	// the partial result permanently, because an unchanged ConfigMap never
-	// fires another event to retry the missing pieces.
-	ServiceAccountsError error
+	// fires another event to retry the dropped entries.
+	IncompleteError error
+}
+
+// recordIncomplete keeps the first entry-level failure of the pass.
+func (result *ProcessConfigMapResult) recordIncomplete(err error) {
+	if result.IncompleteError == nil {
+		result.IncompleteError = err
+	}
 }
 
 // processConfigMap processes the ConfigMap data and creates RoleBindings
@@ -105,7 +113,8 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 
 		// Ensure namespace exists
 		if err := r.ensureNamespace(ctx, namespace, permissionBinder); err != nil {
-			logger.Error(err, "Failed to ensure namespace exists", "namespace", namespace)
+			logger.Error(err, "Failed to ensure namespace exists, entry will be retried", "namespace", namespace)
+			result.recordIncomplete(fmt.Errorf("namespace %s: %w", namespace, err))
 			continue
 		}
 
@@ -114,7 +123,8 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 		roleBindingName := fmt.Sprintf("%s-%s", namespace, role)
 		managed, err := r.createRoleBinding(ctx, namespace, roleBindingName, role, cnValue, permissionBinder.Spec.RoleMapping[role], permissionBinder)
 		if err != nil {
-			logger.Error(err, "Failed to create RoleBinding", "namespace", namespace, "role", role)
+			logger.Error(err, "Failed to create RoleBinding, entry will be retried", "namespace", namespace, "role", role)
+			result.recordIncomplete(fmt.Errorf("rolebinding %s/%s: %w", namespace, roleBindingName, err))
 			continue
 		}
 		if !managed {
@@ -176,9 +186,7 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 				// pinning a partial status.
 				logger.Error(err, "⚠️  ServiceAccount creation failed, reconciliation will be retried",
 					"namespace", namespace)
-				if result.ServiceAccountsError == nil {
-					result.ServiceAccountsError = fmt.Errorf("namespace %s: %w", namespace, err)
-				}
+				result.recordIncomplete(fmt.Errorf("serviceaccounts in namespace %s: %w", namespace, err))
 			} else {
 				allProcessedSAs = append(allProcessedSAs, processedSAs...)
 				logger.Info("✅ ServiceAccounts processed successfully",

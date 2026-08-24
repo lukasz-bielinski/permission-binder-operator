@@ -294,6 +294,7 @@ func main() {
 	if err = (&controller.PermissionBinderReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
+		APIReader:           mgr.GetAPIReader(),
 		DebugMode:           debugMode,
 		ReconcileNamespaces: reconcileNamespaces,
 	}).SetupWithManager(mgr); err != nil {
