@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-24
+
+### 🚀 Highlights
+- **Controller-Runtime v0.24.1 + Kubernetes v0.36 stack** (#28, #51 — fixes #31): `sigs.k8s.io/controller-runtime` upgraded v0.19.0 → v0.23.3 → v0.24.1 with the k8s.io api/apimachinery/client-go stack at v0.36.4; envtest now runs against apiserver **1.36.2**. The long-standing v0.19 pin is gone and Dependabot no longer ignores controller-runtime updates.
+- **Scheme builder modernized** (#28): API group registration migrated from the deprecated controller-runtime `pkg/scheme` to `runtime.NewSchemeBuilder` (k8s.io/apimachinery) — semantically equivalent, verified; `zz_generated.deepcopy.go` regenerated with pinned controller-gen v0.17.0.
+- **Toolchain**: go directive 1.26; Docker builds on **golang 1.27** (#48); GitHub Actions bumped (#50).
+- **Production dependency refresh** (#52): go-ldap 3.4.14, ginkgo 2.32.1, prometheus client_golang 1.24.1, testify 1.12.1, zap 1.28.0.
+- **LDAPS mock e2e test 61** (#47): `createLdapGroups` exercised end-to-end against a mock LDAPS server with **verified TLS** (custom CA + SAN hostname checks) — closes the e2e half of #30.
+
+### ⚙️ Behavior Changes (operational, not correctness)
+- Priority-queue workqueue is now the controller-runtime default (cr v0.23): initial informer list-sync events enqueue at low priority relative to live changes; ordering is FIFO only within a priority band; the `workqueue_depth` metric gains a `priority` label (check dashboards/alerts).
+- Client-side rate limiter removed from controller-runtime defaults (cr v0.21): the implicit QPS 20 / Burst 30 throttle is gone — bulk write loops (Namespace/RoleBinding/ServiceAccount) burst at full speed and rely on server-side API Priority & Fairness. Set QPS/Burst on `rest.Config` if the old profile matters in your environment.
+- go-ldap 3.4.14 is stricter per RFC 4514: unescaped special characters in DN values are now rejected (escaped forms unaffected). Operator paths verified not exposed (request DNs go raw to the server; `ParseDN` is only reached via unused `Entry.Unmarshal` fields).
+
+### 🧪 Testing & Verification
+- Unit + envtest (apiserver 1.36.2): **580 pass / 0 fail / 3 skip** — identical to the pre-upgrade baseline; `go vet` / `go mod tidy -diff` clean; `make manifests generate` zero drift.
+- Isolated 62-test parallel e2e suite on a live cluster against the release head — first run with NetworkPolicy git credentials in place (tests 44–60 assert against real PRs).
+
+### 📝 Documentation
+- Fixed stale `cluster-admin` requirement in the README Production Deployment section — requirements now match the scoped `operator-manager-role` shipped in v1.7.0.
+
+### 🐞 Known Issues
+- Latent `ConnectLdap` bug: a plain `ldap://host:port` value in `domain_server` is mangled during URL handling. Not hit in practice (`ldaps://` is the documented convention); tracked for a future fix.
+
+### 📦 Upgrade Notes
+- Drop-in image upgrade: no API, manifest, RBAC, or config changes.
+- Dashboards/alerts built on `workqueue_depth` must account for the new `priority` label.
+- Large-scale deployments (ConfigMaps spanning many namespaces): consider setting client QPS/Burst explicitly — see Behavior Changes above.
+
 ## [1.7.0] - 2026-08-22
 
 ### 🚀 Highlights
