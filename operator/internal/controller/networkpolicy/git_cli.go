@@ -68,12 +68,12 @@ func cloneGitRepo(ctx context.Context, repoURL string, credentials *gitCredentia
 	_, err = git.PlainCloneContext(ctx, tmpDir, false, cloneOptions)
 	if err != nil {
 		os.RemoveAll(tmpDir)
-		networkPolicyGitOperationsTotal.WithLabelValues("clone", "error").Inc()
+		NetworkPolicyGitOperationsTotal.WithLabelValues("clone", "error").Inc()
 		// Sanitize error to prevent token leakage
 		return "", fmt.Errorf("failed to clone repository: %w", sanitizeError(err, credentials))
 	}
 
-	networkPolicyGitOperationsTotal.WithLabelValues("clone", "success").Inc()
+	NetworkPolicyGitOperationsTotal.WithLabelValues("clone", "success").Inc()
 	return tmpDir, nil
 }
 
@@ -284,12 +284,12 @@ func gitCommitAndPush(ctx context.Context, repoDir string, branchName string, co
 
 	// Push
 	if err := repo.PushContext(ctx, pushOptions); err != nil {
-		networkPolicyGitOperationsTotal.WithLabelValues("push", "error").Inc()
+		NetworkPolicyGitOperationsTotal.WithLabelValues("push", "error").Inc()
 		// Sanitize error to prevent token leakage
 		return fmt.Errorf("failed to push: %w", sanitizeError(err, credentials))
 	}
 
-	networkPolicyGitOperationsTotal.WithLabelValues("push", "success").Inc()
+	NetworkPolicyGitOperationsTotal.WithLabelValues("push", "success").Inc()
 	logger.Info("Pushed changes to remote", "branch", branchName)
 	return nil
 }
