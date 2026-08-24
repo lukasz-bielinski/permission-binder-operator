@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strconv"
 	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -63,6 +64,36 @@ func parseWatchNamespaces(value string) []string {
 		}
 	}
 	return namespaces
+}
+
+// envFloat32 reads a float32 from the environment, falling back to def when
+// the variable is unset or unparsable (a warning is logged for the latter).
+func envFloat32(name string, def float32) float32 {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return def
+	}
+	parsed, err := strconv.ParseFloat(value, 32)
+	if err != nil {
+		setupLog.Info("Ignoring unparsable environment variable", "name", name, "value", value, "default", def)
+		return def
+	}
+	return float32(parsed)
+}
+
+// envInt reads an int from the environment, falling back to def when the
+// variable is unset or unparsable (a warning is logged for the latter).
+func envInt(name string, def int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return def
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		setupLog.Info("Ignoring unparsable environment variable", "name", name, "value", value, "default", def)
+		return def
+	}
+	return parsed
 }
 
 func init() {
@@ -201,7 +232,18 @@ func main() {
 		setupLog.Info("WATCH_NAMESPACE not set - watching all namespaces")
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), managerOptions)
+	// controller-runtime v0.21 stopped installing a default client-side rate
+	// limiter (was QPS 20 / Burst 30 up to v0.20). Restore that known-good
+	// profile by default so bulk RoleBinding/ServiceAccount writes do not burst
+	// unthrottled against small API servers; override via CLIENT_QPS /
+	// CLIENT_BURST (CLIENT_QPS=-1 disables client-side limiting entirely,
+	// 0 falls back to the client-go default of 5/10).
+	restConfig := ctrl.GetConfigOrDie()
+	restConfig.QPS = envFloat32("CLIENT_QPS", 20)
+	restConfig.Burst = envInt("CLIENT_BURST", 30)
+	setupLog.Info("Client-side rate limiter configured", "qps", restConfig.QPS, "burst", restConfig.Burst)
+
+	mgr, err := ctrl.NewManager(restConfig, managerOptions)
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
 		os.Exit(1)
@@ -252,6 +294,7 @@ func main() {
 	if err = (&controller.PermissionBinderReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
+		APIReader:           mgr.GetAPIReader(),
 		DebugMode:           debugMode,
 		ReconcileNamespaces: reconcileNamespaces,
 	}).SetupWithManager(mgr); err != nil {

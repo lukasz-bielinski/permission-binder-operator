@@ -55,13 +55,28 @@ func (r *PermissionBinderReconciler) ensureNamespace(ctx context.Context, namesp
 					},
 				},
 			}
-			if err := r.Create(ctx, &ns); err != nil {
-				return fmt.Errorf("failed to create namespace %s: %w", namespace, err)
+			createErr := r.Create(ctx, &ns)
+			if createErr == nil {
+				return nil
+			}
+			if !errors.IsAlreadyExists(createErr) {
+				return fmt.Errorf("failed to create namespace %s: %w", namespace, createErr)
+			}
+			// AlreadyExists = the cached Get above was stale (informer lag):
+			// the namespace is present server-side. Re-read it uncached and
+			// fall through to the ownership/annotation path below - dropping
+			// the entry here would exclude its RoleBinding and ServiceAccounts
+			// from the whole pass.
+			logger.Info("Namespace already exists (stale cache read), re-reading uncached",
+				"namespace", namespace)
+			if err := r.uncachedReader().Get(ctx, types.NamespacedName{Name: namespace}, &ns); err != nil {
+				return fmt.Errorf("failed to re-read namespace %s after AlreadyExists: %w", namespace, err)
 			}
 		} else {
 			return fmt.Errorf("failed to get namespace %s: %w", namespace, err)
 		}
-	} else {
+	}
+	{
 		// OWNERSHIP GATE (issue #43): never take over a namespace with a live
 		// claim by another PermissionBinder. Unclaimed, own, legacy name-only
 		// and explicitly orphaned namespaces remain adoptable.
@@ -215,13 +230,28 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Create new RoleBinding
-			if err := r.Create(ctx, roleBinding); err != nil {
-				return false, fmt.Errorf("failed to create RoleBinding %s/%s: %w", namespace, name, err)
+			createErr := r.Create(ctx, roleBinding)
+			if createErr == nil {
+				return true, nil
+			}
+			if !errors.IsAlreadyExists(createErr) {
+				return false, fmt.Errorf("failed to create RoleBinding %s/%s: %w", namespace, name, createErr)
+			}
+			// AlreadyExists = the cached Get above was stale (informer lag):
+			// the RoleBinding is present server-side. Re-read it uncached and
+			// fall through to the ownership/update path below - dropping the
+			// entry here would exclude it from processedRoleBindings and
+			// suppress the namespace's ServiceAccounts for the whole pass.
+			logger.Info("RoleBinding already exists (stale cache read), re-reading uncached",
+				"namespace", namespace, "roleBinding", name)
+			if err := r.uncachedReader().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &existing); err != nil {
+				return false, fmt.Errorf("failed to re-read RoleBinding %s/%s after AlreadyExists: %w", namespace, name, err)
 			}
 		} else {
 			return false, fmt.Errorf("failed to get RoleBinding %s/%s: %w", namespace, name, err)
 		}
-	} else {
+	}
+	{
 		// OWNERSHIP GATE (issue #43): never overwrite a RoleBinding with a live
 		// claim by another PermissionBinder (steal-then-delete prevention).
 		// Gate is annotation-based ONLY - spec drift on an OWNED RoleBinding is

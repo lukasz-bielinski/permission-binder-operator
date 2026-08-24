@@ -102,18 +102,27 @@ func ProcessServiceAccounts(
 				}
 
 				if err := k8sClient.Create(ctx, newSA); err != nil {
-					logger.Error(err, "Failed to create ServiceAccount",
+					// AlreadyExists means the cached Get above was stale (informer
+					// lag) - the ServiceAccount is present server-side, which is
+					// all this step guarantees. Treat as the idempotent
+					// already-exists case instead of aborting the namespace.
+					if !errors.IsAlreadyExists(err) {
+						logger.Error(err, "Failed to create ServiceAccount",
+							"name", fullSAName,
+							"namespace", namespace)
+						return processedSAs, err
+					}
+					logger.Info("ServiceAccount already exists (stale cache read), continuing",
 						"name", fullSAName,
 						"namespace", namespace)
-					return processedSAs, err
+				} else {
+					logger.Info("ServiceAccount created successfully",
+						"name", fullSAName,
+						"namespace", namespace)
+
+					// Increment metric
+					serviceAccountsCreated.WithLabelValues(namespace, saName).Inc()
 				}
-
-				logger.Info("ServiceAccount created successfully",
-					"name", fullSAName,
-					"namespace", namespace)
-
-				// Increment metric
-				serviceAccountsCreated.WithLabelValues(namespace, saName).Inc()
 			} else {
 				logger.Error(err, "Failed to get ServiceAccount",
 					"name", fullSAName,
@@ -190,18 +199,29 @@ func ProcessServiceAccounts(
 				}
 
 				if err := k8sClient.Create(ctx, newRB); err != nil {
-					logger.Error(err, "Failed to create RoleBinding for ServiceAccount",
+					// AlreadyExists = stale cached Get (informer lag); the
+					// RoleBinding is present server-side. Almost always it is our
+					// own object from a previous reconcile pass - the next pass
+					// takes the exists-branch and applies the full ownership
+					// gate, so a foreign claim is still refused there.
+					if !errors.IsAlreadyExists(err) {
+						logger.Error(err, "Failed to create RoleBinding for ServiceAccount",
+							"roleBinding", roleBindingName,
+							"serviceAccount", fullSAName,
+							"namespace", namespace)
+						return processedSAs, err
+					}
+					logger.Info("RoleBinding for ServiceAccount already exists (stale cache read), continuing",
 						"roleBinding", roleBindingName,
 						"serviceAccount", fullSAName,
 						"namespace", namespace)
-					return processedSAs, err
+				} else {
+					logger.Info("RoleBinding created successfully for ServiceAccount",
+						"roleBinding", roleBindingName,
+						"serviceAccount", fullSAName,
+						"role", roleName,
+						"namespace", namespace)
 				}
-
-				logger.Info("RoleBinding created successfully for ServiceAccount",
-					"roleBinding", roleBindingName,
-					"serviceAccount", fullSAName,
-					"role", roleName,
-					"namespace", namespace)
 
 				// Metrics are updated in controller after processing all namespaces
 			} else {
