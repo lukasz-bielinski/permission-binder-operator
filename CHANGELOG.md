@@ -15,26 +15,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Toolchain**: go directive 1.26; Docker builds on **golang 1.27** (#48); GitHub Actions bumped (#50).
 - **Production dependency refresh** (#52): go-ldap 3.4.14, ginkgo 2.32.1, prometheus client_golang 1.24.1, testify 1.12.1, zap 1.28.0.
 - **LDAPS mock e2e test 61** (#47): `createLdapGroups` exercised end-to-end against a mock LDAPS server with **verified TLS** (custom CA + SAN hostname checks) — closes the e2e half of #30.
+- **Status-poison wedge fixed** (#53): a transient API error during reconciliation could permanently wedge a CR with empty/partial status — the skip guard pinned `LastProcessedConfigMapVersion` over an incomplete pass, and an unchanged ConfigMap never fires another event to retry (exposed by the cr-0.24 stack, reproduced against a real manager, latent on all versions). Fixed on three fronts: stale-cache `AlreadyExists` on Namespace/RoleBinding/ServiceAccount creates falls through to the ownership/update path via an uncached `APIReader` read; an incomplete pass never stamps the ConfigMap version, keeps the previous status lists and requeues with backoff, publishing a `Processed=False`/`ProcessingIncomplete` condition; the status write retries conflicts in place. Manager-driven regression tests included (real manager + cached client + priority queue with the reproduced failure injection). Validated live: 13/14 targeted e2e scenarios green (the one failure is the pre-existing, unrelated #55).
 
 ### ⚙️ Behavior Changes (operational, not correctness)
+- **Client-side rate limiter restored** (#53): controller-runtime v0.21 removed the default QPS 20 / Burst 30 throttle; this release deliberately restores it as the operator default (the unthrottled burst profile widened the wedge window above and hardens small API servers). Override via `CLIENT_QPS` / `CLIENT_BURST` env vars (`-1` disables, `0` = client-go default 5/10).
 - Priority-queue workqueue is now the controller-runtime default (cr v0.23): initial informer list-sync events enqueue at low priority relative to live changes; ordering is FIFO only within a priority band; the `workqueue_depth` metric gains a `priority` label (check dashboards/alerts).
-- Client-side rate limiter removed from controller-runtime defaults (cr v0.21): the implicit QPS 20 / Burst 30 throttle is gone — bulk write loops (Namespace/RoleBinding/ServiceAccount) burst at full speed and rely on server-side API Priority & Fairness. Set QPS/Burst on `rest.Config` if the old profile matters in your environment.
+- **New `Processed=False` condition on incomplete passes** (#53): transient reconciliation failures now surface as reason `ProcessingIncomplete` with the error in the message (previous releases reported success with partial data). Consumers matching on condition type + `observedGeneration` are unaffected.
 - go-ldap 3.4.14 is stricter per RFC 4514: unescaped special characters in DN values are now rejected (escaped forms unaffected). Operator paths verified not exposed (request DNs go raw to the server; `ParseDN` is only reached via unused `Entry.Unmarshal` fields).
 
 ### 🧪 Testing & Verification
-- Unit + envtest (apiserver 1.36.2): **580 pass / 0 fail / 3 skip** — identical to the pre-upgrade baseline; `go vet` / `go mod tidy -diff` clean; `make manifests generate` zero drift.
-- Isolated 62-test parallel e2e suite on a live cluster against the release head — first run with NetworkPolicy git credentials in place (tests 44–60 assert against real PRs).
+- Unit + envtest (apiserver 1.36.2): full suite green including new manager-driven regression tests; `go vet` / `go mod tidy -diff` clean; `make manifests generate` zero drift.
+- Isolated 62-test parallel e2e suite on a live cluster — first run with NetworkPolicy git credentials in place (tests 44–60 assert against real PRs). This run caught the #53 wedge; targeted revalidation of the fix image passed 13/14 (see #55 for the remaining item).
 
 ### 📝 Documentation
 - Fixed stale `cluster-admin` requirement in the README Production Deployment section — requirements now match the scoped `operator-manager-role` shipped in v1.7.0.
 
 ### 🐞 Known Issues
+- NetworkPolicy git failures are logged and counted in metrics but never reach `status.networkPolicies` — the error-status write path is dead code with a pointer bug, and the fix needs a retry-filter semantics change (#54). Not a regression; first exposed by the first credentialed NP e2e run.
 - Latent `ConnectLdap` bug: a plain `ldap://host:port` value in `domain_server` is mangled during URL handling. Not hit in practice (`ldaps://` is the documented convention); tracked for a future fix.
 
 ### 📦 Upgrade Notes
 - Drop-in image upgrade: no API, manifest, RBAC, or config changes.
 - Dashboards/alerts built on `workqueue_depth` must account for the new `priority` label.
-- Large-scale deployments (ConfigMaps spanning many namespaces): consider setting client QPS/Burst explicitly — see Behavior Changes above.
+- The restored client rate limiter brings the load profile back to v1.7.0 behavior; raise `CLIENT_QPS`/`CLIENT_BURST` if reconcile throughput matters more than API-server smoothing.
+- A CR wedged by a pre-1.8.0 operator (empty `status.processedServiceAccounts`/`processedRoleBindings` that never heals) recovers on any ConfigMap change (resourceVersion bump) or on upgrading to this release.
 
 ## [1.7.0] - 2026-08-22
 
