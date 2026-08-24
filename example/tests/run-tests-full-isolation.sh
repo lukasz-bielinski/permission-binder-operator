@@ -239,6 +239,38 @@ else
 fi
 echo "" | tee -a $RESULTS_LOG
 
+# INSTANCE-mode preflight: refuse to run beside a leftover LEGACY operator.
+# An instance-rendered operator always carries the RECONCILE_NAMESPACES env
+# (injected by render_instance_manifests above); the committed manifest has it
+# commented out, so a controller-manager Deployment WITHOUT that env watches
+# the whole cluster. Such a leftover (typically the last pool-C test of a
+# previous run - per-test cleanup runs BEFORE each test) races this instance's
+# operator for resource ownership (first-owner-wins): resources get the
+# default managed-by label and the instance-scoped counts silently read 0.
+# Escape hatch: E2E_ALLOW_LEGACY=1 proceeds anyway (logged as a warning).
+if [ -n "${INSTANCE:-}" ]; then
+    LEGACY_OPERATORS=$(kubectl get deploy -A -l control-plane=controller-manager -o json 2>/dev/null \
+        | jq -r --arg ns "$NAMESPACE" '.items[]
+            | select(.metadata.namespace != $ns)
+            | select(([.spec.template.spec.containers[0].env[]?.name] | index("RECONCILE_NAMESPACES")) | not)
+            | .metadata.namespace + "/" + .metadata.name')
+    if [ -n "$LEGACY_OPERATORS" ]; then
+        if [ "${E2E_ALLOW_LEGACY:-0}" = "1" ]; then
+            echo -e "${YELLOW}⚠️  E2E_ALLOW_LEGACY=1: proceeding despite legacy (cluster-wide) operator(s):${NC}" | tee -a $RESULTS_LOG
+            echo "$LEGACY_OPERATORS" | sed 's/^/   ⚠️  /' | tee -a $RESULTS_LOG
+        else
+            echo -e "${RED}❌ PREFLIGHT: legacy (cluster-wide) operator(s) detected outside $NAMESPACE:${NC}" | tee -a $RESULTS_LOG
+            echo "$LEGACY_OPERATORS" | sed 's/^/   ❌ /' | tee -a $RESULTS_LOG
+            echo "   A cluster-wide operator races this instance's operator for resource" | tee -a $RESULTS_LOG
+            echo "   ownership (first-owner-wins) and silently corrupts instance-scoped" | tee -a $RESULTS_LOG
+            echo "   assertions. Clean it up first:" | tee -a $RESULTS_LOG
+            echo "       ./cleanup-operator.sh   # legacy mode (no INSTANCE env)" | tee -a $RESULTS_LOG
+            echo "   or set E2E_ALLOW_LEGACY=1 to proceed anyway." | tee -a $RESULTS_LOG
+            exit 1
+        fi
+    fi
+fi
+
 # Pre-load test names
 for test_id in "${TEST_LIST[@]}"; do
     test_names[$test_id]=$(get_test_name $test_id)

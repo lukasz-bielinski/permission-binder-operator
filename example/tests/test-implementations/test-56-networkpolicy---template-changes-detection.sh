@@ -35,7 +35,7 @@ UPDATED_TEMPLATE_SHA=""
 cleanup_resources() {
     if [ -n "$UPDATED_TEMPLATE_SHA" ] && [ -n "$ORIGINAL_TEMPLATE_BASE64" ]; then
         info_log "Reverting template file to original content"
-        gh api repos/"$GITHUB_REPO"/contents/"$TEMPLATE_PATH" \
+        np_gh api repos/"$GITHUB_REPO"/contents/"$TEMPLATE_PATH" \
             -X PUT \
             -f message="Test 56: revert template update" \
             -f sha="$UPDATED_TEMPLATE_SHA" \
@@ -124,7 +124,7 @@ fi
 pass_test "Initial PR created (number: $INITIAL_PR)"
 
 # Merge initial PR to simulate steady state
-if ! gh pr merge "$INITIAL_PR" --repo "$GITHUB_REPO" --merge --admin >/dev/null 2>&1; then
+if ! np_gh pr merge "$INITIAL_PR" --repo "$GITHUB_REPO" --merge --admin >/dev/null 2>&1; then
     info_log "⚠️  Failed to merge initial PR automatically (may already be merged or checks failing)"
 fi
 
@@ -135,7 +135,7 @@ wait_for_pr_state "$BINDER_NAME" "$TEST_NAMESPACE" "pr-merged" 120 >/dev/null 2>
 # 4. Modify template file to trigger template change detection
 # ----------------------------------------------------------------------------
 info_log "Fetching current template content"
-TEMPLATE_JSON=$(gh api repos/"$GITHUB_REPO"/contents/"$TEMPLATE_PATH" 2>/dev/null)
+TEMPLATE_JSON=$(np_gh api repos/"$GITHUB_REPO"/contents/"$TEMPLATE_PATH" 2>/dev/null)
 if [ -z "$TEMPLATE_JSON" ]; then
     fail_test "Failed to fetch template content from GitHub"
     exit 1
@@ -153,7 +153,7 @@ echo "# Test 56 template update at $TIMESTAMP" >> "$TMP_TEMPLATE"
 
 UPDATED_TEMPLATE_BASE64=$(base64 < "$TMP_TEMPLATE" | tr -d '\n')
 info_log "Updating template in GitHub to simulate change"
-UPDATE_RESPONSE=$(gh api repos/"$GITHUB_REPO"/contents/"$TEMPLATE_PATH" \
+UPDATE_RESPONSE=$(np_gh api repos/"$GITHUB_REPO"/contents/"$TEMPLATE_PATH" \
     -X PUT \
     -f message="Test 56: template update" \
     -f sha="$ORIGINAL_TEMPLATE_SHA" \

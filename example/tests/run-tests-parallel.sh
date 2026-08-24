@@ -171,6 +171,22 @@ else
 fi
 log ""
 
+# Pre-parallel legacy sweep (issue #55): per-test cleanup runs BEFORE each
+# test, so the LAST pool-C test of a previous run leaves its cluster-wide
+# operator running. That leftover races this run's instance operators for
+# ownership (first-owner-wins -> resources get the default managed-by label
+# and the instance-scoped counts read 0). Sweep it in LEGACY mode (no
+# INSTANCE / TEST_NS_PREFIX env -> cleanup defaults to the
+# permissions-binder-operator namespace + the unanchored regex namespace
+# sweep) - safe here because no slots are running yet.
+log "🧹 Pre-parallel sweep: removing legacy (non-instance) operator leftovers..."
+if "$SCRIPT_DIR/cleanup-operator.sh" >>"/tmp/e2e-parallel-${SUITE_ID}-legacy-sweep.log" 2>&1; then
+    log "   ✅ Legacy leftovers swept"
+else
+    log "   ⚠️  Legacy sweep had warnings (/tmp/e2e-parallel-${SUITE_ID}-legacy-sweep.log)"
+fi
+log ""
+
 # ---------------------------------------------------------------------------
 # Shard pools A (+solo heavy) and B across N slots in round-robin order.
 # ---------------------------------------------------------------------------

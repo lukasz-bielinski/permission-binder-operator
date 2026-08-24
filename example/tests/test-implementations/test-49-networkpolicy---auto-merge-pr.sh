@@ -136,7 +136,7 @@ IFS='|' read -r pr_num pr_url pr_branch pr_state <<< "$(parse_pr_details "$pr_de
 # Ensure auto-merge label exists (GH API doesn't attach labels on PR creation)
 if command -v gh &> /dev/null; then
     info_log "Ensuring auto-merge label is attached to PR $pr_number"
-    if ! gh pr edit "$pr_number" --repo "$GITHUB_REPO" --add-label "auto-merge" >/dev/null 2>&1; then
+    if ! np_gh pr edit "$pr_number" --repo "$GITHUB_REPO" --add-label "auto-merge" >/dev/null 2>&1; then
         info_log "⚠️  Could not add auto-merge label via gh CLI (may require manual check)"
     fi
 else
@@ -208,7 +208,7 @@ if [ $? -eq 0 ] && [ -n "$pr_json" ]; then
         if command -v gh &> /dev/null; then
             # Check if file exists in main branch
             file_path="networkpolicies/DEV-cluster/$TEST_NAMESPACE/$TEST_NAMESPACE-deny-all-ingress.yaml"
-            if gh api repos/"$GITHUB_REPO"/contents/"$file_path" --jq '.name' 2>/dev/null | grep -q "deny-all-ingress.yaml"; then
+            if np_gh api repos/"$GITHUB_REPO"/contents/"$file_path" --jq '.name' 2>/dev/null | grep -q "deny-all-ingress.yaml"; then
                 pass_test "NetworkPolicy file exists in main branch after merge"
             else
                 info_log "⚠️  NetworkPolicy file not found in main branch (may need more time for merge to complete)"

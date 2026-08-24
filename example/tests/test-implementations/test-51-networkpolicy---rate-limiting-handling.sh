@@ -73,7 +73,7 @@ fi
 # Check current GitHub API rate limit status
 info_log "Checking GitHub API rate limit status..."
 if command -v gh &> /dev/null; then
-    RATE_LIMIT=$(gh api rate_limit --jq '.rate.remaining' 2>/dev/null || echo "unknown")
+    RATE_LIMIT=$(np_gh api rate_limit --jq '.rate.remaining' 2>/dev/null || echo "unknown")
     info_log "GitHub API rate limit remaining: $RATE_LIMIT"
 fi
 
