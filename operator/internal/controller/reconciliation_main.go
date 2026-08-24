@@ -443,7 +443,11 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		conditionMessage = fmt.Sprintf("Processed %d role bindings; ServiceAccount processing incomplete (retrying): %v", len(newProcessedRoleBindings), result.ServiceAccountsError)
 	}
 	existingCondition := findCondition(permissionBinder.Status.Conditions, "Processed")
-	if existingCondition == nil || existingCondition.Status != conditionStatus || existingCondition.Message != conditionMessage {
+	if existingCondition == nil || existingCondition.Status != conditionStatus || existingCondition.Message != conditionMessage ||
+		existingCondition.ObservedGeneration != permissionBinder.Generation {
+		// ObservedGeneration is part of the condition contract consumers wait
+		// on (e2e test 35 matches type + observedGeneration): a generation
+		// bump must refresh the condition even when nothing else changed.
 		statusChanged = true
 	}
 
