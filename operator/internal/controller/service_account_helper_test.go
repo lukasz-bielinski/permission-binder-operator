@@ -2,16 +2,20 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 // TestGenerateServiceAccountName tests the GenerateServiceAccountName function
@@ -465,6 +469,21 @@ func newSAFakeClient(objs ...client.Object) client.Client {
 		Build()
 }
 
+// newSAFakeClientWithInterceptors mirrors newSAFakeClient but installs
+// interceptor funcs to simulate API-server-side failures the cached client
+// cannot produce on its own (stale-cache AlreadyExists, transient errors).
+func newSAFakeClientWithInterceptors(funcs interceptor.Funcs, objs ...client.Object) client.Client {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = rbacv1.AddToScheme(scheme)
+
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithInterceptorFuncs(funcs).
+		Build()
+}
+
 func saRoleBindingFixture(namespace, saName, roleName string, annotations map[string]string) *rbacv1.RoleBinding {
 	fullSAName := GenerateServiceAccountName("", namespace, saName)
 	return &rbacv1.RoleBinding{
@@ -626,5 +645,106 @@ func TestProcessServiceAccounts_ManagedByValueOverrideStamping(t *testing.T) {
 	}
 	if got := rb.Annotations[AnnotationCreatedBy]; got != "permission-binder-operator-e2e-7" {
 		t.Errorf("RB created-by annotation ignores MANAGED_BY_VALUE override: %q", got)
+	}
+}
+
+// ============================================================================
+// Stale-cache / transient-error paths (v1.8.0 status-poison fix)
+// ============================================================================
+
+// TestProcessServiceAccounts_SACreateAlreadyExistsTolerated verifies that a
+// Create racing a stale cached Get (informer lag: Get says NotFound, server
+// says AlreadyExists) does not abort the namespace - the SA exists, so
+// processing continues and the entry is reported.
+func TestProcessServiceAccounts_SACreateAlreadyExistsTolerated(t *testing.T) {
+	const ns = "team-race"
+	k8sClient := newSAFakeClientWithInterceptors(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*corev1.ServiceAccount); ok {
+				return apierrors.NewAlreadyExists(
+					schema.GroupResource{Resource: "serviceaccounts"}, obj.GetName())
+			}
+			return c.Create(ctx, obj, opts...)
+		},
+	})
+
+	processed, err := ProcessServiceAccounts(context.Background(), k8sClient, ns,
+		map[string]string{"deploy": "edit"}, "", "my-binder", "my-namespace")
+	if err != nil {
+		t.Fatalf("AlreadyExists on SA Create must be tolerated, got error: %v", err)
+	}
+
+	fullSAName := GenerateServiceAccountName("", ns, "deploy")
+	want := ns + "/" + fullSAName
+	if len(processed) != 1 || processed[0] != want {
+		t.Errorf("expected processed=[%s], got %v", want, processed)
+	}
+
+	// The RoleBinding step must still have run
+	var rb rbacv1.RoleBinding
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "sa-" + ns + "-deploy", Namespace: ns}, &rb); err != nil {
+		t.Fatalf("RoleBinding not created after tolerated SA AlreadyExists: %v", err)
+	}
+}
+
+// TestProcessServiceAccounts_RBCreateAlreadyExistsTolerated verifies the same
+// stale-cache race on the ServiceAccount RoleBinding Create: the entry must
+// still be reported instead of aborting the whole namespace.
+func TestProcessServiceAccounts_RBCreateAlreadyExistsTolerated(t *testing.T) {
+	const ns = "team-race-rb"
+	k8sClient := newSAFakeClientWithInterceptors(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*rbacv1.RoleBinding); ok {
+				return apierrors.NewAlreadyExists(
+					schema.GroupResource{Group: "rbac.authorization.k8s.io", Resource: "rolebindings"}, obj.GetName())
+			}
+			return c.Create(ctx, obj, opts...)
+		},
+	})
+
+	processed, err := ProcessServiceAccounts(context.Background(), k8sClient, ns,
+		map[string]string{"deploy": "edit"}, "", "my-binder", "my-namespace")
+	if err != nil {
+		t.Fatalf("AlreadyExists on SA RoleBinding Create must be tolerated, got error: %v", err)
+	}
+
+	fullSAName := GenerateServiceAccountName("", ns, "deploy")
+	want := ns + "/" + fullSAName
+	if len(processed) != 1 || processed[0] != want {
+		t.Errorf("expected processed=[%s], got %v", want, processed)
+	}
+}
+
+// TestProcessServiceAccounts_TransientRBErrorReturned documents the failure
+// mode behind the v1.8.0 status-poison fix: a transient error on the SA
+// RoleBinding step happens AFTER the ServiceAccount was created, so the SA
+// exists but must NOT be reported as processed - and the error must surface
+// so the reconciler skips the ConfigMap-version stamp and retries.
+func TestProcessServiceAccounts_TransientRBErrorReturned(t *testing.T) {
+	const ns = "team-transient"
+	k8sClient := newSAFakeClientWithInterceptors(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*rbacv1.RoleBinding); ok {
+				return apierrors.NewInternalError(fmt.Errorf("simulated transient apiserver failure"))
+			}
+			return c.Create(ctx, obj, opts...)
+		},
+	})
+
+	processed, err := ProcessServiceAccounts(context.Background(), k8sClient, ns,
+		map[string]string{"deploy": "edit"}, "", "my-binder", "my-namespace")
+	if err == nil {
+		t.Fatal("transient RoleBinding error must be returned, got nil")
+	}
+	if len(processed) != 0 {
+		t.Errorf("SA with failed RoleBinding must not be reported as processed, got %v", processed)
+	}
+
+	// The SA itself was created before the failing step - exactly the state
+	// that used to pass wait_for_sa in e2e while the status stayed empty.
+	fullSAName := GenerateServiceAccountName("", ns, "deploy")
+	var sa corev1.ServiceAccount
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: fullSAName, Namespace: ns}, &sa); err != nil {
+		t.Fatalf("ServiceAccount should exist despite RoleBinding failure: %v", err)
 	}
 }

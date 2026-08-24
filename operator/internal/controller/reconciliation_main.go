@@ -386,6 +386,17 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
+	// Partial ServiceAccount processing must never be stamped into status:
+	// with LastProcessedConfigMapVersion set, the skip guard would pin the
+	// partial result permanently (an unchanged ConfigMap fires no further
+	// events). Leave status untouched and requeue with backoff - the retry
+	// reprocesses the same ConfigMap version and completes the missing pieces.
+	if result.ServiceAccountsError != nil {
+		logger.Error(result.ServiceAccountsError,
+			"ServiceAccount processing incomplete - skipping status update and requeuing")
+		return ctrl.Result{}, result.ServiceAccountsError
+	}
+
 	// Prepare new status values
 	newProcessedRoleBindings := result.ProcessedRoleBindings
 	newProcessedServiceAccounts := result.ProcessedServiceAccounts

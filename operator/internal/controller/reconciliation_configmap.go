@@ -34,6 +34,12 @@ import (
 type ProcessConfigMapResult struct {
 	ProcessedRoleBindings    []string
 	ProcessedServiceAccounts []string
+	// ServiceAccountsError carries the first per-namespace ServiceAccount
+	// processing failure. The reconciler must NOT stamp
+	// LastProcessedConfigMapVersion when it is set: the skip guard would pin
+	// the partial result permanently, because an unchanged ConfigMap never
+	// fires another event to retry the missing pieces.
+	ServiceAccountsError error
 }
 
 // processConfigMap processes the ConfigMap data and creates RoleBindings
@@ -164,9 +170,15 @@ func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permi
 				permissionBinder.Namespace,
 			)
 			if err != nil {
-				// Log error but don't fail the entire reconciliation
-				logger.Error(err, "⚠️  ServiceAccount creation failed (non-fatal)",
+				// Keep processing the remaining namespaces (best effort within
+				// this pass), but record the failure so the reconciler skips the
+				// ConfigMap-version stamp and requeues instead of silently
+				// pinning a partial status.
+				logger.Error(err, "⚠️  ServiceAccount creation failed, reconciliation will be retried",
 					"namespace", namespace)
+				if result.ServiceAccountsError == nil {
+					result.ServiceAccountsError = fmt.Errorf("namespace %s: %w", namespace, err)
+				}
 			} else {
 				allProcessedSAs = append(allProcessedSAs, processedSAs...)
 				logger.Info("✅ ServiceAccounts processed successfully",
