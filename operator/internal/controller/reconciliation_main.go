@@ -386,17 +386,6 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
-	// Partial ServiceAccount processing must never be stamped into status:
-	// with LastProcessedConfigMapVersion set, the skip guard would pin the
-	// partial result permanently (an unchanged ConfigMap fires no further
-	// events). Leave status untouched and requeue with backoff - the retry
-	// reprocesses the same ConfigMap version and completes the missing pieces.
-	if result.ServiceAccountsError != nil {
-		logger.Error(result.ServiceAccountsError,
-			"ServiceAccount processing incomplete - skipping status update and requeuing")
-		return ctrl.Result{}, result.ServiceAccountsError
-	}
-
 	// Prepare new status values
 	newProcessedRoleBindings := result.ProcessedRoleBindings
 	newProcessedServiceAccounts := result.ProcessedServiceAccounts
@@ -404,6 +393,20 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	newRoleMappingHash := permissionBinder.Status.LastProcessedRoleMappingHash
 	if roleMappingChanged {
 		newRoleMappingHash = currentHash
+	}
+
+	// Partial ServiceAccount processing must never be stamped into status:
+	// with LastProcessedConfigMapVersion set, the skip guard would pin the
+	// partial result permanently (an unchanged ConfigMap fires no further
+	// events to retry the missing pieces). Keep the previous ConfigMap
+	// version, role-mapping hash and ServiceAccount list (this pass's list is
+	// incomplete), but still publish RoleBindings and a Processed=False
+	// condition so the CR stays observable under persistent failures. The
+	// error return at the end requeues the reconcile with backoff.
+	if result.ServiceAccountsError != nil {
+		newProcessedServiceAccounts = permissionBinder.Status.ProcessedServiceAccounts
+		newConfigMapVersion = permissionBinder.Status.LastProcessedConfigMapVersion
+		newRoleMappingHash = permissionBinder.Status.LastProcessedRoleMappingHash
 	}
 
 	// Check if status actually changed before updating
@@ -431,9 +434,16 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// Check if Conditions need update (only update LastTransitionTime if status changed)
+	conditionStatus := metav1.ConditionTrue
+	conditionReason := "ConfigMapProcessed"
 	conditionMessage := fmt.Sprintf("Successfully processed %d role bindings and %d service accounts", len(newProcessedRoleBindings), len(newProcessedServiceAccounts))
+	if result.ServiceAccountsError != nil {
+		conditionStatus = metav1.ConditionFalse
+		conditionReason = "ServiceAccountProcessingIncomplete"
+		conditionMessage = fmt.Sprintf("Processed %d role bindings; ServiceAccount processing incomplete (retrying): %v", len(newProcessedRoleBindings), result.ServiceAccountsError)
+	}
 	existingCondition := findCondition(permissionBinder.Status.Conditions, "Processed")
-	if existingCondition == nil || existingCondition.Status != metav1.ConditionTrue || existingCondition.Message != conditionMessage {
+	if existingCondition == nil || existingCondition.Status != conditionStatus || existingCondition.Message != conditionMessage {
 		statusChanged = true
 	}
 
@@ -454,31 +464,20 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		permissionBinder.Status.LastProcessedRoleMappingHash = newRoleMappingHash
 
 		// Update Conditions - preserve LastTransitionTime if condition already exists with same status
-		now := metav1.Now()
-		if existingCondition != nil && existingCondition.Status == metav1.ConditionTrue && existingCondition.Message == conditionMessage {
+		transitionTime := metav1.Now()
+		if existingCondition != nil && existingCondition.Status == conditionStatus && existingCondition.Message == conditionMessage {
 			// Condition already exists with same status, preserve LastTransitionTime
-			permissionBinder.Status.Conditions = []metav1.Condition{
-				{
-					Type:               "Processed",
-					Status:             metav1.ConditionTrue,
-					LastTransitionTime: existingCondition.LastTransitionTime, // Preserve original time
-					Reason:             "ConfigMapProcessed",
-					Message:            conditionMessage,
-					ObservedGeneration: permissionBinder.Generation,
-				},
-			}
-		} else {
-			// New condition or status changed, use current time
-			permissionBinder.Status.Conditions = []metav1.Condition{
-				{
-					Type:               "Processed",
-					Status:             metav1.ConditionTrue,
-					LastTransitionTime: now,
-					Reason:             "ConfigMapProcessed",
-					Message:            conditionMessage,
-					ObservedGeneration: permissionBinder.Generation,
-				},
-			}
+			transitionTime = existingCondition.LastTransitionTime
+		}
+		permissionBinder.Status.Conditions = []metav1.Condition{
+			{
+				Type:               "Processed",
+				Status:             conditionStatus,
+				LastTransitionTime: transitionTime,
+				Reason:             conditionReason,
+				Message:            conditionMessage,
+				ObservedGeneration: permissionBinder.Generation,
+			},
 		}
 
 		if err := r.Status().Update(ctx, &permissionBinder); err != nil {
@@ -499,6 +498,15 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if err := r.updateMetrics(ctx, &permissionBinder); err != nil {
 		logger.Error(err, "Failed to update metrics (non-fatal)")
 		// Don't fail reconciliation on metrics error
+	}
+
+	// Requeue on partial ServiceAccount processing: the ConfigMap version was
+	// deliberately not stamped above, so the retry reprocesses it and
+	// completes the missing pieces.
+	if result.ServiceAccountsError != nil {
+		logger.Error(result.ServiceAccountsError,
+			"ServiceAccount processing incomplete - partial status published without ConfigMap version stamp, requeuing")
+		return ctrl.Result{}, result.ServiceAccountsError
 	}
 
 	logger.Info("Successfully processed ConfigMap",
