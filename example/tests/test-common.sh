@@ -296,6 +296,19 @@ ${whitelist}
 EOF
 }
 
+# touch_np_configmap <configmap_name> - annotate the ConfigMap to fire a
+# watch event and force a reconcile pass. The operator has NO timer-driven
+# requeue: "periodic" NetworkPolicy reconciliation (which refreshes PR state
+# from GitHub) only runs inside an event-triggered reconcile once
+# reconciliationInterval has elapsed. After out-of-band GitHub changes (a PR
+# merged by a test, a template edited) nothing fires a Kubernetes event, so
+# the PermissionBinder status never refreshes on its own - verified live in
+# issue #59 (lastNetworkPolicyReconciliation frozen despite a 10s interval).
+touch_np_configmap() {
+    kubectl annotate configmap "$1" -n "${NAMESPACE:?}" \
+        permission-binder.io/e2e-nudge="$(date +%s%N)" --overwrite >/dev/null 2>&1 || true
+}
+
 # wait_for_cmd <timeout_s> <cmd...> - poll every 2s until cmd succeeds.
 # Timeout is scaled by E2E_WAIT_MULT. Returns 1 on timeout.
 wait_for_cmd() {

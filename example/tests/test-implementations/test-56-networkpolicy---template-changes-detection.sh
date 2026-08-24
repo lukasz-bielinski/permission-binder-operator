@@ -24,7 +24,9 @@ fi
 
 BINDER_NAME="test-permissionbinder-networkpolicy-template"
 CONFIGMAP_NAME="permission-config-template"
-TEST_NAMESPACE="test-template-changes"
+# Dedicated namespace (prefix empty in legacy single-instance mode; name
+# contains "test-" so both cleanup sweeps catch it)
+TEST_NAMESPACE="${TEST_NS_PREFIX}np-test-56"
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
 TEMPLATE_PATH="networkpolicies/templates/deny-all-ingress.yaml"
 METRICS_PORT=8080
@@ -33,6 +35,12 @@ ORIGINAL_TEMPLATE_BASE64=""
 UPDATED_TEMPLATE_SHA=""
 
 cleanup_resources() {
+    # Delete the PB FIRST: with a 10s reconciliationInterval the operator
+    # would otherwise detect the template revert below as ANOTHER template
+    # change and open a fresh PR after the artifact cleanup already ran.
+    kubectl delete permissionbinder "$BINDER_NAME" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
+    kubectl delete configmap "$CONFIGMAP_NAME" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
+
     if [ -n "$UPDATED_TEMPLATE_SHA" ] && [ -n "$ORIGINAL_TEMPLATE_BASE64" ]; then
         info_log "Reverting template file to original content"
         np_gh api repos/"$GITHUB_REPO"/contents/"$TEMPLATE_PATH" \
@@ -43,8 +51,6 @@ cleanup_resources() {
     fi
 
     cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "$TEST_NAMESPACE" "$GITHUB_REPO" 2>/dev/null || true
-    kubectl delete permissionbinder "$BINDER_NAME" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
-    kubectl delete configmap "$CONFIGMAP_NAME" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
 }
 
 trap cleanup_resources EXIT
@@ -123,13 +129,47 @@ if [ -z "$INITIAL_PR" ]; then
 fi
 pass_test "Initial PR created (number: $INITIAL_PR)"
 
-# Merge initial PR to simulate steady state
-if ! np_gh pr merge "$INITIAL_PR" --repo "$GITHUB_REPO" --merge --admin >/dev/null 2>&1; then
-    info_log "⚠️  Failed to merge initial PR automatically (may already be merged or checks failing)"
+# Merge the initial PR to reach steady state BEFORE mutating the template:
+# the operator (correctly) keeps at most ONE open PR per namespace, so a
+# template-change PR can only appear once the initial PR is closed/merged
+# AND the periodic reconciliation has recorded pr-merged (issue #59).
+info_log "Merging initial PR $INITIAL_PR (one-open-PR-per-namespace dedup requires it merged first)"
+if np_gh pr merge "$INITIAL_PR" --repo "$GITHUB_REPO" --merge --admin >/dev/null 2>&1; then
+    pass_test "Initial PR $INITIAL_PR merged via gh CLI"
+else
+    INITIAL_PR_STATE=$(np_gh pr view "$INITIAL_PR" --repo "$GITHUB_REPO" --json state --jq '.state' 2>/dev/null || echo "")
+    if [ "$INITIAL_PR_STATE" == "MERGED" ]; then
+        info_log "Initial PR $INITIAL_PR already merged"
+    else
+        fail_test "Could not merge initial PR $INITIAL_PR (state: ${INITIAL_PR_STATE:-unknown}); template-change PR would be deduplicated"
+        exit 1
+    fi
 fi
 
-info_log "Waiting for operator to record pr-merged (30s)"
-wait_for_pr_state "$BINDER_NAME" "$TEST_NAMESPACE" "pr-merged" 120 >/dev/null 2>&1 || true
+# The merge happened on GitHub only - no Kubernetes event fires, so nudge
+# reconciliation with ConfigMap-annotation touches (the operator has no
+# timer-driven requeue). KNOWN EXPECTED FAILURE until the operator gains a
+# pending->merged refresh: as of v1.8.x no code path transitions pr-pending
+# to pr-merged for an externally merged PR, and checkTemplateChanges only
+# processes pr-merged entries - so this gate fails fast HERE (with a precise
+# message) instead of failing later on a missing template-change PR. It goes
+# green as soon as that operator gap is fixed (issue #59).
+info_log "Waiting for operator to record pr-merged (up to 120s, nudging reconciliation every 15s)"
+MERGED_RECORDED=false
+for attempt in $(seq 1 8); do
+    touch_np_configmap "$CONFIGMAP_NAME"
+    if wait_for_pr_state "$BINDER_NAME" "$TEST_NAMESPACE" "pr-merged" 15; then
+        MERGED_RECORDED=true
+        break
+    fi
+done
+if [ "$MERGED_RECORDED" = "true" ]; then
+    pass_test "Operator recorded pr-merged for initial PR"
+else
+    CURRENT_STATE=$(kubectl get permissionbinder "$BINDER_NAME" -n "$NAMESPACE" -o jsonpath='{.status.networkPolicies[?(@.namespace=="'$TEST_NAMESPACE'")].state}' 2>/dev/null || echo "")
+    fail_test "Operator did not record pr-merged within 120s (current state: ${CURRENT_STATE:-unknown}); aborting before template mutation"
+    exit 1
+fi
 
 # ----------------------------------------------------------------------------
 # 4. Modify template file to trigger template change detection
@@ -169,12 +209,15 @@ info_log "Template updated, waiting for periodic reconciliation (30s)"
 sleep 30
 
 # ----------------------------------------------------------------------------
-# 5. Verify new PR created due to template change
+# 5. Verify new PR created due to template change. The template edit is a
+#    GitHub-only change (no Kubernetes event), so keep nudging reconciliation
+#    with ConfigMap-annotation touches while polling (issue #59).
 # ----------------------------------------------------------------------------
 NEW_PR=""
 MAX_WAIT=180
 WAITED=0
 while [ $WAITED -lt $MAX_WAIT ]; do
+    touch_np_configmap "$CONFIGMAP_NAME"
     NEW_PR=$(kubectl get permissionbinder "$BINDER_NAME" -n "$NAMESPACE" -o jsonpath='{.status.networkPolicies[?(@.namespace=="'$TEST_NAMESPACE'")].prNumber}' 2>/dev/null || echo "")
     if [ -n "$NEW_PR" ] && [ "$NEW_PR" != "$INITIAL_PR" ]; then
         break
