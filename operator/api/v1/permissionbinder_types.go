@@ -357,7 +357,3 @@ type PermissionBinderList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []PermissionBinder `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&PermissionBinder{}, &PermissionBinderList{})
-}
