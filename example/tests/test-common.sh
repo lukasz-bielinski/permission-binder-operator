@@ -20,6 +20,64 @@ info_log() {
     echo "ℹ️  $1" | tee -a ${TEST_RESULTS:-/tmp/e2e-test-results.log}
 }
 
+# ---------------------------------------------------------------------------
+# GitHub token routing for the NetworkPolicy fixture repo (v1.8.0 campaign)
+#
+# The ambient `gh` login may be scoped to a DIFFERENT repository than the
+# NetworkPolicy fixture repo (lukasz-bielinski/tests-network-policies). When it
+# is, every cleanup ref-delete 403s silently and stale networkpolicy/* branches
+# and PRs accumulate until they break later runs with existing-branch
+# conflicts. All fixture-repo verification/cleanup therefore routes through
+# np_gh, which authenticates with the SAME token the operator itself uses: the
+# github-gitops-credentials Secret. ALWAYS that Secret — never the
+# test-created -readonly/-invalid secrets (tests 53/57 deliberately provision
+# underpowered tokens; using those for cleanup would leak fixture-repo
+# artifacts).
+#
+# Token scope requirements are documented in NETWORKPOLICY_TESTING.md:
+# Contents RW + Pull requests RW + Issues RW (labels); tests 54/56 merge PRs
+# with --admin and additionally need merge/admin rights on the fixture repo.
+#
+# Resolution order (cached after the first call):
+#   1. Plaintext manifest temp/github-gitops-credentials-secret.yaml at the
+#      repo root (file-first: per-test cleanup DELETES the in-cluster Secret,
+#      so it is often absent exactly when cleanup needs the token).
+#   2. In-cluster Secret github-gitops-credentials in $NAMESPACE.
+#   3. Empty -> np_gh falls back to ambient gh auth (previous behavior).
+# ---------------------------------------------------------------------------
+
+_NP_TOKEN=""
+_NP_TOKEN_RESOLVED=""
+
+# get_np_token - print the operator's GitHub token (empty if unresolvable)
+get_np_token() {
+    if [ -z "$_NP_TOKEN_RESOLVED" ]; then
+        local secret_file="${SCRIPT_DIR:-.}/../../temp/github-gitops-credentials-secret.yaml"
+        if [ -f "$secret_file" ]; then
+            _NP_TOKEN=$(awk -F'"' '/^[[:space:]]*token:[[:space:]]*"/ {print $2; exit}' "$secret_file" 2>/dev/null)
+        fi
+        if [ -z "$_NP_TOKEN" ]; then
+            _NP_TOKEN=$(kubectl get secret github-gitops-credentials \
+                -n "${NAMESPACE:-permissions-binder-operator}" \
+                -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null)
+        fi
+        _NP_TOKEN_RESOLVED=1
+    fi
+    printf '%s' "$_NP_TOKEN"
+}
+
+# np_gh - gh CLI authenticated with the operator's fixture-repo token.
+# Falls back to ambient gh auth when no token resolves.
+np_gh() {
+    local token
+    token="$(get_np_token)"
+    if [ -n "$token" ]; then
+        GH_TOKEN="$token" gh "$@"
+    else
+        gh "$@"
+    fi
+}
+
 # E2E_WAIT_MULT (default 1) multiplies harness-owned fixed sleeps/timeouts.
 # The k3s API server on rpi4-class hardware is loaded when the suite runs in
 # parallel (issue #36); the parallel runner exports a load-aware default.
@@ -305,7 +363,7 @@ verify_pr_on_github() {
     fi
     
     # Check if gh is authenticated
-    if ! gh auth status &>/dev/null; then
+    if ! np_gh auth status &>/dev/null; then
         info_log "⚠️  gh CLI not authenticated, skipping GitHub PR verification"
         return 1
     fi
@@ -318,7 +376,7 @@ verify_pr_on_github() {
     fi
     
     # Get PR details
-    local pr_json=$(gh pr view "$pr_number" --repo "$repo" --json number,state,title,headRefName,url,labels 2>/dev/null)
+    local pr_json=$(np_gh pr view "$pr_number" --repo "$repo" --json number,state,title,headRefName,url,labels 2>/dev/null)
     if [ $? -eq 0 ] && [ -n "$pr_json" ]; then
         echo "$pr_json"
         return 0
@@ -351,7 +409,7 @@ verify_pr_files() {
     fi
     
     # Get PR files
-    local pr_files=$(gh pr view "$pr_number" --repo "$repo" --json files --jq '.files[].path' 2>/dev/null)
+    local pr_files=$(np_gh pr view "$pr_number" --repo "$repo" --json files --jq '.files[].path' 2>/dev/null)
     if [ $? -ne 0 ] || [ -z "$pr_files" ]; then
         return 1
     fi
@@ -397,7 +455,7 @@ verify_pr_file_content() {
     fi
     
     # Get file content from PR
-    local file_content=$(gh pr view "$pr_number" --repo "$repo" --json files --jq ".files[] | select(.path==\"$file_path\") | .additions" 2>/dev/null)
+    local file_content=$(np_gh pr view "$pr_number" --repo "$repo" --json files --jq ".files[] | select(.path==\"$file_path\") | .additions" 2>/dev/null)
     if [ $? -ne 0 ] || [ -z "$file_content" ]; then
         return 1
     fi
@@ -432,7 +490,7 @@ verify_kustomization_paths() {
     fi
     
     # Get PR diff for kustomization.yaml
-    local diff_output=$(gh pr diff "$pr_number" --repo "$repo" "$kustomization_path" 2>/dev/null)
+    local diff_output=$(np_gh pr diff "$pr_number" --repo "$repo" "$kustomization_path" 2>/dev/null)
     if [ $? -ne 0 ]; then
         return 1
     fi
@@ -490,16 +548,16 @@ cleanup_pr_and_branch() {
     info_log "Cleaning up PR $pr_number and branch $branch_name from GitHub..."
     
     # Close PR if it's still open
-    local pr_state=$(gh pr view "$pr_number" --repo "$repo" --json state --jq '.state' 2>/dev/null || echo "")
+    local pr_state=$(np_gh pr view "$pr_number" --repo "$repo" --json state --jq '.state' 2>/dev/null || echo "")
     if [ "$pr_state" == "OPEN" ]; then
         info_log "Closing PR $pr_number..."
-        gh pr close "$pr_number" --repo "$repo" --delete-branch=false 2>/dev/null || true
+        np_gh pr close "$pr_number" --repo "$repo" --delete-branch=false 2>/dev/null || true
     fi
     
     # Delete branch if it exists
     if [ -n "$branch_name" ] && [ "$branch_name" != "" ]; then
         info_log "Deleting branch $branch_name..."
-        gh api repos/"$repo"/git/refs/heads/"$branch_name" -X DELETE 2>/dev/null || true
+        np_gh api repos/"$repo"/git/refs/heads/"$branch_name" -X DELETE 2>/dev/null || true
     fi
     
     info_log "✅ Cleanup completed for PR $pr_number"
@@ -522,14 +580,14 @@ delete_file_from_github() {
     fi
     
     # Get file SHA (required for deletion)
-    local file_sha=$(gh api repos/"$repo"/contents/"$file_path" --jq '.sha' 2>/dev/null || echo "")
+    local file_sha=$(np_gh api repos/"$repo"/contents/"$file_path" --jq '.sha' 2>/dev/null || echo "")
     if [ -z "$file_sha" ] || [ "$file_sha" == "null" ]; then
         # File doesn't exist, nothing to delete
         return 0
     fi
     
     # Delete file using GitHub API
-    gh api repos/"$repo"/contents/"$file_path" \
+    np_gh api repos/"$repo"/contents/"$file_path" \
         -X DELETE \
         -f message="$commit_message" \
         -f sha="$file_sha" \
@@ -568,7 +626,7 @@ cleanup_networkpolicy_files_from_repo() {
         local deleted_count=0
         
         # List all items in directory (files and subdirectories)
-        local items=$(gh api repos/"$github_repo"/contents/"$dir_path" --jq '.[].name' 2>/dev/null || echo "")
+        local items=$(np_gh api repos/"$github_repo"/contents/"$dir_path" --jq '.[].name' 2>/dev/null || echo "")
         
         if [ -z "$items" ] || [ "$items" == "" ]; then
             echo 0
@@ -581,7 +639,7 @@ cleanup_networkpolicy_files_from_repo() {
             
             # Check if it's a file or directory
             # For directories, API returns array; for files, it returns object with 'type' field
-            local item_info=$(gh api repos/"$github_repo"/contents/"$item_path" 2>/dev/null || echo "")
+            local item_info=$(np_gh api repos/"$github_repo"/contents/"$item_path" 2>/dev/null || echo "")
             local item_json_type=$(echo "$item_info" | jq -r 'if type=="array" then "dir" else .type end' 2>/dev/null || echo "")
             
             if [ "$item_json_type" == "file" ]; then
@@ -659,7 +717,7 @@ cleanup_networkpolicy_test_artifacts() {
         info_log "⚠️  No PR number found in status, trying to find PR from GitHub..."
         if command -v gh &> /dev/null && command -v jq &> /dev/null; then
             local branch_name="networkpolicy/${cluster_name}/${test_namespace}"
-            pr_number=$(gh pr list --repo "$github_repo" --head "$branch_name" --state all --json number --limit 1 --jq '.[0].number' 2>/dev/null || echo "")
+            pr_number=$(np_gh pr list --repo "$github_repo" --head "$branch_name" --state all --json number --limit 1 --jq '.[0].number' 2>/dev/null || echo "")
             if [ -n "$pr_number" ] && [ "$pr_number" != "null" ] && [ "$pr_number" != "" ]; then
                 info_log "Found PR number from GitHub: $pr_number"
             fi
@@ -679,10 +737,10 @@ cleanup_networkpolicy_test_artifacts() {
     if [ -z "$pr_branch" ] || [ "$pr_branch" == "" ] || [ -z "$pr_state" ] || [ "$pr_state" == "" ]; then
         if command -v gh &> /dev/null && command -v jq &> /dev/null; then
             if [ -z "$pr_branch" ] || [ "$pr_branch" == "" ]; then
-                pr_branch=$(gh pr view "$pr_number" --repo "$github_repo" --json headRefName --jq '.headRefName' 2>/dev/null || echo "")
+                pr_branch=$(np_gh pr view "$pr_number" --repo "$github_repo" --json headRefName --jq '.headRefName' 2>/dev/null || echo "")
             fi
             if [ -z "$pr_state" ] || [ "$pr_state" == "" ]; then
-                pr_state=$(gh pr view "$pr_number" --repo "$github_repo" --json state --jq '.state' 2>/dev/null || echo "")
+                pr_state=$(np_gh pr view "$pr_number" --repo "$github_repo" --json state --jq '.state' 2>/dev/null || echo "")
             fi
         fi
     fi

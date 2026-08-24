@@ -39,17 +39,39 @@ Each NetworkPolicy test:
 
 ### GitHub Authentication
 
-**Option 1: gh CLI authentication**
+**Fixture-repo calls are routed through `np_gh` (test-common.sh), not ambient
+`gh` auth.** `np_gh` resolves the SAME token the operator uses (the
+`github-gitops-credentials` Secret): first from the plaintext manifest
+`temp/github-gitops-credentials-secret.yaml` at the repo root, then from the
+in-cluster Secret, and only falls back to ambient `gh` auth when neither
+resolves. This matters because an ambient PAT scoped to a different repo makes
+every cleanup ref-delete fail with 403 — stale `networkpolicy/*` branches and
+PRs then accumulate and break later runs with existing-branch conflicts.
+
+**Token scope requirements** (fine-grained PAT on the fixture repo):
+
+- **Contents: Read and write** — file cleanup, template updates (test 56)
+- **Pull requests: Read and write** — PR verification, close, branch delete
+- **Issues: Read and write** — label attach (test 49 `auto-merge` label)
+- **Merge/admin rights on the repo** — tests 54 and 56 merge PRs with
+  `gh pr merge --admin`
+
+Never point `np_gh` at the test-created `-readonly`/`-invalid` secrets
+(tests 53/57 deliberately provision underpowered tokens).
+
+**Ambient fallback (only when no token resolves)**
 ```bash
 gh auth login
-# Follow prompts to authenticate
+# Follow prompts to authenticate — the account/PAT must cover the fixture repo
 ```
 
-**Option 2: Use token from Secret**
+**Manual debugging with the operator's token**
 ```bash
 # Token is in temp/github-gitops-credentials-secret.yaml
 # gh CLI can use GITHUB_TOKEN environment variable
-export GITHUB_TOKEN=$(kubectl get secret github-gitops-credentials -n permissions-binder-operator -o jsonpath='{.data.token}' | base64 -d)
+# NAMESPACE = this instance's operator namespace
+# (default: permissions-binder-operator; pbo-e2e-${INSTANCE} under INSTANCE mode)
+export GITHUB_TOKEN=$(kubectl get secret github-gitops-credentials -n ${NAMESPACE} -o jsonpath='{.data.token}' | base64 -d)
 ```
 
 ### Verify Setup

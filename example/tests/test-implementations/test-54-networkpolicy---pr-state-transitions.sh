@@ -114,7 +114,7 @@ pass_test "PR created (number: $PR_NUMBER, initial state: ${INITIAL_STATE:-unkno
 # 5. Merge PR using gh CLI
 # ----------------------------------------------------------------------------
 info_log "Merging PR $PR_NUMBER via gh CLI"
-if ! gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPO" --merge --admin >/dev/null 2>&1; then
+if ! np_gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPO" --merge --admin >/dev/null 2>&1; then
     info_log "⚠️  gh pr merge failed (perhaps already merged); attempting status check"
 else
     pass_test "PR $PR_NUMBER merged via gh CLI"

@@ -137,7 +137,7 @@ verify_pr_for_namespace() {
             info_log "PR state found: $pr_state, but PR number missing. Checking GitHub for recent PRs..."
             if command -v gh &> /dev/null; then
                 # Get most recent PR for namespace (branch pattern: networkpolicy/DEV-cluster/$namespace)
-                pr_number=$(gh pr list --repo "$GITHUB_REPO" --head "networkpolicy/DEV-cluster/$namespace" --state all --json number,title,state --limit 1 --jq '.[0].number' 2>/dev/null || echo "")
+                pr_number=$(np_gh pr list --repo "$GITHUB_REPO" --head "networkpolicy/DEV-cluster/$namespace" --state all --json number,title,state --limit 1 --jq '.[0].number' 2>/dev/null || echo "")
                 if [ -n "$pr_number" ] && [ "$pr_number" != "null" ] && [ "$pr_number" != "" ]; then
                     info_log "Found PR number from GitHub: $pr_number"
                 fi
@@ -213,7 +213,7 @@ verify_pr_for_namespace() {
         
         # Verify PR description contains expected information
         if command -v jq &> /dev/null; then
-            local pr_description=$(gh pr view "$pr_number" --repo "$GITHUB_REPO" --json body --jq '.body' 2>/dev/null || echo "")
+            local pr_description=$(np_gh pr view "$pr_number" --repo "$GITHUB_REPO" --json body --jq '.body' 2>/dev/null || echo "")
             if [ -n "$pr_description" ] && [ "$pr_description" != "null" ]; then
                 if echo "$pr_description" | grep -q "$namespace"; then
                     pass_test "PR description contains namespace: $namespace"

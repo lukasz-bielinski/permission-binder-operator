@@ -142,7 +142,7 @@ verify_pr_for_namespace() {
         if [ "$pr_state" == "pr-merged" ] || [ "$pr_state" == "pr-pending" ]; then
             info_log "PR state found: $pr_state, but PR number missing. Checking GitHub for recent PRs..."
             if command -v gh &> /dev/null; then
-                pr_number=$(gh pr list --repo "$GITHUB_REPO" --head "networkpolicy/DEV-cluster/$namespace" --state all --json number,title,state --limit 1 --jq '.[0].number' 2>/dev/null || echo "")
+                pr_number=$(np_gh pr list --repo "$GITHUB_REPO" --head "networkpolicy/DEV-cluster/$namespace" --state all --json number,title,state --limit 1 --jq '.[0].number' 2>/dev/null || echo "")
                 if [ -n "$pr_number" ] && [ "$pr_number" != "null" ] && [ "$pr_number" != "" ]; then
                     info_log "Found PR number from GitHub: $pr_number"
                 fi
