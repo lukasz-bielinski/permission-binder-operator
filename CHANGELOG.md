@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🐛 Bug Fixes
+- **NetworkPolicy git failures now surface in `status.networkPolicies`** (#54): the per-namespace error-status path was dead code with a pointer-vs-copy append bug that silently dropped `errorMessage` for first-time namespaces — a git/PR failure was logged and counted but never recorded on the CR (the v1.8.0 known issue, caught by e2e test 53). The event-driven batch loop now writes a `state: error` entry with the sanitized error message (bounded to 1 KiB), the event-driven filter re-processes entries in retryable states so a recorded failure keeps retrying (the periodic pass only considers `pr-merged` entries), and recovery is symmetric: a retry that creates a PR replaces the entry and clears the stale message, a retry with nothing left to do drops the stale entry. Covered by unit, batch-level, and manager-driven envtest regression tests mirroring e2e test 53.
+
+### 📊 Observability
+- `permission_binder_networkpolicy_git_operations_total` (clone/push by outcome) is now actually registered with the metrics registry — it was incremented but never exported, so it could not appear on `/metrics` (#54).
+
 ## [1.8.0] - 2026-08-24
 
 ### 🚀 Highlights
