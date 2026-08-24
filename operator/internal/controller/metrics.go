@@ -149,6 +149,7 @@ func init() {
 		// NetworkPolicy metrics (from network_policy_helper.go)
 		networkpolicy.NetworkPolicyPRsCreatedTotal,
 		networkpolicy.NetworkPolicyPRCreationErrorsTotal,
+		networkpolicy.NetworkPolicyGitOperationsTotal,
 		networkpolicy.NetworkPolicyTemplateValidationErrorsTotal,
 		networkpolicy.NetworkPolicyMultipleCRsWarningTotal,
 	)

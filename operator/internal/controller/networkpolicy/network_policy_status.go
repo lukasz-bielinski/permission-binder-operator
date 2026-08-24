@@ -20,12 +20,23 @@ import (
 	"context"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
 )
+
+// syncStatusFromFresh refreshes the caller's view of status (and the
+// resourceVersion the write bumped) WITHOUT replacing Spec/metadata: a
+// reconcile pass must keep operating on the spec snapshot it started from -
+// swapping the whole object mid-pass would let a concurrent spec edit tear
+// the batch loop (e.g. nil out Spec.NetworkPolicy underfoot).
+func syncStatusFromFresh(permissionBinder, freshBinder *permissionv1.PermissionBinder) {
+	permissionBinder.Status = freshBinder.Status
+	permissionBinder.ResourceVersion = freshBinder.ResourceVersion
+}
 
 func getNetworkPolicyStatus(permissionBinder *permissionv1.PermissionBinder, namespace string) *permissionv1.NetworkPolicyStatus {
 	for i := range permissionBinder.Status.NetworkPolicies {
@@ -36,12 +47,20 @@ func getNetworkPolicyStatus(permissionBinder *permissionv1.PermissionBinder, nam
 	return nil
 }
 
-// hasNetworkPolicyStatus checks if namespace has a status entry
-func hasNetworkPolicyStatus(permissionBinder *permissionv1.PermissionBinder, namespace string) bool {
-	return getNetworkPolicyStatus(permissionBinder, namespace) != nil
+// isRetryableNetworkPolicyState reports whether a status entry in the given
+// state must be re-processed by the event-driven pass. Entries in state
+// "error" (a recorded failure) and entries with an empty state (defensive:
+// should not occur) would otherwise never be retried: the event-driven pass
+// skips namespaces that already have a status entry, and the periodic pass
+// only considers "pr-merged" entries.
+func isRetryableNetworkPolicyState(state string) bool {
+	return state == "error" || state == ""
 }
 
-// updateNetworkPolicyStatus updates or creates NetworkPolicy status for a namespace
+// updateNetworkPolicyStatus updates or creates NetworkPolicy status for a namespace.
+// Uses retry logic with a fresh read to handle race conditions with concurrent
+// status updates. errorMessage is assigned unconditionally: pass "" to clear a
+// previously recorded error.
 func updateNetworkPolicyStatus(r ReconcilerInterface,
 	ctx context.Context,
 	permissionBinder *permissionv1.PermissionBinder,
@@ -51,44 +70,144 @@ func updateNetworkPolicyStatus(r ReconcilerInterface,
 ) error {
 	logger := log.FromContext(ctx)
 
-	// Find existing status or create new
-	status := getNetworkPolicyStatus(permissionBinder, namespace)
-	if status == nil {
-		// Create new status entry
-		status = &permissionv1.NetworkPolicyStatus{
-			Namespace: namespace,
-			State:     state,
+	// Defense in depth: the CR status is readable by a wider audience than
+	// the logs. Callers pass sanitized errors, but e.g. detectGitProvider
+	// failures embed the raw repo URL, which may carry inline credentials.
+	errorMessage = sanitizeString(errorMessage, nil)
+
+	// Bound the message stored in the CR (git errors can be long), without
+	// splitting a multi-byte UTF-8 rune at the cut
+	if len(errorMessage) > maxStatusErrorMessageLength {
+		cut := maxStatusErrorMessageLength
+		for cut > 0 && !utf8.RuneStart(errorMessage[cut]) {
+			cut--
 		}
-		permissionBinder.Status.NetworkPolicies = append(permissionBinder.Status.NetworkPolicies, *status)
-	} else {
-		// Update existing status
+		errorMessage = errorMessage[:cut]
+	}
+
+	// Retry logic to handle race conditions (max 3 attempts)
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Get fresh copy of PermissionBinder to avoid stale data
+		key := client.ObjectKeyFromObject(permissionBinder)
+		var freshBinder permissionv1.PermissionBinder
+		if err := r.Get(ctx, key, &freshBinder); err != nil {
+			if attempt < maxRetries-1 {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("failed to get fresh PermissionBinder: %w", err)
+		}
+
+		status := getNetworkPolicyStatus(&freshBinder, namespace)
+		if status == nil {
+			// Create new status entry, then re-lookup: fields must be set on
+			// the slice element, not on a local copy the append left behind
+			// (a copy would silently drop State/ErrorMessage/CreatedAt).
+			freshBinder.Status.NetworkPolicies = append(freshBinder.Status.NetworkPolicies,
+				permissionv1.NetworkPolicyStatus{Namespace: namespace})
+			status = getNetworkPolicyStatus(&freshBinder, namespace)
+			if status == nil {
+				return fmt.Errorf("failed to get newly created status")
+			}
+		}
+
 		status.State = state
-	}
-
-	// Update fields
-	if errorMessage != "" {
 		status.ErrorMessage = errorMessage
-	}
 
-	if state == "pr-created" || state == "pr-pending" {
-		if status.CreatedAt == "" {
-			status.CreatedAt = time.Now().Format(time.RFC3339)
+		if state == "pr-created" || state == "pr-pending" {
+			if status.CreatedAt == "" {
+				status.CreatedAt = time.Now().Format(time.RFC3339)
+			}
 		}
-	}
 
-	// Update status in cluster
-	if err := r.Status().Update(ctx, permissionBinder); err != nil {
-		logger.Error(err, "Failed to update NetworkPolicy status",
+		// Update status in cluster
+		if err := r.Status().Update(ctx, &freshBinder); err != nil {
+			if attempt < maxRetries-1 {
+				logger.V(1).Info("Status update conflict, retrying", "attempt", attempt+1, "namespace", namespace)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			logger.Error(err, "Failed to update NetworkPolicy status",
+				"namespace", namespace,
+				"state", state)
+			return fmt.Errorf("failed to update status: %w", err)
+		}
+
+		// Success - update the passed-in permissionBinder to reflect changes
+		syncStatusFromFresh(permissionBinder, &freshBinder)
+
+		logger.V(1).Info("Updated NetworkPolicy status",
 			"namespace", namespace,
 			"state", state)
-		return fmt.Errorf("failed to update status: %w", err)
+		return nil
 	}
 
-	logger.V(1).Info("Updated NetworkPolicy status",
-		"namespace", namespace,
-		"state", state)
+	return fmt.Errorf("failed to update status after %d attempts", maxRetries)
+}
 
-	return nil
+// clearNetworkPolicyStatusEntry removes the status entry for a namespace,
+// provided it is still in a retryable (error) state. Called when event-driven
+// processing completes without error but without creating a PR (nothing to
+// do): the recorded failure is resolved, and keeping the stale "error" entry
+// would misreport the namespace. Removing the entry restores the pre-failure
+// behavior (the namespace is re-evaluated on subsequent event-driven passes).
+func clearNetworkPolicyStatusEntry(r ReconcilerInterface,
+	ctx context.Context,
+	permissionBinder *permissionv1.PermissionBinder,
+	namespace string,
+) error {
+	logger := log.FromContext(ctx)
+
+	// Retry logic to handle race conditions (max 3 attempts)
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Get fresh copy of PermissionBinder to avoid stale data
+		key := client.ObjectKeyFromObject(permissionBinder)
+		var freshBinder permissionv1.PermissionBinder
+		if err := r.Get(ctx, key, &freshBinder); err != nil {
+			if attempt < maxRetries-1 {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			return fmt.Errorf("failed to get fresh PermissionBinder: %w", err)
+		}
+
+		// The fresh read makes this check meaningful: if a concurrent update
+		// already moved the entry to a non-retryable state (e.g. pr-created),
+		// leave it alone.
+		status := getNetworkPolicyStatus(&freshBinder, namespace)
+		if status == nil || !isRetryableNetworkPolicyState(status.State) {
+			syncStatusFromFresh(permissionBinder, &freshBinder)
+			return nil
+		}
+
+		kept := make([]permissionv1.NetworkPolicyStatus, 0, len(freshBinder.Status.NetworkPolicies))
+		for _, entry := range freshBinder.Status.NetworkPolicies {
+			if entry.Namespace != namespace {
+				kept = append(kept, entry)
+			}
+		}
+		freshBinder.Status.NetworkPolicies = kept
+
+		if err := r.Status().Update(ctx, &freshBinder); err != nil {
+			if attempt < maxRetries-1 {
+				logger.V(1).Info("Status update conflict, retrying", "attempt", attempt+1, "namespace", namespace)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			logger.Error(err, "Failed to clear NetworkPolicy status entry", "namespace", namespace)
+			return fmt.Errorf("failed to update status: %w", err)
+		}
+
+		// Success - update the passed-in permissionBinder to reflect changes
+		syncStatusFromFresh(permissionBinder, &freshBinder)
+
+		logger.V(1).Info("Cleared stale NetworkPolicy error status entry", "namespace", namespace)
+		return nil
+	}
+
+	return fmt.Errorf("failed to update status after %d attempts", maxRetries)
 }
 
 // updateNetworkPolicyStatusWithPR updates NetworkPolicy status with PR information
@@ -138,6 +257,9 @@ func updateNetworkPolicyStatusWithPR(r ReconcilerInterface,
 		status.PRNumber = &prNumber
 		status.PRBranch = prBranch
 		status.PRURL = prURL
+		// PR creation succeeded - clear any error recorded by a previous
+		// failed attempt for this namespace
+		status.ErrorMessage = ""
 		if status.CreatedAt == "" {
 			status.CreatedAt = time.Now().Format(time.RFC3339)
 		}
@@ -154,7 +276,7 @@ func updateNetworkPolicyStatusWithPR(r ReconcilerInterface,
 		}
 
 		// Success - update the passed-in permissionBinder to reflect changes
-		*permissionBinder = freshBinder
+		syncStatusFromFresh(permissionBinder, &freshBinder)
 		return nil
 	}
 
@@ -253,7 +375,7 @@ func CleanupStatus(
 		}
 
 		// Success - update the passed-in permissionBinder to reflect changes
-		*permissionBinder = freshBinder
+		syncStatusFromFresh(permissionBinder, &freshBinder)
 		return nil
 	}
 

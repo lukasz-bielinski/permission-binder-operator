@@ -95,7 +95,8 @@ func ProcessNetworkPolicyForNamespace(
 	// Clone repo (always fresh clone for self-contained test isolation)
 	tmpDir, err := cloneGitRepo(ctx, gitRepo.URL, credentials, tlsVerify)
 	if err != nil {
-		return fmt.Errorf("failed to clone repository: %w", err)
+		// cloneGitRepo already prefixes and sanitizes its errors
+		return err
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -311,8 +312,14 @@ func ProcessNetworkPolicyForNamespace(
 	apiBaseURL := getAPIBaseURL(provider, gitRepo.APIBaseURL, gitRepo.URL)
 	existingPR, err := getPRByBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials, tlsVerify)
 	if err == nil && existingPR != nil && existingPR.State == "OPEN" {
-		// PR already exists and is open - skip
+		// PR already exists and is open - record it and skip. Without a
+		// status entry the namespace would be re-selected (and re-cloned)
+		// on every event-driven pass, and a previously recorded "error"
+		// entry would be dropped instead of transitioning to the PR state.
 		logger.V(1).Info("PR already exists and is open for namespace", "namespace", namespace, "prNumber", existingPR.Number)
+		if err := updateNetworkPolicyStatusWithPR(r, ctx, permissionBinder, namespace, existingPR.Number, branchName, existingPR.URL, "pr-pending"); err != nil {
+			logger.Error(err, "Failed to record existing PR in status", "namespace", namespace)
+		}
 		return nil
 	}
 

@@ -63,21 +63,17 @@ func sanitizeError(err error, credentials *gitCredentials) error {
 
 // sanitizeString removes sensitive information from strings (for logging).
 func sanitizeString(s string, credentials *gitCredentials) string {
-	if credentials == nil {
-		return s
-	}
-
 	result := s
 
 	// Remove token if present
-	if credentials.token != "" {
+	if credentials != nil && credentials.token != "" {
 		result = strings.ReplaceAll(result, credentials.token, "[REDACTED]")
 		// Also replace common token patterns
 		result = regexp.MustCompile(`(?i)(token|bearer|private-token|authorization)[\s:=]+[a-zA-Z0-9_-]{20,}`).ReplaceAllString(result, "$1 [REDACTED]")
 	}
 
 	// Remove username if present (might be sensitive)
-	if credentials.username != "" && credentials.username != "permission-binder-operator" {
+	if credentials != nil && credentials.username != "" && credentials.username != "permission-binder-operator" {
 		result = strings.ReplaceAll(result, credentials.username, "[REDACTED]")
 	}
 

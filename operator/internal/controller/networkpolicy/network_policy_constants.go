@@ -41,6 +41,10 @@ const (
 	maxRetryAttempts = 3
 	retryBackoffBase = 5 * time.Second
 
+	// maxStatusErrorMessageLength bounds the error message stored in
+	// NetworkPolicyStatus.ErrorMessage (git errors can be long)
+	maxStatusErrorMessageLength = 1024
+
 	// Default values
 	defaultBatchSize              = 5
 	defaultSleepBetweenNamespaces = 3 * time.Second
@@ -107,7 +111,9 @@ var (
 		[]string{"cluster", "namespace", "variant", "error_type"},
 	)
 
-	networkPolicyGitOperationsTotal = prometheus.NewCounterVec(
+	// NetworkPolicyGitOperationsTotal counts Git operations (clone/push) by outcome.
+	// Labels: operation, status (success/error)
+	NetworkPolicyGitOperationsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "permission_binder_networkpolicy_git_operations_total",
 			Help: "Total number of Git operations for NetworkPolicy",

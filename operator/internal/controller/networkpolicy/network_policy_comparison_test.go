@@ -190,6 +190,6 @@ func TestHasNetworkPolicyStatus(t *testing.T) {
 		},
 	}
 
-	assert.True(t, hasNetworkPolicyStatus(permissionBinder, "my-namespace"))
-	assert.False(t, hasNetworkPolicyStatus(permissionBinder, "other-namespace"))
+	assert.NotNil(t, getNetworkPolicyStatus(permissionBinder, "my-namespace"))
+	assert.Nil(t, getNetworkPolicyStatus(permissionBinder, "other-namespace"))
 }
