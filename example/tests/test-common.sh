@@ -298,9 +298,10 @@ EOF
 
 # touch_np_configmap <configmap_name> - annotate the ConfigMap to fire a
 # watch event and force a reconcile pass. The operator has NO timer-driven
-# requeue: "periodic" NetworkPolicy reconciliation (which refreshes PR state
-# from GitHub) only runs inside an event-triggered reconcile once
-# reconciliationInterval has elapsed. After out-of-band GitHub changes (a PR
+# requeue: "periodic" NetworkPolicy reconciliation (drift/template/stale
+# checks on pr-merged entries only — it does NOT refresh pr-pending entries
+# from GitHub; no such path exists yet) only runs inside an event-triggered
+# reconcile once reconciliationInterval has elapsed. After out-of-band GitHub changes (a PR
 # merged by a test, a template edited) nothing fires a Kubernetes event, so
 # the PermissionBinder status never refreshes on its own - verified live in
 # issue #59 (lastNetworkPolicyReconciliation frozen despite a 10s interval).
