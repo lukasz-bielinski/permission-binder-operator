@@ -14,7 +14,9 @@ echo "-------------------------------------------------------"
 
 BINDER_NAME="test-permissionbinder-networkpolicy-hfreq"
 CONFIGMAP_NAME="permission-config-hfreq"
-BASE_NAMESPACE="test-hfreq"
+# Dedicated namespace base (prefix empty in legacy single-instance mode; names
+# contain "test-" so both cleanup sweeps catch them)
+BASE_NAMESPACE="${TEST_NS_PREFIX}np-test-60"
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
 
 cleanup_resources() {

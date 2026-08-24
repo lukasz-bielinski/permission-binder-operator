@@ -15,8 +15,10 @@ echo "--------------------------------------------------"
 BINDER_NAME="test-permissionbinder-networkpolicy-removal"
 CONFIGMAP_NAME="permission-config-removal"
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
-NAMESPACE_A="test-remove-a"
-NAMESPACE_B="test-remove-b"
+# Dedicated namespaces (prefix empty in legacy single-instance mode; names
+# contain "test-" so both cleanup sweeps catch them)
+NAMESPACE_A="${TEST_NS_PREFIX}np-test-59-a"
+NAMESPACE_B="${TEST_NS_PREFIX}np-test-59-b"
 
 cleanup_resources() {
     cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "$NAMESPACE_A" "$GITHUB_REPO" 2>/dev/null || true

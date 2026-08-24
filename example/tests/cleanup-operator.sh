@@ -69,22 +69,65 @@ if [ -z "$KUBECONFIG" ]; then
     exit 1
 fi
 
-echo "Step 1: Remove PermissionBinder CR (triggers finalizer)"
+# PermissionBinder deletion MUST complete (verified gone) BEFORE the operator
+# deployment is removed: once the operator is gone nothing processes the PB
+# finalizers, the CRs stay Terminating forever and the namespace deletion in
+# Step 7 wedges on them (issue #59). The finalizer-strip fallback below also
+# covers PBs stranded inside an already-Terminating namespace from a previous
+# failed cleanup (patch works in Terminating namespaces; create does not).
+
+list_permissionbinders() {
+    kubectl get permissionbinder -n "$NAMESPACE" -o name 2>/dev/null || true
+}
+
+echo "Step 1: Remove PermissionBinder CRs (triggers finalizer)"
 echo "--------------------------------------------------------"
-kubectl get permissionbinder -n "$NAMESPACE" 2>/dev/null | grep -v NAME | awk '{print $1}' | while read pb; do
+list_permissionbinders | while read pb; do
+    [ -z "$pb" ] && continue
     echo "Deleting PermissionBinder: $pb"
-    kubectl delete permissionbinder "$pb" -n "$NAMESPACE" --timeout=30s 2>/dev/null || true
+    kubectl delete "$pb" -n "$NAMESPACE" --wait=false 2>/dev/null || true
 done
 
 echo ""
-echo "Step 2: Remove finalizers from stuck PermissionBinder CRs"
-echo "-----------------------------------------------------------"
-kubectl get permissionbinder -n "$NAMESPACE" 2>/dev/null | grep -v NAME | awk '{print $1}' | while read pb; do
-    echo "Patching finalizers for: $pb"
-    kubectl patch permissionbinder "$pb" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+echo "Step 2: Wait until every PermissionBinder is gone (finalizer-strip fallback)"
+echo "-----------------------------------------------------------------------------"
+# Give the still-running operator up to 20s to process finalizers normally,
+# then strip finalizers from whatever is stuck and keep polling (up to 60s).
+PB_WAITED=0
+while [ "$PB_WAITED" -lt 60 ]; do
+    REMAINING_PBS=$(list_permissionbinders)
+    if [ -z "$REMAINING_PBS" ]; then
+        break
+    fi
+    if [ "$PB_WAITED" -ge 20 ]; then
+        echo "$REMAINING_PBS" | while read pb; do
+            [ -z "$pb" ] && continue
+            echo "Stripping finalizers from stuck: $pb"
+            kubectl patch "$pb" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        done
+    fi
+    sleep 3
+    PB_WAITED=$((PB_WAITED + 3))
 done
 
-sleep 5
+REMAINING_PBS=$(list_permissionbinders)
+if [ -z "$REMAINING_PBS" ]; then
+    echo "✅ All PermissionBinders deleted"
+else
+    # Last resort: strip finalizers once more so the namespace can terminate
+    echo -e "${YELLOW}⚠️  PermissionBinders still present after ${PB_WAITED}s; stripping finalizers once more${NC}"
+    echo "$REMAINING_PBS" | while read pb; do
+        [ -z "$pb" ] && continue
+        kubectl patch "$pb" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        kubectl delete "$pb" -n "$NAMESPACE" --wait=false 2>/dev/null || true
+    done
+    sleep 3
+    if [ -z "$(list_permissionbinders)" ]; then
+        echo "✅ All PermissionBinders deleted (after finalizer strip)"
+    else
+        echo -e "${RED}❌ PermissionBinders still present; namespace deletion may hang${NC}"
+    fi
+fi
 
 echo ""
 echo "Step 3: Delete operator deployment"

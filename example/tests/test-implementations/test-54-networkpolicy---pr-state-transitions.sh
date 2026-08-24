@@ -1,5 +1,16 @@
 #!/bin/bash
 # Test 54: NetworkPolicy - PR State Transitions
+#
+# The test-side flow is correct: reconciliationInterval=10s plus ConfigMap
+# nudges (the operator has NO timer-driven requeue, so reconciles only happen
+# on events). KNOWN EXPECTED FAILURE until the operator gains a
+# pending->merged refresh: as of v1.8.x no code path transitions a
+# pr-pending entry to pr-merged for an externally merged PR - the periodic
+# pass only processes entries already in pr-merged (drift/template/stale),
+# the event-driven pass skips namespaces with a pr-pending entry, and
+# pr-merged is only ever set at creation time by immediate auto-merge
+# (verified live + at code level in issue #59). The pr-merged assertion
+# below goes green as soon as that operator gap is fixed.
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,7 +25,9 @@ echo "---------------------------------------------"
 
 BINDER_NAME="test-permissionbinder-networkpolicy-state"
 CONFIGMAP_NAME="permission-config-state"
-TEST_NAMESPACE="test-state-transitions"
+# Dedicated namespace (prefix empty in legacy single-instance mode; name
+# contains "test-" so both cleanup sweeps catch it)
+TEST_NAMESPACE="${TEST_NS_PREFIX}np-test-54"
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
 
 if ! command -v gh &> /dev/null; then
@@ -24,9 +37,12 @@ fi
 
 # Cleanup helper
 cleanup_resources() {
-    cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "$TEST_NAMESPACE" "$GITHUB_REPO" 2>/dev/null || true
+    # Delete the PB first: with a 10s reconciliationInterval the operator
+    # could otherwise recreate artifacts between cleanup and PB removal
+    # (cleanup falls back to a branch-name lookup when the status is gone).
     kubectl delete permissionbinder "$BINDER_NAME" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
     kubectl delete configmap "$CONFIGMAP_NAME" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
+    cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "$TEST_NAMESPACE" "$GITHUB_REPO" 2>/dev/null || true
 }
 
 trap cleanup_resources EXIT
@@ -46,9 +62,10 @@ if ! kubectl_retry kubectl get secret github-gitops-credentials -n "$NAMESPACE" 
 fi
 
 # ----------------------------------------------------------------------------
-# 2. Create PermissionBinder with NetworkPolicy auto-merge disabled
+# 2. Create PermissionBinder with NetworkPolicy auto-merge disabled and a
+#    short reconciliationInterval (PR-state refresh is periodic-only)
 # ----------------------------------------------------------------------------
-info_log "Creating PermissionBinder $BINDER_NAME"
+info_log "Creating PermissionBinder $BINDER_NAME with reconciliationInterval=10s"
 cat <<EOF | kubectl apply -f - >/dev/null 2>&1
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
@@ -77,7 +94,7 @@ spec:
     autoMerge:
       enabled: false
     backupExisting: true
-    reconciliationInterval: "1h"
+    reconciliationInterval: "10s"
 EOF
 
 # ----------------------------------------------------------------------------
@@ -120,8 +137,21 @@ else
     pass_test "PR $PR_NUMBER merged via gh CLI"
 fi
 
-info_log "Waiting for operator to detect merged state (up to 120s)"
-if wait_for_pr_state "$BINDER_NAME" "$TEST_NAMESPACE" "pr-merged" 120; then
+# The merge happened on GitHub only - no Kubernetes event fires, so nudge
+# reconciliation with ConfigMap-annotation touches. NOTE: this makes the
+# refresh OBSERVABLE but cannot make it happen - the operator currently has
+# no pending->merged refresh path (see header); the assertion stays red
+# until that operator gap is fixed.
+info_log "Waiting for operator to detect merged state (up to 120s, nudging reconciliation every 15s)"
+MERGED_RECORDED=false
+for attempt in $(seq 1 8); do
+    touch_np_configmap "$CONFIGMAP_NAME"
+    if wait_for_pr_state "$BINDER_NAME" "$TEST_NAMESPACE" "pr-merged" 15; then
+        MERGED_RECORDED=true
+        break
+    fi
+done
+if [ "$MERGED_RECORDED" = "true" ]; then
     pass_test "PermissionBinder status transitioned to pr-merged"
 else
     CURRENT_STATE=$(kubectl get permissionbinder "$BINDER_NAME" -n "$NAMESPACE" -o jsonpath='{.status.networkPolicies[?(@.namespace=="'$TEST_NAMESPACE'")].state}' 2>/dev/null || echo "")

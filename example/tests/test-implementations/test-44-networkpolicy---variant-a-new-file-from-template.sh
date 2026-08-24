@@ -1,10 +1,24 @@
 #!/bin/bash
 # Test 44: NetworkPolicy - Variant A (New File from Template)
+#
+# Self-contained under the first-owner-wins ownership gate (issues #45/#59):
+# provisions its OWN ConfigMap resolving to DEDICATED namespaces instead of
+# reusing the runner's baseline ConfigMap (permission-config), which is already
+# owned by the baseline PermissionBinder - a second CR referencing it gets the
+# whitelist's namespaces split deterministically between the two CRs and its
+# PRs for the lost namespaces never materialize.
 # Source common functions (SCRIPT_DIR should be set by parent script)
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
+
+BINDER_NAME="test-permissionbinder-networkpolicy"
+CONFIGMAP_NAME="np-test-config-44"
+# Dedicated namespaces (prefix empty in legacy single-instance mode; names
+# contain "test-" so both cleanup sweeps catch them)
+NS_ENGINEER="${TEST_NS_PREFIX}np-test-44"
+NS_VIEWER="${TEST_NS_PREFIX}np-test-44-2"
 
 # ============================================================================
 # ============================================================================
@@ -28,14 +42,14 @@ else
     fi
 fi
 
-# Setup: Create PermissionBinder with NetworkPolicy enabled
-if ! kubectl_retry kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE >/dev/null 2>&1; then
+# Setup: Create PermissionBinder with NetworkPolicy enabled (own ConfigMap)
+if ! kubectl_retry kubectl get permissionbinder "$BINDER_NAME" -n $NAMESPACE >/dev/null 2>&1; then
     info_log "Creating PermissionBinder with NetworkPolicy enabled"
     cat <<EOF | kubectl apply -f - >/dev/null 2>&1
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-permissionbinder-networkpolicy
+  name: $BINDER_NAME
   namespace: $NAMESPACE
 spec:
   prefixes:
@@ -43,7 +57,7 @@ spec:
   roleMapping:
     engineer: "edit"
     viewer: "view"
-  configMapName: "permission-config"
+  configMapName: "$CONFIGMAP_NAME"
   configMapNamespace: "$NAMESPACE"
   networkPolicy:
     enabled: true
@@ -71,18 +85,11 @@ spec:
 EOF
 fi
 
-# Update ConfigMap with test namespaces
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: permission-config
-  namespace: $NAMESPACE
-data:
-  whitelist.txt: |
-    CN=COMPANY-K8S-test-app-engineer,OU=Openshift,DC=example,DC=com
-    CN=COMPANY-K8S-test-app-2-viewer,OU=Openshift,DC=example,DC=com
-EOF
+# Own ConfigMap -> this CR is the first (and only) owner of its namespaces
+if ! create_np_test_configmap "$CONFIGMAP_NAME" "$NS_ENGINEER" "$NS_VIEWER:viewer"; then
+    fail_test "Could not create test ConfigMap $CONFIGMAP_NAME"
+    exit 1
+fi
 
 # Wait for reconciliation (reduced from 10s to 5s - operator processes quickly)
 info_log "Waiting for PermissionBinder to process ConfigMap (5s)"
@@ -94,7 +101,7 @@ WAITED=0
 POLL_INTERVAL=2  # Faster polling: 2 seconds instead of 5
 NAMESPACES_FOUND=""
 while [ $WAITED -lt $MAX_WAIT ]; do
-    NAMESPACES_FOUND=$(kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE -o jsonpath='{.status.networkPolicies[*].namespace}' 2>/dev/null || echo "")
+    NAMESPACES_FOUND=$(kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE -o jsonpath='{.status.networkPolicies[*].namespace}' 2>/dev/null || echo "")
     if [ -n "$NAMESPACES_FOUND" ] && [ "$NAMESPACES_FOUND" != "" ]; then
         break
     fi
@@ -110,11 +117,11 @@ fi
 
 # ============================================================================
 # VERIFICATION: Check PRs for ALL namespaces created by this test
-# Test creates ConfigMap with test-app and test-app-2, so we need to verify both
+# Test creates ConfigMap with $NS_ENGINEER and $NS_VIEWER, so we need to verify both
 # ============================================================================
 
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
-TEST_NAMESPACES=("test-app" "test-app-2")
+TEST_NAMESPACES=("$NS_ENGINEER" "$NS_VIEWER")
 PR_VERIFICATION_FAILED=0
 
 # Function to verify PR for a namespace
@@ -128,11 +135,11 @@ verify_pr_for_namespace() {
     
     # Wait for PR to be created and get PR number from status
     info_log "Waiting for PR to be created for $namespace (polling every 2s, up to 120s)..."
-    pr_number=$(wait_for_pr_in_status "test-permissionbinder-networkpolicy" "$namespace" 120)
+    pr_number=$(wait_for_pr_in_status "$BINDER_NAME" "$namespace" 120)
     
     # If PR number not found, check if PR state indicates it was merged (may need to get PR from GitHub)
     if [ -z "$pr_number" ] || [ "$pr_number" == "" ]; then
-        local pr_state=$(kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$namespace\")].state}" 2>/dev/null || echo "")
+        local pr_state=$(kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$namespace\")].state}" 2>/dev/null || echo "")
         if [ "$pr_state" == "pr-merged" ] || [ "$pr_state" == "pr-pending" ]; then
             info_log "PR state found: $pr_state, but PR number missing. Checking GitHub for recent PRs..."
             if command -v gh &> /dev/null; then
@@ -154,7 +161,7 @@ verify_pr_for_namespace() {
     pass_test "PR number found for $namespace: $pr_number"
     
     # Get PR details from status
-    local pr_details=$(get_pr_from_status "test-permissionbinder-networkpolicy" "$namespace")
+    local pr_details=$(get_pr_from_status "$BINDER_NAME" "$namespace")
     local pr_num pr_url pr_branch pr_state
     IFS='|' read -r pr_num pr_url pr_branch pr_state <<< "$pr_details"
     
@@ -191,10 +198,10 @@ verify_pr_for_namespace() {
             PR_VERIFICATION_FAILED=1
         fi
         
-        # Verify PR contains expected files (only for test-app, as it's the primary test case)
-        if [ "$namespace" == "test-app" ]; then
+        # Verify PR contains expected files (only for $NS_ENGINEER, as it's the primary test case)
+        if [ "$namespace" == "$NS_ENGINEER" ]; then
             info_log "Verifying PR files..."
-            local expected_files="networkpolicies/DEV-cluster/test-app/test-app-deny-all-ingress.yaml networkpolicies/DEV-cluster/kustomization.yaml"
+            local expected_files="networkpolicies/DEV-cluster/$NS_ENGINEER/$NS_ENGINEER-deny-all-ingress.yaml networkpolicies/DEV-cluster/kustomization.yaml"
             if verify_pr_files "$GITHUB_REPO" "$pr_number" "$expected_files"; then
                 pass_test "PR contains expected NetworkPolicy files"
             else
@@ -234,7 +241,7 @@ verify_pr_for_namespace() {
     fi
     
     # Verify PR state in PermissionBinder status
-    local namespace_state=$(kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$namespace\")].state}" 2>/dev/null || echo "")
+    local namespace_state=$(kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE -o jsonpath="{.status.networkPolicies[?(@.namespace==\"$namespace\")].state}" 2>/dev/null || echo "")
     if [ -n "$namespace_state" ]; then
         case "$namespace_state" in
             "pr-created"|"pr-pending"|"pr-merged")
@@ -261,7 +268,7 @@ done
 # ============================================================================
 # CLEANUP: Remove PRs and branches from GitHub (test isolation)
 # IMPORTANT: Cleanup is done AFTER all GitHub verifications are complete
-# IMPORTANT: Cleanup ALL namespaces from ConfigMap (test-app and test-app-2)
+# IMPORTANT: Cleanup ALL namespaces from ConfigMap ($NS_ENGINEER and $NS_VIEWER)
 # ============================================================================
 info_log "=========================================="
 info_log "All PR verifications completed. Starting cleanup..."
@@ -270,7 +277,7 @@ info_log "=========================================="
 # Cleanup all test namespaces (regardless of verification result)
 for test_ns in "${TEST_NAMESPACES[@]}"; do
     info_log "Cleaning up $test_ns namespace..."
-    cleanup_networkpolicy_test_artifacts "test-permissionbinder-networkpolicy" "$test_ns" "$GITHUB_REPO"
+    cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "$test_ns" "$GITHUB_REPO"
 done
 
 # Final cleanup: Remove entire cluster directory

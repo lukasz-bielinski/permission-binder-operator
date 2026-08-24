@@ -1,10 +1,20 @@
 #!/bin/bash
 # Test 50: NetworkPolicy - Metrics Verification
+#
+# Self-contained under the first-owner-wins ownership gate (issues #45/#59):
+# own ConfigMap + dedicated namespace instead of the shared permission-config
+# ConfigMap already owned by the runner's baseline PermissionBinder.
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fi
 source "$SCRIPT_DIR/test-common.sh"
+
+BINDER_NAME="test-permissionbinder-networkpolicy"
+CONFIGMAP_NAME="np-test-config-50"
+# Dedicated namespace (prefix empty in legacy single-instance mode; name
+# contains "test-" so both cleanup sweeps catch it)
+METRICS_NS="${TEST_NS_PREFIX}np-test-50"
 
 # ============================================================================
 # ============================================================================
@@ -25,13 +35,13 @@ if ! kubectl_retry kubectl get secret github-gitops-credentials -n $NAMESPACE >/
 fi
 
 # Setup: Create PermissionBinder with NetworkPolicy enabled
-if ! kubectl_retry kubectl get permissionbinder test-permissionbinder-networkpolicy -n $NAMESPACE >/dev/null 2>&1; then
+if ! kubectl_retry kubectl get permissionbinder $BINDER_NAME -n $NAMESPACE >/dev/null 2>&1; then
     info_log "Creating PermissionBinder with NetworkPolicy enabled"
     cat <<EOF | kubectl apply -f - >/dev/null 2>&1
 apiVersion: permission.permission-binder.io/v1
 kind: PermissionBinder
 metadata:
-  name: test-permissionbinder-networkpolicy
+  name: $BINDER_NAME
   namespace: $NAMESPACE
 spec:
   prefixes:
@@ -39,7 +49,7 @@ spec:
   roleMapping:
     engineer: "edit"
     viewer: "view"
-  configMapName: "permission-config"
+  configMapName: "$CONFIGMAP_NAME"
   configMapNamespace: "$NAMESPACE"
   networkPolicy:
     enabled: true
@@ -78,7 +88,7 @@ fi
 
 # Get initial metric values
 info_log "Getting initial metric values..."
-INITIAL_PR_CREATED=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_prs_created_total' | grep 'cluster="DEV-cluster"' | grep 'namespace="test-metrics"' | awk '{print $2}' | head -1 || echo "0")
+INITIAL_PR_CREATED=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_prs_created_total' | grep 'cluster="DEV-cluster"' | grep "namespace=\"$METRICS_NS\"" | awk '{print $2}' | head -1 || echo "0")
 INITIAL_PR_ERRORS=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_pr_creation_errors_total' | grep 'cluster="DEV-cluster"' | awk '{print $2}' | head -1 || echo "0")
 INITIAL_TEMPLATE_ERRORS=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_template_validation_errors_total' | grep 'cluster="DEV-cluster"' | awk '{print $2}' | head -1 || echo "0")
 
@@ -87,17 +97,11 @@ info_log "  PRs Created: $INITIAL_PR_CREATED"
 info_log "  PR Errors: $INITIAL_PR_ERRORS"
 info_log "  Template Errors: $INITIAL_TEMPLATE_ERRORS"
 
-# Create ConfigMap with test namespace
-cat <<EOF | kubectl apply -f - >/dev/null 2>&1
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: permission-config
-  namespace: $NAMESPACE
-data:
-  whitelist.txt: |
-    CN=COMPANY-K8S-test-metrics-engineer,OU=Openshift,DC=example,DC=com
-EOF
+# Own ConfigMap -> this CR is the first (and only) owner of $METRICS_NS
+if ! create_np_test_configmap "$CONFIGMAP_NAME" "$METRICS_NS"; then
+    fail_test "Could not create test ConfigMap $CONFIGMAP_NAME"
+    exit 1
+fi
 
 # Wait for reconciliation and PR creation
 info_log "Waiting for reconciliation and PR creation (30s)..."
@@ -105,7 +109,7 @@ sleep 30
 
 # Get final metric values
 info_log "Getting final metric values..."
-FINAL_PR_CREATED=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_prs_created_total' | grep 'cluster="DEV-cluster"' | grep 'namespace="test-metrics"' | awk '{print $2}' | head -1 || echo "0")
+FINAL_PR_CREATED=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_prs_created_total' | grep 'cluster="DEV-cluster"' | grep "namespace=\"$METRICS_NS\"" | awk '{print $2}' | head -1 || echo "0")
 FINAL_PR_ERRORS=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_pr_creation_errors_total' | grep 'cluster="DEV-cluster"' | awk '{print $2}' | head -1 || echo "0")
 FINAL_TEMPLATE_ERRORS=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep 'permission_binder_networkpolicy_template_validation_errors_total' | grep 'cluster="DEV-cluster"' | awk '{print $2}' | head -1 || echo "0")
 
@@ -120,7 +124,7 @@ METRICS_VERIFICATION_FAILED=0
 # Check permission_binder_networkpolicy_prs_created_total
 if [ -n "$FINAL_PR_CREATED" ] && [ "$FINAL_PR_CREATED" != "0" ]; then
     # Check if metric exists with correct labels
-    METRIC_EXISTS=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep -c 'permission_binder_networkpolicy_prs_created_total.*cluster="DEV-cluster".*namespace="test-metrics".*variant="new"' || echo "0")
+    METRIC_EXISTS=$(curl -s http://localhost:$METRICS_PORT/metrics 2>/dev/null | grep -c "permission_binder_networkpolicy_prs_created_total.*cluster=\"DEV-cluster\".*namespace=\"$METRICS_NS\".*variant=\"new\"" || echo "0")
     if [ "$METRIC_EXISTS" -gt 0 ]; then
         pass_test "permission_binder_networkpolicy_prs_created_total metric exists with correct labels"
     else
@@ -162,7 +166,7 @@ fi
 
 # Cleanup test artifacts
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
-cleanup_networkpolicy_test_artifacts "test-permissionbinder-networkpolicy" "test-metrics" "$GITHUB_REPO"
+cleanup_networkpolicy_test_artifacts "$BINDER_NAME" "$METRICS_NS" "$GITHUB_REPO"
 cleanup_networkpolicy_files_from_repo "$GITHUB_REPO" "" "DEV-cluster"
 
 # Final test result

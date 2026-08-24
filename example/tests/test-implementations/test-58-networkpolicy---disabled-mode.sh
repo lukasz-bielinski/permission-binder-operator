@@ -14,7 +14,9 @@ echo "---------------------------------------"
 
 BINDER_NAME="test-permissionbinder-networkpolicy-disabled"
 CONFIGMAP_NAME="permission-config-disabled"
-TEST_NAMESPACE="test-disabled"
+# Dedicated namespace (prefix empty in legacy single-instance mode; name
+# contains "test-" so both cleanup sweeps catch it)
+TEST_NAMESPACE="${TEST_NS_PREFIX}np-test-58"
 
 cleanup_resources() {
     kubectl delete permissionbinder "$BINDER_NAME" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
@@ -73,7 +75,7 @@ else
 fi
 
 # Ensure metrics have no entries referencing namespace
-METRIC_MATCH=$(curl -s http://localhost:8080/metrics 2>/dev/null | grep "test-disabled" || true)
+METRIC_MATCH=$(curl -s http://localhost:8080/metrics 2>/dev/null | grep "$TEST_NAMESPACE" || true)
 if [ -z "$METRIC_MATCH" ]; then
     pass_test "No NetworkPolicy metrics emitted for disabled configuration"
 else

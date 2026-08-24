@@ -263,6 +263,53 @@ ${whitelist}
 EOF
 }
 
+# create_np_test_configmap <configmap_name> <namespace[:role]> [more...]
+# NetworkPolicy-test analogue of create_sa_test_configmap (issue #59): a
+# ConfigMap in $NAMESPACE whose whitelist.txt CNs resolve to DEDICATED
+# namespaces, so the NP test's PermissionBinder is the first (and only) owner
+# of everything it manages instead of colliding with the runner's baseline CR
+# on the shared permission-config ConfigMap (first-owner-wins, issue #45).
+# Role defaults to "engineer"; append ":role" to override (e.g. "my-ns:viewer").
+# The PermissionBinder under test must map the role to some ClusterRole.
+create_np_test_configmap() {
+    local cm_name=$1
+    shift
+    local whitelist="" entry ns role
+    for entry in "$@"; do
+        ns=${entry%%:*}
+        role="engineer"
+        case "$entry" in
+            *:*) role=${entry##*:} ;;
+        esac
+        whitelist="${whitelist}    CN=COMPANY-K8S-${ns}-${role},OU=Openshift,DC=example,DC=com"$'\n'
+    done
+    whitelist=${whitelist%$'\n'}
+    apply_yaml_with_retry <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${cm_name}
+  namespace: ${NAMESPACE:?}
+data:
+  whitelist.txt: |
+${whitelist}
+EOF
+}
+
+# touch_np_configmap <configmap_name> - annotate the ConfigMap to fire a
+# watch event and force a reconcile pass. The operator has NO timer-driven
+# requeue: "periodic" NetworkPolicy reconciliation (drift/template/stale
+# checks on pr-merged entries only — it does NOT refresh pr-pending entries
+# from GitHub; no such path exists yet) only runs inside an event-triggered
+# reconcile once reconciliationInterval has elapsed. After out-of-band GitHub changes (a PR
+# merged by a test, a template edited) nothing fires a Kubernetes event, so
+# the PermissionBinder status never refreshes on its own - verified live in
+# issue #59 (lastNetworkPolicyReconciliation frozen despite a 10s interval).
+touch_np_configmap() {
+    kubectl annotate configmap "$1" -n "${NAMESPACE:?}" \
+        permission-binder.io/e2e-nudge="$(date +%s%N)" --overwrite >/dev/null 2>&1 || true
+}
+
 # wait_for_cmd <timeout_s> <cmd...> - poll every 2s until cmd succeeds.
 # Timeout is scaled by E2E_WAIT_MULT. Returns 1 on timeout.
 wait_for_cmd() {

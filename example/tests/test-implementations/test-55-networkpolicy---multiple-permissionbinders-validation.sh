@@ -16,6 +16,11 @@ BINDER_A="test-permissionbinder-networkpolicy-multi-a"
 BINDER_B="test-permissionbinder-networkpolicy-multi-b"
 CONFIGMAP_A="permission-config-multi-a"
 CONFIGMAP_B="permission-config-multi-b"
+# Dedicated namespaces (prefix empty in legacy single-instance mode; names
+# contain "test-" so both cleanup sweeps catch them - the previous unprefixed
+# multi-a/multi-b names matched NEITHER sweep and survived as orphans)
+NS_A="${TEST_NS_PREFIX}np-test-55-a"
+NS_B="${TEST_NS_PREFIX}np-test-55-b"
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
 METRICS_PORT=8080
 
@@ -23,6 +28,10 @@ METRICS_PORT=8080
 cleanup_resources() {
     kubectl delete permissionbinder "$BINDER_A" "$BINDER_B" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
     kubectl delete configmap "$CONFIGMAP_A" "$CONFIGMAP_B" -n "$NAMESPACE" --ignore-not-found=true >/dev/null 2>&1
+    # Both CRs create PRs for their namespaces (auto-merge off) - remove them
+    # from the fixture repo or the branches leak into later runs.
+    cleanup_networkpolicy_test_artifacts "$BINDER_A" "$NS_A" "$GITHUB_REPO" 2>/dev/null || true
+    cleanup_networkpolicy_test_artifacts "$BINDER_B" "$NS_B" "$GITHUB_REPO" 2>/dev/null || true
 }
 
 trap cleanup_resources EXIT
@@ -114,7 +123,7 @@ metadata:
   namespace: $NAMESPACE
 data:
   whitelist.txt: |
-    CN=COMPANY-K8S-multi-a-engineer,OU=Openshift,DC=example,DC=com
+    CN=COMPANY-K8S-$NS_A-engineer,OU=Openshift,DC=example,DC=com
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -123,7 +132,7 @@ metadata:
   namespace: $NAMESPACE
 data:
   whitelist.txt: |
-    CN=COMPANY-K8S-multi-b-engineer,OU=Openshift,DC=example,DC=com
+    CN=COMPANY-K8S-$NS_B-engineer,OU=Openshift,DC=example,DC=com
 EOF
 
 info_log "Waiting for reconciliation (20s)"
