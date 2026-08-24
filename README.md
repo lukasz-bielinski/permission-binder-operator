@@ -444,7 +444,7 @@ cosign verify-attestation \
 ### Requirements
 - Single replica (HA-ready with leader election enabled)
 - Namespace: `permissions-binder-operator`
-- RBAC: `cluster-admin` (operator manages cluster-wide RBAC)
+- RBAC: scoped ClusterRole `operator-manager-role` (least-privilege, incl. `bind` verb; `cluster-admin` NOT required)
 - Memory: 128Mi-512Mi
 - CPU: 100m-500m
 
