@@ -825,7 +825,7 @@ spec:
 
 ---
 
-## [Unreleased]
+## Historical roadmap (v1.0.0 era)
 
 ### Planned for v1.1.0
 - [ ] Enhanced unit test coverage
@@ -895,3 +895,19 @@ kubectl get pods -n permissions-binder-operator
 **License**: Apache 2.0  
 **Repository**: https://github.com/lukasz-bielinski/permission-binder-operator
 
+
+[Unreleased]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.7.0...v1.8.0
+[1.7.0]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.6.7...v1.7.0
+[1.6.6]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.6.5...v1.6.6
+[1.6.5]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.6.3...v1.6.5
+[1.6.0]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.5.7...v1.6.0
+[1.5.7]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.5.6...v1.5.7
+[1.5.6]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.5.4...v1.5.6
+[1.5.4]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.5.3...v1.5.4
+[1.5.3]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.5.2...v1.5.3
+[1.5.2]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.4.2...v1.5.0
+[1.4.0]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.3.0...v1.4.0
+[1.0.0]: https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.0.0
