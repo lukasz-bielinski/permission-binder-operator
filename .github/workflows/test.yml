@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: operator/go.mod
+          cache-dependency-path: operator/go.sum
+
+      - name: Run unit and envtest suites
+        working-directory: operator
+        run: make test
+
+      - name: Check for uncommitted generated changes
+        run: |
+          # make test runs manifests/generate/fmt; any resulting diff means
+          # generated files or formatting were not committed
+          git diff --exit-code || {
+            echo "::error::make test modified files - run 'make test' locally and commit the changes"
+            exit 1
+          }
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage
+          path: operator/cover.out
+          if-no-files-found: ignore
