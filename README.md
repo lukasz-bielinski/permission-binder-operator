@@ -393,14 +393,22 @@ See detailed scenarios: [example/e2e-test-scenarios.md](example/e2e-test-scenari
 All Docker images are **cryptographically signed** and include **supply chain attestations** for maximum security:
 
 ### 🔐 Security Features
-- ✅ **Cosign Signatures** - All images signed with Sigstore Cosign (keyless signing)
+- ✅ **Cosign Signatures** - Every image (index and each platform manifest) carries two Sigstore Cosign signatures:
+  - **keyless** (Fulcio/Rekor) - public provenance bound to the GitHub Actions workflow identity
+  - **key pair** - verifiable offline with [`cosign.pub`](cosign.pub); this is what OpenShift `ClusterImagePolicy` checks
 - ✅ **GitHub Attestations** - SLSA provenance for complete build verification
 - ✅ **Multi-Architecture** - AMD64 and ARM64 builds, both signed
 - ✅ **Automated Signing** - GitHub Actions automatically signs every release
 
 ### 🔍 Verify Image Authenticity
 
-**Using Cosign (recommended):**
+**Using Cosign with the repository public key (offline, no Sigstore infrastructure needed):**
+```bash
+# cosign.pub is committed at the repository root
+cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.8.0
+```
+
+**Using Cosign keyless (workflow identity):**
 ```bash
 # Verify image signature
 cosign verify \
@@ -408,6 +416,25 @@ cosign verify \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
   lukaszbielinski/permission-binder-operator:1.8.0
 ```
+
+**Enforcing on OpenShift (`ClusterImagePolicy`, OpenShift 4.17+):**
+```yaml
+apiVersion: config.openshift.io/v1
+kind: ClusterImagePolicy
+metadata:
+  name: permission-binder-operator
+spec:
+  scopes:
+    - docker.io/lukaszbielinski/permission-binder-operator
+  policy:
+    rootOfTrust:
+      policyType: PublicKey
+      publicKey:
+        keyData: <base64 -w0 cosign.pub>
+    signedIdentity:
+      matchPolicy: MatchRepoDigestOrExact
+```
+The key pair does not change between releases, so a new tag needs no policy change. Signatures are stored in the legacy `sha256-<digest>.sig` tag format on purpose: CRI-O verifies that format, not the newer OCI-referrers bundle format, which is why CI pins the cosign v2 line. Releases published before key-pair signing existed are signed retroactively with the `Sign existing image` workflow (`workflow_dispatch`, input: index digest).
 
 **Using GitHub CLI (for attestations):**
 ```bash

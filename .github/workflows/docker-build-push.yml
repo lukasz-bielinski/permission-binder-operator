@@ -67,6 +67,12 @@ jobs:
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
+        with:
+          # Pin the v2 line. It stores signatures as the legacy
+          # `sha256-<digest>.sig` tag, which is what CRI-O / OpenShift
+          # ClusterImagePolicy verifies. cosign v3 defaults to the Sigstore
+          # bundle format stored via OCI referrers, which CRI-O cannot read.
+          cosign-release: 'v2.6.5'
 
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
@@ -129,9 +135,31 @@ jobs:
       
       - name: Sign image with Cosign
         if: github.event_name != 'pull_request'
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
-          cosign sign --yes \
-            ${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}
+          # --recursive signs every per-platform manifest as well as the index.
+          # CRI-O verifies the platform manifest digest it pulls, not the index.
+
+          # 1. Keyless (Fulcio/Rekor): public provenance tied to this workflow identity.
+          cosign sign --yes --recursive "$IMAGE_REF"
+
+          # 2. Key pair: verified by OpenShift ClusterImagePolicy (PublicKey keyData = cosign.pub).
+          : "${COSIGN_PRIVATE_KEY:?COSIGN_PRIVATE_KEY secret is not set - key-pair signature required}"
+          cosign sign --yes --recursive --key env://COSIGN_PRIVATE_KEY "$IMAGE_REF"
+
+      - name: Verify key-pair signature (index + every child manifest)
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}
+        run: |
+          cosign verify --key cosign.pub "$IMAGE_REF" > /dev/null
+          for d in $(docker buildx imagetools inspect --raw "$IMAGE_REF" | jq -r '.manifests[]?.digest'); do
+            cosign verify --key cosign.pub "${IMAGE_NAME}@${d}" > /dev/null
+            echo "verified ${d}"
+          done
       
       - name: Generate GitHub Attestation (SLSA Provenance)
         if: github.event_name != 'pull_request'

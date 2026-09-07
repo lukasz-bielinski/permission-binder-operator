@@ -80,3 +80,6 @@ AGENTS.md
 operator/bin/
 operator/main
 operator/git-askpass-helper
+
+# cosign private key (only cosign.pub is tracked)
+cosign.key
