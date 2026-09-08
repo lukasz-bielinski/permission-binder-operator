@@ -30,7 +30,7 @@ stringData:
 ```
 
 **Required Secret Keys:**
-- `domain_server` - LDAP/AD server URL (supports `ldap://` and `ldaps://`)
+- `domain_server` - LDAP/AD server URL. Accepted forms: `ldaps://host[:port]` (TLS, default port 636), `ldap://host[:port]` (plain, default port 389), or a bare `host[:port]` (treated as plain LDAP). Scheme is case-insensitive; surrounding whitespace is ignored; any other scheme is rejected.
 - `domain_username` - Service account DN with group creation permissions
 - `domain_password` - Service account password
 

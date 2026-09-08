@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test 61: LDAP Mock Group Creation (LDAPS + custom CA)
+# Test 61: LDAP Mock Group Creation (LDAPS + custom CA, then plain ldap://)
 #
 # End-to-end validation of createLdapGroups against a real (mock) LDAP server
 # over VERIFIED TLS (ldapTlsVerify: true + custom CA from the "ca.crt" Secret
@@ -10,6 +10,12 @@
 # FQDN) with openssl, mounts them into osixia/openldap via a Secret, and
 # asserts the operator's verified-TLS log fields (hasCaCert/tlsVerify/customCa)
 # plus the group entry in LDAP itself. See example/tests/ldap-mock/README.md.
+#
+# Phase 2 (issue #77) rewrites the credentials Secret to plain
+# ldap://<FQDN>:389 (no ca.crt) and asserts a second group is created through
+# the plain-LDAP branch of ConnectLdap against the same mock. That phase is
+# RED on operator images built before the #77 fix (they dialed
+# ldap://ldap://host:389) and green from the fix onward.
 
 # Source common functions
 if [ -z "$SCRIPT_DIR" ]; then
@@ -20,8 +26,8 @@ source "$SCRIPT_DIR/test-common.sh"
 # ============================================================================
 # ============================================================================
 echo ""
-echo "Test 61: LDAP Mock Group Creation (LDAPS + custom CA)"
-echo "------------------------------------------------------"
+echo "Test 61: LDAP Mock Group Creation (LDAPS + custom CA, then plain ldap://)"
+echo "---------------------------------------------------------------------------"
 
 MOCK_DIR="$SCRIPT_DIR/ldap-mock"
 MOCK_NS="${TEST_NS_PREFIX}ldap-mock"
@@ -36,6 +42,10 @@ LDAP_ADMIN_DN="cn=admin,dc=example,dc=com"
 LDAP_ADMIN_PW="MockAdmin123!"
 GROUP_CN="COMPANY-K8S-${TARGET_NS}-developer"
 GROUP_DN="CN=${GROUP_CN},OU=Kubernetes,DC=example,DC=com"
+# Phase 2 (plain ldap://): second namespace/group created through the plain branch
+TARGET_NS_PLAIN="${TEST_NS_PREFIX}ldap-test-61-plain"
+GROUP_CN_PLAIN="COMPANY-K8S-${TARGET_NS_PLAIN}-developer"
+GROUP_DN_PLAIN="CN=${GROUP_CN_PLAIN},OU=Kubernetes,DC=example,DC=com"
 
 cleanup_resources() {
     # PB first: the finalizer removes managed RoleBindings.
@@ -49,6 +59,7 @@ cleanup_resources() {
     # this trap is its only teardown path; in instance mode the prefix sweep
     # would also catch it between tests, but the trap remains the primary path.
     kubectl delete namespace "$TARGET_NS" --ignore-not-found=true --wait=false >/dev/null 2>&1
+    kubectl delete namespace "$TARGET_NS_PLAIN" --ignore-not-found=true --wait=false >/dev/null 2>&1
     kubectl delete namespace "$MOCK_NS" --ignore-not-found=true --wait=false >/dev/null 2>&1
     e2e_sleep 5
     rm -rf "$CERT_DIR"
@@ -307,6 +318,78 @@ if wait_for_cmd 60 check_group_in_ldap; then
     fi
 else
     fail_test "LDAP entry cn=${GROUP_CN} not found under ou=Kubernetes"
+fi
+
+# ----------------------------------------------------------------------------
+# 7. Phase 2: plain ldap://<FQDN>:389 (no TLS, no ca.crt) against the same mock
+# ----------------------------------------------------------------------------
+# Regression check for issue #77: ConnectLdap used to dial
+# "ldap://ldap://host:389" for an explicit ldap:// domain_server, so this
+# phase is RED on operator images built before the fix and green from the
+# fix onward. Ordering matters: the Secret is rewritten BEFORE the ConfigMap
+# is bumped - the ConfigMap resourceVersion change is the reconcile trigger,
+# and Secrets are read uncached, so the reconcile that creates the second
+# group can only have connected through the new plain URL.
+info_log "Phase 2: rewriting $CREDS_SECRET to plain ldap://${FQDN}:389 (no ca.crt)"
+T1=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+kubectl create secret generic "$CREDS_SECRET" -n "$NAMESPACE" \
+    --from-literal=domain_server="ldap://${FQDN}:389" \
+    --from-literal=domain_username="$LDAP_ADMIN_DN" \
+    --from-literal=domain_password="$LDAP_ADMIN_PW" \
+    --dry-run=client -o yaml | apply_yaml_with_retry
+
+# Guard (environment, not product): the re-apply must have replaced the URL
+# and dropped ca.crt, otherwise the phase would not exercise the plain branch.
+LIVE_SERVER=$(kubectl get secret "$CREDS_SECRET" -n "$NAMESPACE" \
+    -o jsonpath='{.data.domain_server}' 2>/dev/null | base64 -d 2>/dev/null)
+LIVE_CA=$(kubectl get secret "$CREDS_SECRET" -n "$NAMESPACE" \
+    -o jsonpath='{.data.ca\.crt}' 2>/dev/null)
+if [ "$LIVE_SERVER" != "ldap://${FQDN}:389" ] || [ -n "$LIVE_CA" ]; then
+    fail_test "Phase 2 setup: Secret not rewritten (domain_server='$LIVE_SERVER', ca.crt present: $([ -n "$LIVE_CA" ] && echo yes || echo no))"
+    exit 1
+fi
+
+info_log "Phase 2: adding ${GROUP_DN_PLAIN} to the whitelist (ConfigMap bump triggers reconcile), T1=$T1"
+apply_yaml_with_retry <<EOF2
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${CONFIGMAP_NAME}
+  namespace: ${NAMESPACE}
+data:
+  whitelist.txt: |-
+    ${GROUP_DN}
+    ${GROUP_DN_PLAIN}
+EOF2
+
+op_logs_p2() {
+    kubectl logs -n "$NAMESPACE" deployment/operator-controller-manager \
+        --since-time="$T1" 2>/dev/null
+}
+# The "server" field is the raw Secret value, so it distinguishes the plain
+# phase from phase 1's ldaps://...:636 line even inside the same log window.
+check_connect_plain_log() {
+    op_logs_p2 | grep 'Connected to LDAP server' | grep -q "\"server\":\"ldap://${FQDN}:389\""
+}
+check_group_plain_in_ldap() {
+    kubectl exec -n "$MOCK_NS" deploy/openldap -- \
+        ldapsearch -x -H ldap://localhost:389 \
+        -D "$LDAP_ADMIN_DN" -w "$LDAP_ADMIN_PW" \
+        -b "OU=Kubernetes,DC=example,DC=com" "(cn=${GROUP_CN_PLAIN})" \
+        dn objectClass cn sAMAccountName 2>/dev/null \
+        | grep -q "objectClass: group"
+}
+
+if wait_for_cmd 120 check_connect_plain_log; then
+    pass_test "Phase 2: operator log 'Connected to LDAP server' with \"server\":\"ldap://${FQDN}:389\""
+else
+    fail_test "Phase 2: no 'Connected to LDAP server' line for ldap://${FQDN}:389 since T1 (issue #77 regression?)"
+fi
+
+if wait_for_cmd 60 check_group_plain_in_ldap; then
+    pass_test "Phase 2: LDAP entry cn=${GROUP_CN_PLAIN} created over plain ldap:// (objectClass=group)"
+else
+    fail_test "Phase 2: LDAP entry cn=${GROUP_CN_PLAIN} not found under ou=Kubernetes"
 fi
 
 echo ""

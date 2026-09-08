@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -362,6 +363,59 @@ func TestBuildTlsConfig(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestNormalizeLdapURL - domain_server forms accepted by ConnectLdap (issue #77)
+func TestNormalizeLdapURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		server  string
+		wantURL string
+		wantTLS bool
+		wantErr bool
+	}{
+		{name: "ldap with port", server: "ldap://ldap.example.com:389", wantURL: "ldap://ldap.example.com:389"},
+		{name: "ldaps with port", server: "ldaps://ldap.example.com:636", wantURL: "ldaps://ldap.example.com:636", wantTLS: true},
+		{name: "ldap without port (go-ldap defaults 389)", server: "ldap://ldap.example.com", wantURL: "ldap://ldap.example.com"},
+		{name: "ldaps without port (go-ldap defaults 636)", server: "ldaps://ldap.example.com", wantURL: "ldaps://ldap.example.com", wantTLS: true},
+		{name: "bare host:port is plain", server: "ldap.example.com:389", wantURL: "ldap://ldap.example.com:389"},
+		{name: "bare host is plain", server: "ldap.example.com", wantURL: "ldap://ldap.example.com"},
+		{name: "uppercase LDAP scheme", server: "LDAP://ldap.example.com:389", wantURL: "ldap://ldap.example.com:389"},
+		{name: "mixed-case Ldaps scheme", server: "Ldaps://ldap.example.com:636", wantURL: "ldaps://ldap.example.com:636", wantTLS: true},
+		{name: "surrounding whitespace and newline", server: "  ldap://ldap.example.com:389\n", wantURL: "ldap://ldap.example.com:389"},
+		{name: "ipv6 literal", server: "ldaps://[2001:db8::1]:636", wantURL: "ldaps://[2001:db8::1]:636", wantTLS: true},
+		{name: "empty", server: "", wantErr: true},
+		{name: "whitespace only", server: "   ", wantErr: true},
+		{name: "scheme without host", server: "ldap://", wantErr: true},
+		{name: "unsupported scheme", server: "ftp://ldap.example.com:21", wantErr: true},
+		{name: "ldapi unsupported", server: "ldapi:///var/run/slapd/ldapi", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, useTLS, err := normalizeLdapURL(tt.server)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Expected error, got URL %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if got != tt.wantURL || useTLS != tt.wantTLS {
+				t.Errorf("Got (%q, tls=%v), want (%q, tls=%v)", got, useTLS, tt.wantURL, tt.wantTLS)
+			}
+		})
+	}
+}
+
+// TestConnectLdapRejectsUnsupportedScheme - rejected before any network I/O
+func TestConnectLdapRejectsUnsupportedScheme(t *testing.T) {
+	_, err := ConnectLdap(&LdapCredentials{Server: "ftp://ldap.example.com:389"}, true)
+	if err == nil || !strings.Contains(err.Error(), "unsupported scheme") {
+		t.Fatalf("Expected unsupported-scheme error, got %v", err)
 	}
 }
 
