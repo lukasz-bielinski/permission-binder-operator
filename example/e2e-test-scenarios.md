@@ -46,14 +46,14 @@ This document contains **62 comprehensive end-to-end test scenarios** (Pre-Test 
 
 ### Setup
 ```bash
-export KUBECONFIG=$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)
+export KUBECONFIG=/path/to/kubeconfig   # default: $HOME/.kube/config (see tests/README.md "Runner environment variables")
 cd example
 kubectl apply -k .
 ```
 
 ### Cleanup
 ```bash
-export KUBECONFIG=$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)
+export KUBECONFIG=/path/to/kubeconfig   # default: $HOME/.kube/config (see tests/README.md "Runner environment variables")
 kubectl delete -k .
 ```
 

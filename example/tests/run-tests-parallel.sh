@@ -117,6 +117,26 @@ if [ ! -r "${KUBECONFIG%%:*}" ]; then     # KUBECONFIG may be a colon-separated 
 fi
 export KUBECONFIG
 
+# Cheap validation of the runner overrides (same rules as
+# run-tests-full-isolation.sh): catch them here with ONE message instead of
+# N identical slot failures after the CRD install and the legacy sweep.
+if [ -n "${OPERATOR_IMAGE:-}" ]; then
+    if ! [[ "$OPERATOR_IMAGE" =~ ^[A-Za-z0-9._/:@-]+$ ]]; then
+        echo "ERROR: OPERATOR_IMAGE contains unexpected characters: $OPERATOR_IMAGE" >&2
+        exit 1
+    fi
+    if ! [[ "${OPERATOR_IMAGE_PULL_POLICY:-Always}" =~ ^(Always|IfNotPresent|Never)$ ]]; then
+        echo "ERROR: OPERATOR_IMAGE_PULL_POLICY must be Always, IfNotPresent or Never (got: $OPERATOR_IMAGE_PULL_POLICY)" >&2
+        exit 1
+    fi
+fi
+for var in GITHUB_GITOPS_SECRET_FILE GITHUB_GITOPS_READONLY_SECRET_FILE; do
+    if [ -n "${!var:-}" ] && [ ! -r "${!var}" ]; then
+        echo "ERROR: $var not readable: ${!var}" >&2
+        exit 1
+    fi
+done
+
 # ---------------------------------------------------------------------------
 # Sequential baseline mode: run the full-isolation runner as-is and record the
 # wall-clock so parallel speedups can be measured against it (issue #36).
@@ -350,6 +370,16 @@ if [ "$SERIAL_RC" -eq 0 ]; then
 else
     log -e "❌ Pool C finished in $((SERIAL_END - SERIAL_START))s — ${RED}FAIL (exit $SERIAL_RC)${NC}"
 fi
+log ""
+
+# Tear down Pool C's leftovers too (per-test cleanup runs BEFORE each test,
+# so the last test's legacy operator, CR, namespaces and the
+# permission-binder-operator-metrics ServiceMonitor would otherwise outlive
+# the suite - issue #79 expects a full run to leave nothing behind).
+log "Tearing down Pool C (legacy) leftovers..."
+"$SCRIPT_DIR/cleanup-operator.sh" >>"/tmp/e2e-parallel-${SUITE_ID}-teardown-legacy.log" 2>&1 \
+    && log "  ✅ Pool C leftovers torn down" \
+    || log "  ⚠️  Pool C teardown had warnings (/tmp/e2e-parallel-${SUITE_ID}-teardown-legacy.log)"
 log ""
 
 # ---------------------------------------------------------------------------

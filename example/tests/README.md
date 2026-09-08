@@ -45,8 +45,8 @@ All optional; read by `run-tests-full-isolation.sh` and inherited by every slot 
 
 | Variable | Default | Effect |
 |---|---|---|
-| `KUBECONFIG` | `$HOME/.kube/config` | Kubeconfig for every `kubectl` call. Both runners and a standalone `cleanup-operator.sh` exit with `ERROR: kubeconfig not readable: <path>` when the (first, if colon-separated) file is unreadable, then run a preflight `kubectl get --raw /readyz --request-timeout=10s` and exit **before any cleanup** when the API server does not answer. The resolved path and `kubectl config current-context` are printed in the run banner. |
-| `OPERATOR_IMAGE` | tag committed in `deployment/operator-deployment.yaml` | Run the suite against another image (`repo:tag` or `repo@sha256:...`). The override is rendered into a per-run copy `$RUN_DIR/operator-deployment[-INSTANCE]-image.yaml` in both legacy and `INSTANCE` modes; the committed manifest is never modified. The runner logs `Operator image override: ...`, prints the live Deployment image (`Image: ...`) after every deploy, and aborts the run if it differs from the override. Allowed characters: `A-Za-z0-9._/:@-`. |
+| `KUBECONFIG` | `$HOME/.kube/config` | Kubeconfig for every `kubectl` call. Both runners and a standalone `cleanup-operator.sh` exit with `ERROR: kubeconfig not readable: <path>` when the (first, if colon-separated) file is unreadable, then run a preflight `kubectl get --raw /readyz --request-timeout=10s` (`cleanup-operator.sh` probes 3 times, 5 s apart) and exit **before any cleanup** when the API server does not answer. The resolved path and `kubectl config current-context` are printed by every script before it touches the cluster. |
+| `OPERATOR_IMAGE` | tag committed in `deployment/operator-deployment.yaml` | Run the suite against another image (`repo:tag` or `repo@sha256:...`). The override is rendered into a per-run copy `$RUN_DIR/operator-deployment[-INSTANCE]-image.yaml` in both legacy and `INSTANCE` modes; the committed manifest is never modified. The runner logs `Operator image override: ...`, prints the live Deployment image (`Image: ...`, read with up to 3 attempts) after every deploy, and aborts the run if a readable image differs from the override (an unreadable one only fails that test). Allowed characters: `A-Za-z0-9._/:@-`; `run-tests-parallel.sh` validates this once up front. |
 | `OPERATOR_IMAGE_PULL_POLICY` | `Always` when `OPERATOR_IMAGE` is set | `imagePullPolicy` for the override (`Always`, `IfNotPresent` or `Never`), so moving tags such as `sha-<7>` or `latest` are re-pulled on every deploy. Ignored without `OPERATOR_IMAGE` (the manifest value is kept). |
 | `GITHUB_GITOPS_SECRET_FILE` | `<repo>/temp/github-gitops-credentials-secret.yaml` | Secret manifest with the GitHub GitOps credentials for the NetworkPolicy tests (see [GitHub Credentials](#github-credentials-secrets)). Honoured by the runner, by `get_np_token`/`np_gh` in `test-common.sh` and by every NetworkPolicy test. An explicit path that is unreadable is a hard error. |
 | `GITHUB_GITOPS_READONLY_SECRET_FILE` | `<repo>/temp/github-gitops-credentials-readonly-secret.yaml` | Read-only credentials manifest used by test 57. |
@@ -134,8 +134,10 @@ Results are saved to:
 - Deletes all operator-managed Namespaces
 - Deletes operator deployment and related resources
 - Deletes GitHub GitOps credentials Secret (if exists)
-- Deletes the operator's ServiceMonitor from the `monitoring` namespace (`permission-binder-operator-metrics[-INSTANCE]`; skipped when the ServiceMonitor CRD is not installed)
-- Refuses to run (exit 1, before any delete) when `KUBECONFIG` is unreadable or the API server does not answer `/readyz`
+- Deletes the operator's ServiceMonitor from the `monitoring` namespace (`permission-binder-operator-metrics[-INSTANCE]`; skipped when the ServiceMonitor CRD is not installed; a real delete error is printed, not masked)
+- Refuses to run (exit 1, before any delete) when `KUBECONFIG` is unreadable or the API server does not answer `/readyz` (3 probes, 5 s apart); prints the kubeconfig path and context first
+- The runner retries a failed cleanup once and marks the test **FAIL** (skipping deploy) if it still exits non-zero, so a test never runs on top of the previous test's state
+- `run-tests-parallel.sh` runs it once more after Pool C, so a full parallel run leaves no operator or ServiceMonitor behind
 
 ### Step 2: Fresh Operator Deployment
 ```bash

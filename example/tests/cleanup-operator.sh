@@ -74,10 +74,25 @@ if [ ! -r "${KUBECONFIG%%:*}" ]; then     # KUBECONFIG may be a colon-separated 
     exit 1
 fi
 export KUBECONFIG
-if ! kubectl get --raw /readyz --request-timeout=10s >/dev/null 2>&1; then
-    echo -e "${RED}ERROR: API server not ready via KUBECONFIG=$KUBECONFIG (kubectl get --raw /readyz failed)${NC}" >&2
+# Three probes 5s apart: the runner calls this before EVERY test, so a single
+# 10s blip must not turn into an all-or-nothing skipped cleanup.
+READYZ_OK=false
+for readyz_attempt in 1 2 3; do
+    if kubectl get --raw /readyz --request-timeout=10s >/dev/null 2>&1; then
+        READYZ_OK=true
+        break
+    fi
+    [ "$readyz_attempt" -lt 3 ] && sleep 5
+done
+if [ "$READYZ_OK" != true ]; then
+    echo -e "${RED}ERROR: API server not ready via KUBECONFIG=$KUBECONFIG (kubectl get --raw /readyz failed 3 times)${NC}" >&2
     exit 1
 fi
+# Say which cluster is about to be swept (this script deletes namespaces by
+# regex and, with --full, the CRD - the default kubeconfig may not be the
+# cluster the caller had in mind).
+echo "Kubeconfig: $KUBECONFIG (context: $(kubectl config current-context 2>/dev/null || echo '<none>'))"
+echo ""
 
 # PermissionBinder deletion MUST complete (verified gone) BEFORE the operator
 # deployment is removed: once the operator is gone nothing processes the PB
@@ -173,8 +188,11 @@ kubectl delete clusterrolebinding \
 # "monitoring" namespace (where Prometheus discovers it), with a per-instance
 # name; guard on the CRD so clusters without prometheus-operator stay quiet.
 if kubectl get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1; then
+    # --ignore-not-found makes a missing object exit 0, so the fallback fires
+    # only on real errors (RBAC, timeout, API group down): keep stderr visible
+    # instead of reporting a leaked ServiceMonitor as fine.
     kubectl delete servicemonitor "permission-binder-operator-metrics${RBAC_SUFFIX}" -n monitoring \
-        --ignore-not-found=true --timeout=30s 2>/dev/null || echo "ServiceMonitor not found (OK)"
+        --ignore-not-found=true --timeout=30s || echo "⚠️  ServiceMonitor delete failed (see above)"
 fi
 
 if [ "$FULL_CLEANUP" = true ]; then

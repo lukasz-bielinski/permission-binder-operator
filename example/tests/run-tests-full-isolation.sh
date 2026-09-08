@@ -381,7 +381,27 @@ for test_id in "${TEST_LIST[@]}"; do
     # STEP 1: CLEANUP CLUSTER (instance-scoped when INSTANCE is set)
     echo -e "${YELLOW}🧹 Step 1/3: Cleaning cluster...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR
-    ./cleanup-operator.sh >"$RUN_DIR/cleanup-${test_id}.log" 2>&1
+    # cleanup-operator.sh runs under set -e and exits non-zero when its
+    # kubeconfig/readyz preflight fails or a delete errors out. Retry once on
+    # an API blip; if it still fails, do NOT deploy on top of the previous
+    # test's state - mark this test FAIL and move on.
+    : >"$RUN_DIR/cleanup-${test_id}.log"
+    cleanup_rc=0
+    for cleanup_attempt in 1 2; do
+        ./cleanup-operator.sh >>"$RUN_DIR/cleanup-${test_id}.log" 2>&1
+        cleanup_rc=$?
+        [ "$cleanup_rc" -eq 0 ] && break
+        if [ "$cleanup_attempt" -eq 1 ]; then
+            echo "   ⚠️  Cleanup exited $cleanup_rc - retrying once (see $RUN_DIR/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
+            e2e_sleep 5
+        fi
+    done
+    if [ "$cleanup_rc" -ne 0 ]; then
+        echo -e "   ${RED}❌ ERROR: cleanup failed twice (exit $cleanup_rc) - not deploying on an uncleaned cluster (check $RUN_DIR/cleanup-${test_id}.log)${NC}" | tee -a $RESULTS_LOG
+        results[$test_id]="FAIL"
+        failed=$((failed + 1))
+        continue
+    fi
 
     if grep -q "CLEANUP COMPLETE" "$RUN_DIR/cleanup-${test_id}.log"; then
         echo "   ✅ Cluster cleaned" | tee -a $RESULTS_LOG
@@ -420,14 +440,30 @@ for test_id in "${TEST_LIST[@]}"; do
             echo "   ✅ Operator ready" | tee -a $RESULTS_LOG
             echo "      Pod: $POD_NAME" | tee -a $RESULTS_LOG
             echo "      Started: $POD_START" | tee -a $RESULTS_LOG
-            DEPLOYED_IMAGE=$(kubectl get deploy operator-controller-manager -n "$NAMESPACE" \
-                -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
-            echo "      Image: $DEPLOYED_IMAGE" | tee -a $RESULTS_LOG
-            # With an override the live Deployment MUST carry it; anything else
-            # means the whole run would validate the wrong image, so abort.
-            if [ -n "${OPERATOR_IMAGE:-}" ] && [ "$DEPLOYED_IMAGE" != "$OPERATOR_IMAGE" ]; then
-                echo -e "   ${RED}❌ ERROR: deployed image '$DEPLOYED_IMAGE' does not match OPERATOR_IMAGE '$OPERATOR_IMAGE' - aborting the run${NC}" | tee -a $RESULTS_LOG
-                exit 1
+            # Read the live image with a short retry: a transient API error
+            # must not look like a wrong image (kubectl_retry is not used here
+            # because it merges stderr into the captured value).
+            DEPLOYED_IMAGE=""
+            for image_attempt in 1 2 3; do
+                DEPLOYED_IMAGE=$(kubectl get deploy operator-controller-manager -n "$NAMESPACE" \
+                    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null) \
+                    && [ -n "$DEPLOYED_IMAGE" ] && break
+                [ "$image_attempt" -lt 3 ] && sleep 2
+            done
+            echo "      Image: ${DEPLOYED_IMAGE:-<unreadable>}" | tee -a $RESULTS_LOG
+            # With an override the live Deployment MUST carry it: a readable
+            # but different image means the whole run would validate the wrong
+            # build, so abort; an unreadable value only fails this test.
+            if [ -n "${OPERATOR_IMAGE:-}" ]; then
+                if [ -z "$DEPLOYED_IMAGE" ]; then
+                    echo -e "   ${RED}❌ ERROR: could not read the live Deployment image (3 attempts)${NC}" | tee -a $RESULTS_LOG
+                    results[$test_id]="FAIL"
+                    failed=$((failed + 1))
+                    continue
+                elif [ "$DEPLOYED_IMAGE" != "$OPERATOR_IMAGE" ]; then
+                    echo -e "   ${RED}❌ ERROR: deployed image '$DEPLOYED_IMAGE' does not match OPERATOR_IMAGE '$OPERATOR_IMAGE' - aborting the run${NC}" | tee -a $RESULTS_LOG
+                    exit 1
+                fi
             fi
             pod_names[$test_id]=$POD_NAME
 
