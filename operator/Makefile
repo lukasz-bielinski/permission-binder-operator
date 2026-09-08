@@ -114,7 +114,7 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
-# Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
+# Runs the live-cluster e2e suite under example/tests (needs KUBECONFIG; see example/tests/README.md).
 .PHONY: test-e2e
 test-e2e: ## Run the live-cluster e2e suite (requires KUBECONFIG; see example/tests/README.md)
 	cd ../example/tests && ./run-tests-parallel.sh $(E2E_ARGS)
