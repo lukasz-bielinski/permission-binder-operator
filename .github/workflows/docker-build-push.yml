@@ -195,7 +195,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: operator/go.mod
           cache-dependency-path: operator/go.sum
 
       - name: Install Trivy
