@@ -61,7 +61,7 @@ data:
   kustomize.buildOptions: "--load-restrictor LoadRestrictionsNone"
 ```
 
-You can also set this per Application with `spec.source.kustomize.buildOptions: "--load-restrictor LoadRestrictionsNone"`.
+This setting is instance-wide (it applies to every Kustomize Application served by that Argo CD); use `kustomize.buildOptions.<version>` to scope it to one registered Kustomize version, and restart the repo-server after changing it.
 
 ### Staging
 

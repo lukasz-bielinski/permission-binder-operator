@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 🔧 Improvements
-- Keep example overlays aligned with generated manifests by installing `example/deployment/crd.yaml`, targeting the real controller Deployment in environment patches, and documenting the required kustomize load-restrictor behavior (#81).
+- **Example overlays install the generated CRD** (#84 — closes #81): `example/crd/` (a controller-gen v0.17.0 copy without the `networkPolicy` schema) is removed; both `example/environments/*` overlays now reference `example/deployment/crd.yaml`, which `make sync-examples` copies from the generated CRD and the `Tests` workflow keeps in sync via the drift gate; the overlay patch targets the real `operator-controller-manager` Deployment; docs show the `--load-restrictor LoadRestrictionsNone` build.
 
 ## [1.8.1] - 2026-09-08
 
