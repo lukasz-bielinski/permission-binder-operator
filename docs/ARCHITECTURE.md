@@ -522,6 +522,6 @@ graph TB
 
 ---
 
-**Last Updated**: 2026-08-24  
-**Version**: v1.8.0
+**Last Updated**: 2026-09-08  
+**Version**: v1.8.1
 

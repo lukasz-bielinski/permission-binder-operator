@@ -4,28 +4,32 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.8.0-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
-[![GitHub Release](https://img.shields.io/badge/Release-v1.8.0-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.8.0)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.8.1-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![GitHub Release](https://img.shields.io/badge/Release-v1.8.1-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.8.1)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
-## 🚀 What's New in v1.8.0
+## 🚀 What's New in v1.8.1
 
-### ⬆️ Controller-Runtime 0.24 & Kubernetes 0.36
-- ✅ `sigs.k8s.io/controller-runtime` v0.19.0 → **v0.24.1** with the k8s.io api/apimachinery/client-go stack at **v0.36.4**; envtest on apiserver 1.36.2.
-- ✅ Scheme registration migrated to `runtime.NewSchemeBuilder` (deprecated controller-runtime `pkg/scheme` dropped).
-- ✅ Toolchain: go directive 1.26; Docker builds on golang 1.27.
-- ⚠️ Inherited upstream defaults: priority-queue workqueue (`workqueue_depth` gains a `priority` label) and no client-side rate limiter — see [Changelog](CHANGELOG.md) for operational impact.
+### 🐛 NetworkPolicy Error Status (#54)
+- ✅ Git/PR failures now land in `status.networkPolicies` as `state: error` with a sanitized `errorMessage` (1 KiB cap), keep retrying on later passes, and clear themselves on recovery — the v1.8.0 known issue.
+- ✅ `permission_binder_networkpolicy_git_operations_total` is now registered and visible on `/metrics`.
 
-### 🔁 Dependency Refresh
-- ✅ go-ldap 3.4.14 (stricter RFC 4514 DN parsing + robustness fixes — operator paths verified not exposed), prometheus client_golang 1.24.1, zap 1.28.0, ginkgo 2.32.1, testify 1.12.1; GitHub Actions bumped.
+### 🔐 Supply Chain
+- ✅ **Key-pair Cosign signatures** next to keyless, on the index and every platform manifest — verify offline with [`cosign.pub`](cosign.pub) or pin it in an OpenShift `ClusterImagePolicy` (v1.8.0 re-signed too).
+- ✅ gRPC 1.83.2 closes CVE-2026-84304 (Trivy alerts #48/#49; not reachable at runtime — scanner hygiene); `golang.org/x/crypto` 0.57.0 closes GO-2026-6354/6355 (`x/crypto/ssh`, reachable via the go-git push path).
 
-### 🧪 Testing
-- ✅ LDAPS mock e2e test 61: `createLdapGroups` end-to-end with **verified TLS** (custom CA + SAN hostname checks).
-- ✅ Full suite green: 580 pass / 0 fail / 3 skip on envtest 1.36.2; isolated 62-test parallel e2e suite on a live cluster.
+### ⬆️ Dependencies
+- ✅ `sigs.k8s.io/controller-runtime` **v0.25.0** with the k8s.io api/apimachinery/client-go stack at **v0.37.0**; envtest on apiserver 1.37.0; gomega 1.43.0. Drop-in, no API/RBAC/manifest change.
+- ✅ Indirect dependency tree refreshed (`go get -u`): OpenTelemetry 1.46, ProtonMail/go-crypto 1.4.1, go-openapi/swag 0.29.2, golang.org/x/* current (net 0.59.0); dev tools kustomize v5.8.1 and controller-gen v0.22.0; `go` directive now 1.27 (#76).
 
-📖 **Full Release Notes**: [v1.8.0 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.8.0) | [Changelog](CHANGELOG.md)
+### 🧪 Testing & CI
+- ✅ New `Tests` workflow: unit + envtest on every PR/push with a generated-file drift gate — the first CI that runs `go test`.
+- ✅ golangci-lint **v2.13.2** lint job in CI: all 85 pre-existing findings fixed, zero-issue baseline enforced; CI Go version read from `operator/go.mod`; GitHub Actions referenced by major version only.
+- ✅ Full suite green: **605 pass / 0 fail / 3 skip** on envtest 1.37.0; NetworkPolicy e2e tests self-contained under first-owner-wins; isolated 62-test parallel e2e suite on a live cluster (59/62 — the 3 remaining failures are the documented expected set, see the release notes).
+
+📖 **Full Release Notes**: [v1.8.1 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.8.1) | [Changelog](CHANGELOG.md)
 
 ---
 
@@ -405,7 +409,7 @@ All Docker images are **cryptographically signed** and include **supply chain at
 **Using Cosign with the repository public key (offline, no Sigstore infrastructure needed):**
 ```bash
 # cosign.pub is committed at the repository root
-cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.8.0
+cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.8.1
 ```
 
 **Using Cosign keyless (workflow identity):**
@@ -414,7 +418,7 @@ cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.8.0
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:1.8.0
+  lukaszbielinski/permission-binder-operator:1.8.1
 ```
 
 **Enforcing on OpenShift (`ClusterImagePolicy`, OpenShift 4.17+):**
@@ -440,19 +444,13 @@ The key pair does not change between releases, so a new tag needs no policy chan
 ```bash
 # Verify GitHub Attestations
 gh attestation verify \
-  oci://lukaszbielinski/permission-binder-operator:1.8.0 \
+  oci://lukaszbielinski/permission-binder-operator:1.8.1 \
   --owner lukasz-bielinski
 ```
 
 **Check SLSA Build Provenance:**
-```bash
-# Verify supply chain provenance
-cosign verify-attestation \
-  --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
-  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  --type slsaprovenance \
-  lukaszbielinski/permission-binder-operator:1.8.0 | jq .
-```
+
+The provenance attestation is stored in GitHub's attestation store (`actions/attest-build-provenance` runs with `push-to-registry: false`) and is verified with the `gh attestation verify` command above. It is **not** attached to the image in Docker Hub, so `cosign verify-attestation` against the image reports `no matching attestations`.
 
 ### 📋 What's Verified?
 - **Builder Identity** - Confirms image was built by GitHub Actions
@@ -669,16 +667,16 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** v1.8.0  
-**Last Updated:** 2026-08-24  
+**Version:** v1.8.1  
+**Last Updated:** 2026-09-08  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes (v1.8.0)
-- ✅ **Controller-Runtime 0.24** - v0.19.0 → v0.24.1 with the k8s.io v0.36.4 stack; envtest on apiserver 1.36.2
-- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.8.0` (golang 1.27 builder)
-- ✅ **Dependency Refresh** - go-ldap 3.4.14, prometheus client_golang 1.24.1, zap 1.28.0, ginkgo 2.32.1, testify 1.12.1
-- ✅ **LDAPS Verified TLS E2E** - mock LDAPS test 61 with custom CA + SAN hostname checks
-- ✅ **Docs** - stale cluster-admin requirement removed from Production Deployment (scoped `operator-manager-role`)
+### Recent Changes (v1.8.1)
+- ✅ **NetworkPolicy Error Status** - git/PR failures surface in `status.networkPolicies` (`state: error`, sanitized message, retryable) and the git-operations counter is exported (#54)
+- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.8.1` (golang 1.27 builder), keyless + key-pair Cosign signatures on the index and every platform manifest
+- ✅ **Dependency Refresh** - controller-runtime v0.25.0, k8s.io v0.37.0 stack, gomega 1.43.0, gRPC 1.83.2 (CVE-2026-84304), x/crypto 0.57.0 (GO-2026-6354/6355), indirect tree refreshed (OTel 1.46, go-crypto 1.4.1); envtest 1.37.0; kustomize v5.8.1 / controller-gen v0.22.0
+- ✅ **CI** - `Tests` workflow runs unit + envtest and golangci-lint v2.13.2 (85 findings fixed, zero baseline enforced) on every PR/push; Go version from `go.mod`; actions pinned to majors
+- ✅ **Docs** - key-pair verification and OpenShift `ClusterImagePolicy` example in Image Security & Supply Chain
 
 ---
 

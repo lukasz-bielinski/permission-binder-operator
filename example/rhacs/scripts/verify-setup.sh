@@ -150,12 +150,12 @@ echo "5. Testing Image Signature Verification"
 echo "════════════════════════════════════════════════════════════════════════════"
 
 if [ "$COSIGN_AVAILABLE" = true ]; then
-    echo "Testing Cosign signature for permission-binder-operator:1.8.0..."
+    echo "Testing Cosign signature for permission-binder-operator:1.8.1..."
     
     if cosign verify \
         --certificate-identity-regexp "https://github.com/lukasz-bielinski/permission-binder-operator" \
         --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-        docker.io/lukaszbielinski/permission-binder-operator:1.8.0 &>/dev/null; then
+        docker.io/lukaszbielinski/permission-binder-operator:1.8.1 &>/dev/null; then
         echo "✅ Image signature verification PASSED"
     else
         echo "❌ Image signature verification FAILED"
