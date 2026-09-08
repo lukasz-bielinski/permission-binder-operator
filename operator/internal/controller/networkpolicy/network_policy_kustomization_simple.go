@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func ensureKustomizationExistsSimple(r ReconcilerInterface,
+func ensureKustomizationExistsSimple(r ReconcilerInterface, //nolint:unparam // kept for interface symmetry with other helpers
 	ctx context.Context,
 	repoDir string,
 	kustomizationPath string,
@@ -67,7 +67,7 @@ func ensureKustomizationExistsSimple(r ReconcilerInterface,
 }
 
 // updateKustomizationResourcesSimple adds or removes a resource from kustomization.yaml
-func updateKustomizationResourcesSimple(r ReconcilerInterface,
+func updateKustomizationResourcesSimple(r ReconcilerInterface, //nolint:unparam // kept for interface symmetry with other helpers
 	ctx context.Context,
 	repoDir string,
 	kustomizationPath string,
@@ -150,7 +150,7 @@ func updateKustomizationResourcesSimple(r ReconcilerInterface,
 
 	action := "added"
 	if !add {
-		action = "removed"
+		action = stateRemoved
 	}
 	logger.V(1).Info("Updated kustomization.yaml", "path", kustomizationPath, "resource", relPath, "action", action)
 	return nil

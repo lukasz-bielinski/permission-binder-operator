@@ -44,7 +44,7 @@ func getGitCredentials(r ReconcilerInterface, ctx context.Context, secretRef *pe
 
 	username := string(secret.Data["username"])
 	if username == "" {
-		username = "permission-binder-operator"
+		username = gitBotUsername
 	}
 
 	email := string(secret.Data["email"])

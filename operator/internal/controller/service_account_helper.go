@@ -87,9 +87,9 @@ func ProcessServiceAccounts(
 						Name:      fullSAName,
 						Namespace: namespace,
 						Labels: map[string]string{
-							"app.kubernetes.io/managed-by": ManagedByValue,
-							"app.kubernetes.io/component":  saName, // deploy, runtime, etc.
-							"app.kubernetes.io/name":       ownerName,
+							labelAppManagedBy: ManagedByValue,
+							labelAppComponent: saName, // deploy, runtime, etc.
+							labelAppName:      ownerName,
 						},
 						Annotations: map[string]string{
 							AnnotationCreatedBy:                 ManagedByValue,
@@ -172,9 +172,9 @@ func ProcessServiceAccounts(
 						Name:      roleBindingName,
 						Namespace: namespace,
 						Labels: map[string]string{
-							"app.kubernetes.io/managed-by": ManagedByValue,
-							"app.kubernetes.io/component":  "service-account-binding",
-							"app.kubernetes.io/name":       ownerName,
+							labelAppManagedBy: ManagedByValue,
+							labelAppComponent: "service-account-binding",
+							labelAppName:      ownerName,
 						},
 						Annotations: map[string]string{
 							AnnotationCreatedBy:                 ManagedByValue,
@@ -185,8 +185,8 @@ func ProcessServiceAccounts(
 						},
 					},
 					RoleRef: rbacv1.RoleRef{
-						APIGroup: "rbac.authorization.k8s.io",
-						Kind:     "ClusterRole",
+						APIGroup: rbacAPIGroup,
+						Kind:     clusterRoleKind,
 						Name:     roleName,
 					},
 					Subjects: []rbacv1.Subject{
@@ -315,9 +315,9 @@ func ProcessServiceAccounts(
 						Name:      roleBindingName,
 						Namespace: namespace,
 						Labels: map[string]string{
-							"app.kubernetes.io/managed-by": ManagedByValue,
-							"app.kubernetes.io/component":  "service-account-binding",
-							"app.kubernetes.io/name":       ownerName,
+							labelAppManagedBy: ManagedByValue,
+							labelAppComponent: "service-account-binding",
+							labelAppName:      ownerName,
 						},
 						Annotations: map[string]string{
 							AnnotationCreatedBy:                 ManagedByValue,
@@ -328,8 +328,8 @@ func ProcessServiceAccounts(
 						},
 					},
 					RoleRef: rbacv1.RoleRef{
-						APIGroup: "rbac.authorization.k8s.io",
-						Kind:     "ClusterRole",
+						APIGroup: rbacAPIGroup,
+						Kind:     clusterRoleKind,
 						Name:     roleName,
 					},
 					Subjects: []rbacv1.Subject{

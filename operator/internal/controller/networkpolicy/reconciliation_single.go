@@ -66,6 +66,8 @@ import (
 //	if err != nil {
 //	    logger.Error(err, "Failed to process namespace")
 //	}
+//
+//nolint:gocyclo // sequential orchestration of the namespace pipeline; splitting obscures the flow
 func ProcessNetworkPolicyForNamespace(
 	ctx context.Context,
 	r ReconcilerInterface,
@@ -98,7 +100,7 @@ func ProcessNetworkPolicyForNamespace(
 		// cloneGitRepo already prefixes and sanitizes its errors
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Open repository
 	repo, err := git.PlainOpen(tmpDir)
@@ -116,7 +118,7 @@ func ProcessNetworkPolicyForNamespace(
 
 	fetchOptions := &git.FetchOptions{
 		Auth:            auth,
-		RemoteName:      "origin",
+		RemoteName:      gitRemoteOrigin,
 		InsecureSkipTLS: !tlsVerify,
 		RefSpecs: []config.RefSpec{
 			config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/remotes/origin/%s", baseBranch, baseBranch)),
@@ -131,13 +133,13 @@ func ProcessNetworkPolicyForNamespace(
 	}
 
 	// Checkout base branch (always fresh from upstream)
-	if err := gitCheckoutBranch(ctx, tmpDir, baseBranch, false); err != nil {
+	if err := gitCheckoutBranch(tmpDir, baseBranch, false); err != nil {
 		return fmt.Errorf("failed to checkout base branch: %w", err)
 	}
 
 	// Reset to origin/baseBranch to ensure we're on latest upstream state
 	// Get the remote reference
-	remoteRef := plumbing.NewRemoteReferenceName("origin", baseBranch)
+	remoteRef := plumbing.NewRemoteReferenceName(gitRemoteOrigin, baseBranch)
 	remoteRefHash, err := repo.Reference(remoteRef, false)
 	if err != nil {
 		// Sanitize error to prevent token leakage
@@ -206,7 +208,7 @@ func ProcessNetworkPolicyForNamespace(
 
 		if !existsInCluster {
 			// Variant A: Create from template (simple YAML text editing)
-			yamlContent, err := processTemplate(r, ctx, tmpDir, templateDir, templateName, namespace, clusterName)
+			yamlContent, err := processTemplate(r, ctx, tmpDir, templateDir, templateName, namespace)
 			if err != nil {
 				logger.Error(err, "Failed to process template", "template", templateName)
 				continue
@@ -317,7 +319,7 @@ func ProcessNetworkPolicyForNamespace(
 		// on every event-driven pass, and a previously recorded "error"
 		// entry would be dropped instead of transitioning to the PR state.
 		logger.V(1).Info("PR already exists and is open for namespace", "namespace", namespace, "prNumber", existingPR.Number)
-		if err := updateNetworkPolicyStatusWithPR(r, ctx, permissionBinder, namespace, existingPR.Number, branchName, existingPR.URL, "pr-pending"); err != nil {
+		if err := updateNetworkPolicyStatusWithPR(r, ctx, permissionBinder, namespace, existingPR.Number, branchName, existingPR.URL, statePRPending); err != nil {
 			logger.Error(err, "Failed to record existing PR in status", "namespace", namespace)
 		}
 		return nil
@@ -326,11 +328,11 @@ func ProcessNetworkPolicyForNamespace(
 	// Always delete branch on remote before creating new one (for test resilience)
 	// This ensures clean state even if previous test cleanup failed
 	logger.V(1).Info("Deleting branch on remote before creating new one", "branch", branchName, "namespace", namespace)
-	deleteBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials, tlsVerify)
 	// Ignore errors - branch might not exist, which is fine
+	_ = deleteBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials, tlsVerify)
 
 	// Create new branch
-	if err := gitCheckoutBranch(ctx, tmpDir, branchName, true); err != nil {
+	if err := gitCheckoutBranch(tmpDir, branchName, true); err != nil {
 		return fmt.Errorf("failed to create branch: %w", err)
 	}
 
@@ -435,18 +437,14 @@ func ProcessNetworkPolicyForNamespace(
 	}
 
 	// Update status
-	state := "pr-created"
+	state := statePRPending
 	if autoMerge {
 		// Check if PR was actually merged
 		time.Sleep(1 * time.Second)
 		updatedPR, err := getPRByBranch(ctx, provider, apiBaseURL, gitRepo.URL, branchName, credentials, tlsVerify)
 		if err == nil && updatedPR != nil && updatedPR.State == "MERGED" {
-			state = "pr-merged"
-		} else {
-			state = "pr-pending" // Auto-merge might be waiting for checks
+			state = statePRMerged
 		}
-	} else {
-		state = "pr-pending"
 	}
 
 	if err := updateNetworkPolicyStatusWithPR(r, ctx, permissionBinder, namespace, pr.Number, branchName, pr.URL, state); err != nil {

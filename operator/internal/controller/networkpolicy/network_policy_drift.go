@@ -170,8 +170,7 @@ func compareNetworkPolicyRules(spec1 networkingv1.NetworkPolicySpec, spec2 netwo
 }
 
 // compareNetworkPolicy compares cluster NetworkPolicy with Git file (rules only)
-func compareNetworkPolicy(r ReconcilerInterface,
-	ctx context.Context,
+func compareNetworkPolicy(
 	clusterPolicy *networkingv1.NetworkPolicy,
 	gitContent []byte,
 ) (bool, error) {
@@ -213,7 +212,7 @@ func checkDriftForNamespace(r ReconcilerInterface,
 	if err != nil {
 		return fmt.Errorf("failed to clone repository: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Get all NetworkPolicies from namespace
 	var policyList networkingv1.NetworkPolicyList
@@ -249,7 +248,7 @@ func checkDriftForNamespace(r ReconcilerInterface,
 		}
 
 		// Compare rules only
-		identical, err := compareNetworkPolicy(r, ctx, &clusterPolicy, gitContent)
+		identical, err := compareNetworkPolicy(&clusterPolicy, gitContent)
 		if err != nil {
 			logger.Error(err, "Failed to compare policies", "filePath", filePath)
 			continue

@@ -65,7 +65,7 @@ func PeriodicNetworkPolicyReconciliation(
 	// Get all managed namespaces from status
 	managedNamespaces := make([]string, 0)
 	for _, status := range permissionBinder.Status.NetworkPolicies {
-		if status.State == "pr-merged" {
+		if status.State == statePRMerged {
 			managedNamespaces = append(managedNamespaces, status.Namespace)
 		}
 	}
@@ -79,7 +79,7 @@ func PeriodicNetworkPolicyReconciliation(
 			logger.Error(err, "Failed to update last reconciliation time")
 			return err
 		}
-		logger.Info("Successfully updated last reconciliation time", "time", now.Time.Format(time.RFC3339))
+		logger.Info("Successfully updated last reconciliation time", "time", now.Format(time.RFC3339))
 		return nil
 	}
 
@@ -123,7 +123,7 @@ func PeriodicNetworkPolicyReconciliation(
 		logger.Error(err, "Failed to update last reconciliation time")
 		return err
 	}
-	logger.Info("Successfully updated last reconciliation time", "time", now.Time.Format(time.RFC3339), "managedNamespaces", len(managedNamespaces))
+	logger.Info("Successfully updated last reconciliation time", "time", now.Format(time.RFC3339), "managedNamespaces", len(managedNamespaces))
 
 	return nil
 }
@@ -136,7 +136,7 @@ func checkTemplateChanges(r ReconcilerInterface, ctx context.Context, permission
 	// Get all managed namespaces
 	managedNamespaces := make([]string, 0)
 	for _, status := range permissionBinder.Status.NetworkPolicies {
-		if status.State == "pr-merged" {
+		if status.State == statePRMerged {
 			managedNamespaces = append(managedNamespaces, status.Namespace)
 		}
 	}

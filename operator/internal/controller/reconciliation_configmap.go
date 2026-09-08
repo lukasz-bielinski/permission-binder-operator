@@ -51,6 +51,8 @@ func (result *ProcessConfigMapResult) recordIncomplete(err error) {
 }
 
 // processConfigMap processes the ConfigMap data and creates RoleBindings
+//
+//nolint:unparam // entry-level failures are reported via ProcessConfigMapResult.IncompleteError; the error result is part of the reconciler contract
 func (r *PermissionBinderReconciler) processConfigMap(ctx context.Context, permissionBinder *permissionv1.PermissionBinder, configMap *corev1.ConfigMap) (ProcessConfigMapResult, error) {
 	logger := log.FromContext(ctx)
 	result := ProcessConfigMapResult{}

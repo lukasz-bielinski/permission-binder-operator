@@ -749,7 +749,7 @@ func TestParsePermissionStringWithPrefixes_AdditionalScenarios(t *testing.T) {
 		// Error scenarios that might occur in production
 		{
 			name:        "typo in prefix",
-			permission:  "COMPNAY-K8S-app-admin", // Typo: COMPNAY
+			permission:  "COMPNAY-K8S-app-admin", //nolint:misspell // Typo: COMPNAY (intentional)
 			prefixes:    []string{"COMPANY-K8S"},
 			wantNS:      "",
 			wantRole:    "",

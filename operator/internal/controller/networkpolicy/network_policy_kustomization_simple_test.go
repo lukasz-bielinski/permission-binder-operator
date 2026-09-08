@@ -33,7 +33,7 @@ func TestEnsureKustomizationExistsSimple_NewFile(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -64,7 +64,7 @@ func TestEnsureKustomizationExistsSimple_ExistingFile(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -104,7 +104,7 @@ func TestEnsureKustomizationExistsSimple_NestedDirectory(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 
@@ -129,7 +129,7 @@ func TestUpdateKustomizationResourcesSimple_AddResource(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -160,7 +160,7 @@ func TestUpdateKustomizationResourcesSimple_RemoveResource(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -203,7 +203,7 @@ func TestUpdateKustomizationResourcesSimple_AddDuplicate(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -251,7 +251,7 @@ func TestUpdateKustomizationResourcesSimple_Sorting(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -285,7 +285,7 @@ func TestUpdateKustomizationResourcesSimple_RelativePath(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 
@@ -322,7 +322,7 @@ func TestUpdateKustomizationResourcesSimple_RemoveNonExistent(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -365,7 +365,7 @@ func TestUpdateKustomizationResourcesSimple_MultipleOperations(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -409,7 +409,7 @@ func TestUpdateKustomizationResourcesSimple_EmptyResources(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "test-kustomization-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"
@@ -450,14 +450,16 @@ func BenchmarkEnsureKustomizationExistsSimple(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		kustomizationPath := filepath.Join("test", "kustomization.yaml")
-		os.MkdirAll(filepath.Join(tmpDir, "test"), 0755)
+		if err := os.MkdirAll(filepath.Join(tmpDir, "test"), 0755); err != nil {
+			b.Fatal(err)
+		}
 		_ = ensureKustomizationExistsSimple(nil, ctx, tmpDir, kustomizationPath)
 	}
 }
@@ -467,7 +469,7 @@ func BenchmarkUpdateKustomizationResourcesSimple_Add(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	ctx := context.Background()
 	kustomizationPath := "kustomization.yaml"

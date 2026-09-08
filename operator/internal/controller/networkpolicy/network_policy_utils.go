@@ -35,11 +35,11 @@ func detectGitProvider(repoURL string, explicitProvider string) (string, error) 
 
 	// Auto-discovery from URL (for public providers)
 	if strings.Contains(repoURL, "bitbucket.org") {
-		return "bitbucket", nil
+		return gitProviderBitbucket, nil
 	} else if strings.Contains(repoURL, "github.com") {
-		return "github", nil
+		return gitProviderGitHub, nil
 	} else if strings.Contains(repoURL, "gitlab.com") || strings.Contains(repoURL, "gitlab.") {
-		return "gitlab", nil
+		return gitProviderGitLab, nil
 	}
 
 	// For self-hosted - provider must be explicitly specified
@@ -55,11 +55,11 @@ func getAPIBaseURL(provider string, customAPIBaseURL string, repoURL string) str
 
 	// Standard API endpoints for public providers
 	switch provider {
-	case "bitbucket":
+	case gitProviderBitbucket:
 		return "https://api.bitbucket.org/2.0"
-	case "github":
+	case gitProviderGitHub:
 		return "https://api.github.com"
-	case "gitlab":
+	case gitProviderGitLab:
 		return "https://gitlab.com/api/v4"
 	default:
 		// For self-hosted - extract base URL from repo URL
@@ -71,11 +71,11 @@ func getAPIBaseURL(provider string, customAPIBaseURL string, repoURL string) str
 
 		// Default API paths for self-hosted
 		switch provider {
-		case "bitbucket":
+		case gitProviderBitbucket:
 			return fmt.Sprintf("%s/rest/api/1.0", baseURL)
-		case "github":
+		case gitProviderGitHub:
 			return fmt.Sprintf("%s/api/v3", baseURL)
-		case "gitlab":
+		case gitProviderGitLab:
 			return fmt.Sprintf("%s/api/v4", baseURL)
 		}
 		return baseURL
