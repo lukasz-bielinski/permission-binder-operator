@@ -142,7 +142,7 @@ kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonito
 
 ### Test Fails During Deployment
 - Check `/tmp/deploy-<test_id>.log` for errors
-- Verify Docker image is available: `docker pull lukaszbielinski/permission-binder-operator:1.6.0-rc2`
+- Verify Docker image is available: `docker pull lukaszbielinski/permission-binder-operator:1.8.0`
 - Check operator pod logs: `kubectl logs -n permissions-binder-operator deployment/operator-controller-manager`
 
 ### Test Fails During Execution
