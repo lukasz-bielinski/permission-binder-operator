@@ -60,6 +60,6 @@ data:
     7. Click: Save
     
     To verify the integration works:
-    - Test image: docker.io/lukaszbielinski/permission-binder-operator:1.5.0
+    - Test image: docker.io/lukaszbielinski/permission-binder-operator:1.8.0
     - Should show "Signature Verified" in image details
 

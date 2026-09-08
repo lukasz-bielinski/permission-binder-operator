@@ -111,7 +111,7 @@ roxctl --endpoint "${ROX_ENDPOINT}" \
 # Test with permission-binder-operator image
 echo ""
 echo "🧪 Testing signature verification..."
-echo "Image: docker.io/lukaszbielinski/permission-binder-operator:1.4.0"
+echo "Image: docker.io/lukaszbielinski/permission-binder-operator:1.8.0"
 
 # Note: Image verification test via API would require more complex setup
 echo "✅ Setup complete!"
