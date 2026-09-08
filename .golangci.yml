@@ -1,9 +1,6 @@
 version: "2"
-
 run:
-  timeout: 5m
   allow-parallel-runners: true
-
 linters:
   default: none
   enable:
@@ -28,19 +25,26 @@ linters:
       rules:
         - name: comment-spacings
   exclusions:
-    # don't skip warning about doc comments
-    # restore some of the defaults
-    # (fill in the rest as needed)
+    generated: lax
     rules:
-      - path: "api/*"
-        linters:
+      - linters:
           - lll
-      - path: "internal/*"
-        linters:
+        path: api/*
+      - linters:
           - dupl
           - lll
-
+        path: internal/*
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 formatters:
   enable:
     - gofmt
     - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
