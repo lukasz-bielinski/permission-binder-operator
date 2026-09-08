@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 📝 Documentation
+- Refresh `SECURITY.md`, `docs/RUNBOOK.md`, `docs/SRE.md`, `docs/BACKUP.md`, the `test-e2e` Makefile target, and the history-rewrite note.
+
 ## [1.8.1] - 2026-09-08
 
 ### 🚀 Highlights
@@ -161,7 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 📚 Documentation
 - README badges, release sections, and image references updated to v1.6.6.
-- Architecture/API/Sequence docs plus `.internal-docs/UNIT_TEST_PHILOSOPHY.md` reflect Go 1.25 + new version.
+- Architecture/API/Sequence docs plus the unit-test philosophy doc reflect Go 1.25 + new version.
 - Highlighted replacement of git-askpass helper with native go-git.
 
 ### 🧪 Testing
@@ -197,7 +200,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - All 61 E2E tests passing with refactored architecture
   - Zero regressions detected
   - Improved maintainability and testability
-- **Unit Test Philosophy Documented**: `.internal-docs/UNIT_TEST_PHILOSOPHY.md`
+- **Unit Test Philosophy Documented**: internal unit-test philosophy doc
   - Clear guidelines: test pure logic, skip mocking complex services
   - Realistic coverage targets: 40-50% (100% of testable pure logic)
   - Comprehensive function-level analysis
@@ -216,6 +219,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - RBAC reconciliation flow
   - NetworkPolicy GitOps workflow
   - Error handling paths
+
+### 🧹 Repository Maintenance
+- Rewrite `lukasz-bielinski/permission-binder-operator#2` on 2025-11-14 removed `.internal-docs/` and `.session-states/` from history.
+- Clones older than 2025-11-14 must be re-cloned or run `git fetch --force && git reset --hard origin/main`.
 
 ### 🔒 Security & Architecture (v1.6.3)
 - **Migration to go-git Library**: Complete refactor from `git` CLI to pure Go implementation

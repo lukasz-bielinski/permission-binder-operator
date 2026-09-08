@@ -1,8 +1,8 @@
 # Site Reliability Engineering (SRE) Documentation
 
-**Version:** 1.0  
-**Last Updated:** 2025-01-13  
-**Maintainer:** Platform Team
+**Version:** v1.8.1  
+**Last Updated:** 2026-09-08  
+**Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
 ---
 
