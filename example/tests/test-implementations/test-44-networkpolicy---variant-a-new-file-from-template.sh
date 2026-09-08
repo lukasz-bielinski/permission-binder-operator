@@ -28,10 +28,10 @@ echo "------------------------------------------------------------"
 
 # Setup: Create GitHub GitOps credentials Secret
 # Use dedicated credentials file from temp/ directory
-CREDENTIALS_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml"
+CREDENTIALS_FILE="${GITHUB_GITOPS_SECRET_FILE:-$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml}"
 if [ ! -f "$CREDENTIALS_FILE" ]; then
     fail_test "GitHub credentials file not found: $CREDENTIALS_FILE"
-    echo "Please ensure temp/github-gitops-credentials-secret.yaml exists"
+    echo "Please ensure temp/github-gitops-credentials-secret.yaml exists or set GITHUB_GITOPS_SECRET_FILE"
 else
     if ! kubectl_retry kubectl get secret github-gitops-credentials -n $NAMESPACE >/dev/null 2>&1; then
         info_log "Creating GitHub GitOps credentials Secret from $CREDENTIALS_FILE"

@@ -63,9 +63,19 @@ if [ -n "$INSTANCE" ]; then
 fi
 echo ""
 
-# Check if KUBECONFIG is set
-if [ -z "$KUBECONFIG" ]; then
-    echo -e "${RED}ERROR: KUBECONFIG not set${NC}"
+# KUBECONFIG: the runner exports its resolved value; when run standalone fall
+# back to kubectl's default location. Fail BEFORE touching anything when the
+# file is unreadable or the API server does not answer: every delete below is
+# "|| echo (OK)"-guarded and the final banner is unconditional, so without this
+# a dead or wrong cluster would still end in "CLEANUP COMPLETE".
+KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+if [ ! -r "${KUBECONFIG%%:*}" ]; then     # KUBECONFIG may be a colon-separated list
+    echo -e "${RED}ERROR: kubeconfig not readable: ${KUBECONFIG%%:*} (export KUBECONFIG=/path/to/kubeconfig)${NC}" >&2
+    exit 1
+fi
+export KUBECONFIG
+if ! kubectl get --raw /readyz --request-timeout=10s >/dev/null 2>&1; then
+    echo -e "${RED}ERROR: API server not ready via KUBECONFIG=$KUBECONFIG (kubectl get --raw /readyz failed)${NC}" >&2
     exit 1
 fi
 
@@ -139,7 +149,7 @@ sleep 2
 echo ""
 echo "Step 4: Delete operator namespace resources"
 echo "---------------------------------------------"
-kubectl delete configmap,service,servicemonitor,serviceaccount,role,rolebinding,secret --all -n "$NAMESPACE" --timeout=30s 2>/dev/null || echo "Resources not found (OK)"
+kubectl delete configmap,service,serviceaccount,role,rolebinding,secret --all -n "$NAMESPACE" --timeout=30s 2>/dev/null || echo "Resources not found (OK)"
 # Specifically delete GitHub credentials secret if it exists
 kubectl delete secret github-gitops-credentials -n "$NAMESPACE" --timeout=30s 2>/dev/null || echo "GitHub secret not found (OK)"
 
@@ -159,6 +169,13 @@ kubectl delete clusterrolebinding \
     "operator-manager-rolebinding${RBAC_SUFFIX}" \
     "operator-metrics-auth-rolebinding${RBAC_SUFFIX}" \
     --ignore-not-found=true
+# The ServiceMonitor the runner applies lives OUTSIDE $NAMESPACE, in the shared
+# "monitoring" namespace (where Prometheus discovers it), with a per-instance
+# name; guard on the CRD so clusters without prometheus-operator stay quiet.
+if kubectl get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1; then
+    kubectl delete servicemonitor "permission-binder-operator-metrics${RBAC_SUFFIX}" -n monitoring \
+        --ignore-not-found=true --timeout=30s 2>/dev/null || echo "ServiceMonitor not found (OK)"
+fi
 
 if [ "$FULL_CLEANUP" = true ]; then
     echo ""

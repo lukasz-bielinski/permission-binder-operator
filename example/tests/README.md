@@ -39,6 +39,29 @@ The runner installs the PermissionBinder CRD (`deployment/crd.yaml`) **once** at
 ./run-tests-full-isolation.sh pre
 ```
 
+### Runner environment variables
+
+All optional; read by `run-tests-full-isolation.sh` and inherited by every slot and by Pool C when launched through `run-tests-parallel.sh`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `KUBECONFIG` | `$HOME/.kube/config` | Kubeconfig for every `kubectl` call. Both runners and a standalone `cleanup-operator.sh` exit with `ERROR: kubeconfig not readable: <path>` when the (first, if colon-separated) file is unreadable, then run a preflight `kubectl get --raw /readyz --request-timeout=10s` and exit **before any cleanup** when the API server does not answer. The resolved path and `kubectl config current-context` are printed in the run banner. |
+| `OPERATOR_IMAGE` | tag committed in `deployment/operator-deployment.yaml` | Run the suite against another image (`repo:tag` or `repo@sha256:...`). The override is rendered into a per-run copy `$RUN_DIR/operator-deployment[-INSTANCE]-image.yaml` in both legacy and `INSTANCE` modes; the committed manifest is never modified. The runner logs `Operator image override: ...`, prints the live Deployment image (`Image: ...`) after every deploy, and aborts the run if it differs from the override. Allowed characters: `A-Za-z0-9._/:@-`. |
+| `OPERATOR_IMAGE_PULL_POLICY` | `Always` when `OPERATOR_IMAGE` is set | `imagePullPolicy` for the override (`Always`, `IfNotPresent` or `Never`), so moving tags such as `sha-<7>` or `latest` are re-pulled on every deploy. Ignored without `OPERATOR_IMAGE` (the manifest value is kept). |
+| `GITHUB_GITOPS_SECRET_FILE` | `<repo>/temp/github-gitops-credentials-secret.yaml` | Secret manifest with the GitHub GitOps credentials for the NetworkPolicy tests (see [GitHub Credentials](#github-credentials-secrets)). Honoured by the runner, by `get_np_token`/`np_gh` in `test-common.sh` and by every NetworkPolicy test. An explicit path that is unreadable is a hard error. |
+| `GITHUB_GITOPS_READONLY_SECRET_FILE` | `<repo>/temp/github-gitops-credentials-readonly-secret.yaml` | Read-only credentials manifest used by test 57. |
+| `E2E_WAIT_MULT` | `1` (`1.5` under `run-tests-parallel.sh --slots > 1`) | Multiplies harness-owned sleeps and timeouts. |
+| `INSTANCE` | unset (legacy mode) | Set per slot by `run-tests-parallel.sh`: derives `NAMESPACE=pbo-e2e-N`, `TEST_NS_PREFIX=pboN-`, `RUN_DIR=/tmp/pbo-e2e-N` and suffixes the cluster-scoped RBAC/ServiceMonitor names with `-N`. |
+| `E2E_ALLOW_LEGACY` | `0` | `=1` lets an `INSTANCE` run proceed although a legacy (cluster-wide) operator is running. |
+
+```bash
+# Release gate: validate a main build without touching the committed manifest
+OPERATOR_IMAGE=lukaszbielinski/permission-binder-operator:sha-8554dbc ./run-tests-parallel.sh
+
+# Credentials kept outside the repo
+GITHUB_GITOPS_SECRET_FILE=/secure/github-gitops-credentials-secret.yaml ./run-tests-parallel.sh 44 45 48
+```
+
 ### Test IDs
 
 - `pre` or `00` - Pre-Test: Initial State Verification
@@ -90,9 +113,10 @@ Results are saved to:
 - Default templates:
   - `temp/github-gitops-credentials-secret.yaml` (read/write access)
   - `temp/github-gitops-credentials-readonly-secret.yaml` (read-only scenario tests)
-- Tests automatically apply these manifests by:
-  - Replacing the namespace at runtime, and
-  - Using the `GITHUB_GITOPS_SECRET_FILE` env var to override the default path if needed.
+- The runner, `test-common.sh` (`get_np_token`) and the NetworkPolicy tests apply these manifests by:
+  - Resolving the path as `${GITHUB_GITOPS_SECRET_FILE:-temp/github-gitops-credentials-secret.yaml}` (test 57: `${GITHUB_GITOPS_READONLY_SECRET_FILE:-temp/github-gitops-credentials-readonly-secret.yaml}`), and
+  - Rewriting `namespace: permissions-binder-operator` to the instance namespace at runtime.
+- File contract: a `Secret` named `github-gitops-credentials` in `namespace: permissions-binder-operator` whose `stringData` holds `token: "<PAT>"` — the token value **must be double-quoted**, because `get_np_token` extracts it with an `awk` split on `"`.
 - Before running tests:
   1. Populate the YAML files with fresh tokens.
   2. Keep the files local (they remain untracked).
@@ -110,13 +134,16 @@ Results are saved to:
 - Deletes all operator-managed Namespaces
 - Deletes operator deployment and related resources
 - Deletes GitHub GitOps credentials Secret (if exists)
+- Deletes the operator's ServiceMonitor from the `monitoring` namespace (`permission-binder-operator-metrics[-INSTANCE]`; skipped when the ServiceMonitor CRD is not installed)
+- Refuses to run (exit 1, before any delete) when `KUBECONFIG` is unreadable or the API server does not answer `/readyz`
 
 ### Step 2: Fresh Operator Deployment
 ```bash
 kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonitor.yaml
 ```
 - Deploys operator from scratch (the CRD from `deployment/crd.yaml` is already installed and is not re-applied)
-- Creates GitHub GitOps credentials Secret (if file exists)
+- With `OPERATOR_IMAGE` set, the manifest applied is the per-run copy `$RUN_DIR/operator-deployment[-INSTANCE]-image.yaml` carrying the override; the live Deployment image is logged and checked
+- Creates GitHub GitOps credentials Secret (if the file exists; path from `GITHUB_GITOPS_SECRET_FILE`)
 - Waits for operator pod to be ready (timeout: 120s)
 
 ### Step 3: Test Execution
@@ -152,7 +179,7 @@ kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonito
 
 ### NetworkPolicy Tests Fail
 - Verify GitHub credentials Secret exists: `kubectl get secret github-gitops-credentials -n permissions-binder-operator`
-- Check if credentials file exists: `ls -la ../../temp/github-gitops-credentials-secret.yaml`
+- Check if credentials file exists: `ls -la ../../temp/github-gitops-credentials-secret.yaml` (or the path in `GITHUB_GITOPS_SECRET_FILE`)
 - Verify GitHub repository is accessible: `curl -H "Authorization: token <TOKEN>" https://api.github.com/repos/lukasz-bielinski/tests-network-policies`
 
 ## Example Output
