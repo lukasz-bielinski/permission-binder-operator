@@ -28,11 +28,28 @@
 #                   for a reason.
 #   INSTANCE        Set per slot by this script; consumed by the harness
 #                   parameterization (see issue #34).
+#   KUBECONFIG      Kubeconfig to use (default: $HOME/.kube/config). The run
+#                   exits before any cleanup when the file is unreadable or
+#                   the API server does not answer `kubectl get --raw /readyz`.
+#   OPERATOR_IMAGE  Run the whole suite (every slot and Pool C) against this
+#                   image (repo:tag or repo@sha256:...) instead of the tag
+#                   committed in example/deployment/operator-deployment.yaml;
+#                   inherited by every run-tests-full-isolation.sh instance,
+#                   which renders it into a per-run manifest copy (the source
+#                   manifest is never modified).
+#   OPERATOR_IMAGE_PULL_POLICY
+#                   imagePullPolicy for the override (default: Always when
+#                   OPERATOR_IMAGE is set).
+#   GITHUB_GITOPS_SECRET_FILE
+#                   Secret manifest with the GitHub GitOps credentials for the
+#                   NetworkPolicy tests (default:
+#                   <repo>/temp/github-gitops-credentials-secret.yaml).
+#   GITHUB_GITOPS_READONLY_SECRET_FILE
+#                   Read-only variant used by test 57 (default:
+#                   <repo>/temp/github-gitops-credentials-readonly-secret.yaml).
 
 set +e  # Aggregate instance exit codes; never abort the suite early
 
-# Respect the caller's KUBECONFIG; fall back to the default k3s kubeconfig.
-export KUBECONFIG="${KUBECONFIG:-$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUITE_ID="$(date +%Y%m%d-%H%M%S)"
 RESULTS_LOG="/tmp/e2e-parallel-${SUITE_ID}.log"
@@ -55,7 +72,7 @@ POOL_B=(01 05 06 08 09 14 15 19 21 22 25 26 27 28 29 30 37 42 43)
 POOL_C=(60 16 44 45 46 47 48 49 50 51 52 53 54 55 56 57 59 61)
 
 usage() {
-    sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,49p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit "${1:-0}"
 }
 
@@ -88,6 +105,37 @@ if [ ! -x "$RUNNER" ]; then
     echo "ERROR: runner not found or not executable: $RUNNER"
     exit 1
 fi
+
+# Respect the caller's KUBECONFIG; otherwise use kubectl's default location.
+# Fail early with one clear message instead of 60 failing kubectl calls. Sits
+# after argument parsing so --help works without a cluster; plain echo like the
+# other argument errors (no results log exists yet).
+KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+if [ ! -r "${KUBECONFIG%%:*}" ]; then     # KUBECONFIG may be a colon-separated list
+    echo "ERROR: kubeconfig not readable: ${KUBECONFIG%%:*} (export KUBECONFIG=/path/to/kubeconfig)" >&2
+    exit 1
+fi
+export KUBECONFIG
+
+# Cheap validation of the runner overrides (same rules as
+# run-tests-full-isolation.sh): catch them here with ONE message instead of
+# N identical slot failures after the CRD install and the legacy sweep.
+if [ -n "${OPERATOR_IMAGE:-}" ]; then
+    if ! [[ "$OPERATOR_IMAGE" =~ ^[A-Za-z0-9._/:@-]+$ ]]; then
+        echo "ERROR: OPERATOR_IMAGE contains unexpected characters: $OPERATOR_IMAGE" >&2
+        exit 1
+    fi
+    if ! [[ "${OPERATOR_IMAGE_PULL_POLICY:-Always}" =~ ^(Always|IfNotPresent|Never)$ ]]; then
+        echo "ERROR: OPERATOR_IMAGE_PULL_POLICY must be Always, IfNotPresent or Never (got: $OPERATOR_IMAGE_PULL_POLICY)" >&2
+        exit 1
+    fi
+fi
+for var in GITHUB_GITOPS_SECRET_FILE GITHUB_GITOPS_READONLY_SECRET_FILE; do
+    if [ -n "${!var:-}" ] && [ ! -r "${!var}" ]; then
+        echo "ERROR: $var not readable: ${!var}" >&2
+        exit 1
+    fi
+done
 
 # ---------------------------------------------------------------------------
 # Sequential baseline mode: run the full-isolation runner as-is and record the
@@ -128,6 +176,13 @@ log "Started: $(date)"
 log "Slots: $SLOTS"
 log "E2E_WAIT_MULT: $E2E_WAIT_MULT"
 log "Results log: $RESULTS_LOG"
+log "Kubeconfig: $KUBECONFIG (context: $(kubectl config current-context 2>/dev/null || echo '<none>'))"
+if [ -n "${OPERATOR_IMAGE:-}" ]; then
+    log "Operator image override: $OPERATOR_IMAGE (imagePullPolicy: ${OPERATOR_IMAGE_PULL_POLICY:-Always})"
+fi
+if [ -n "${GITHUB_GITOPS_SECRET_FILE:-}" ]; then
+    log "GitHub GitOps secret file: $GITHUB_GITOPS_SECRET_FILE"
+fi
 log ""
 
 # Explicit test subset: run it serially via the standard runner (caller picked
@@ -155,6 +210,14 @@ if [ ${#MISSING_TOOLS[@]} -gt 0 ]; then
     log "❌ CRITICAL: Missing required tools: ${MISSING_TOOLS[*]}"
     log "   kubectl: https://kubernetes.io/docs/tasks/tools/"
     log "   jq: sudo apt-get install jq / brew install jq / yum install jq"
+    exit 1
+fi
+
+# Cluster preflight: fail BEFORE the CRD install and the legacy sweep when the
+# API server is not reachable through $KUBECONFIG (the explicit-test and
+# --sequential paths above delegate to the runner, which preflights itself).
+if ! kubectl get --raw /readyz --request-timeout=10s >/dev/null 2>&1; then
+    log "❌ PREFLIGHT: API server not ready via KUBECONFIG=$KUBECONFIG (kubectl get --raw /readyz failed)"
     exit 1
 fi
 
@@ -307,6 +370,16 @@ if [ "$SERIAL_RC" -eq 0 ]; then
 else
     log -e "❌ Pool C finished in $((SERIAL_END - SERIAL_START))s — ${RED}FAIL (exit $SERIAL_RC)${NC}"
 fi
+log ""
+
+# Tear down Pool C's leftovers too (per-test cleanup runs BEFORE each test,
+# so the last test's legacy operator, CR, namespaces and the
+# permission-binder-operator-metrics ServiceMonitor would otherwise outlive
+# the suite - issue #79 expects a full run to leave nothing behind).
+log "Tearing down Pool C (legacy) leftovers..."
+"$SCRIPT_DIR/cleanup-operator.sh" >>"/tmp/e2e-parallel-${SUITE_ID}-teardown-legacy.log" 2>&1 \
+    && log "  ✅ Pool C leftovers torn down" \
+    || log "  ⚠️  Pool C teardown had warnings (/tmp/e2e-parallel-${SUITE_ID}-teardown-legacy.log)"
 log ""
 
 # ---------------------------------------------------------------------------

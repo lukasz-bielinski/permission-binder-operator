@@ -50,7 +50,7 @@ trap cleanup_resources EXIT
 # ----------------------------------------------------------------------------
 # 1. Ensure GitHub credentials Secret exists
 # ----------------------------------------------------------------------------
-CREDENTIALS_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml"
+CREDENTIALS_FILE="${GITHUB_GITOPS_SECRET_FILE:-$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml}"
 if [ ! -f "$CREDENTIALS_FILE" ]; then
     fail_test "GitHub credentials file not found: $CREDENTIALS_FILE"
     exit 1

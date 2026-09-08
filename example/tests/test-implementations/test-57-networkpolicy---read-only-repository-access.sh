@@ -33,7 +33,7 @@ trap cleanup_resources EXIT
 # 1. Create read-only credentials Secret (token without push scope)
 # ----------------------------------------------------------------------------
 info_log "Creating read-only GitHub credentials Secret ($SECRET_NAME)"
-SECRET_TEMPLATE_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-readonly-secret.yaml"
+SECRET_TEMPLATE_FILE="${GITHUB_GITOPS_READONLY_SECRET_FILE:-$SCRIPT_DIR/../../temp/github-gitops-credentials-readonly-secret.yaml}"
 if [ ! -f "$SECRET_TEMPLATE_FILE" ]; then
     fail_test "Read-only GitHub credentials file not found: $SECRET_TEMPLATE_FILE"
     exit 1

@@ -27,7 +27,7 @@ echo "------------------------------------------------"
 # This test checks operator logs and metrics for rate limit error handling
 
 # Setup: Create GitHub GitOps credentials Secret
-CREDENTIALS_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml"
+CREDENTIALS_FILE="${GITHUB_GITOPS_SECRET_FILE:-$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml}"
 if [ ! -f "$CREDENTIALS_FILE" ]; then
     fail_test "GitHub credentials file not found: $CREDENTIALS_FILE"
     exit 1

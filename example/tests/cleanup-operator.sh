@@ -63,11 +63,36 @@ if [ -n "$INSTANCE" ]; then
 fi
 echo ""
 
-# Check if KUBECONFIG is set
-if [ -z "$KUBECONFIG" ]; then
-    echo -e "${RED}ERROR: KUBECONFIG not set${NC}"
+# KUBECONFIG: the runner exports its resolved value; when run standalone fall
+# back to kubectl's default location. Fail BEFORE touching anything when the
+# file is unreadable or the API server does not answer: every delete below is
+# "|| echo (OK)"-guarded and the final banner is unconditional, so without this
+# a dead or wrong cluster would still end in "CLEANUP COMPLETE".
+KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+if [ ! -r "${KUBECONFIG%%:*}" ]; then     # KUBECONFIG may be a colon-separated list
+    echo -e "${RED}ERROR: kubeconfig not readable: ${KUBECONFIG%%:*} (export KUBECONFIG=/path/to/kubeconfig)${NC}" >&2
     exit 1
 fi
+export KUBECONFIG
+# Three probes 5s apart: the runner calls this before EVERY test, so a single
+# 10s blip must not turn into an all-or-nothing skipped cleanup.
+READYZ_OK=false
+for readyz_attempt in 1 2 3; do
+    if kubectl get --raw /readyz --request-timeout=10s >/dev/null 2>&1; then
+        READYZ_OK=true
+        break
+    fi
+    [ "$readyz_attempt" -lt 3 ] && sleep 5
+done
+if [ "$READYZ_OK" != true ]; then
+    echo -e "${RED}ERROR: API server not ready via KUBECONFIG=$KUBECONFIG (kubectl get --raw /readyz failed 3 times)${NC}" >&2
+    exit 1
+fi
+# Say which cluster is about to be swept (this script deletes namespaces by
+# regex and, with --full, the CRD - the default kubeconfig may not be the
+# cluster the caller had in mind).
+echo "Kubeconfig: $KUBECONFIG (context: $(kubectl config current-context 2>/dev/null || echo '<none>'))"
+echo ""
 
 # PermissionBinder deletion MUST complete (verified gone) BEFORE the operator
 # deployment is removed: once the operator is gone nothing processes the PB
@@ -139,7 +164,7 @@ sleep 2
 echo ""
 echo "Step 4: Delete operator namespace resources"
 echo "---------------------------------------------"
-kubectl delete configmap,service,servicemonitor,serviceaccount,role,rolebinding,secret --all -n "$NAMESPACE" --timeout=30s 2>/dev/null || echo "Resources not found (OK)"
+kubectl delete configmap,service,serviceaccount,role,rolebinding,secret --all -n "$NAMESPACE" --timeout=30s 2>/dev/null || echo "Resources not found (OK)"
 # Specifically delete GitHub credentials secret if it exists
 kubectl delete secret github-gitops-credentials -n "$NAMESPACE" --timeout=30s 2>/dev/null || echo "GitHub secret not found (OK)"
 
@@ -159,6 +184,16 @@ kubectl delete clusterrolebinding \
     "operator-manager-rolebinding${RBAC_SUFFIX}" \
     "operator-metrics-auth-rolebinding${RBAC_SUFFIX}" \
     --ignore-not-found=true
+# The ServiceMonitor the runner applies lives OUTSIDE $NAMESPACE, in the shared
+# "monitoring" namespace (where Prometheus discovers it), with a per-instance
+# name; guard on the CRD so clusters without prometheus-operator stay quiet.
+if kubectl get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1; then
+    # --ignore-not-found makes a missing object exit 0, so the fallback fires
+    # only on real errors (RBAC, timeout, API group down): keep stderr visible
+    # instead of reporting a leaked ServiceMonitor as fine.
+    kubectl delete servicemonitor "permission-binder-operator-metrics${RBAC_SUFFIX}" -n monitoring \
+        --ignore-not-found=true --timeout=30s || echo "⚠️  ServiceMonitor delete failed (see above)"
+fi
 
 if [ "$FULL_CLEANUP" = true ]; then
     echo ""

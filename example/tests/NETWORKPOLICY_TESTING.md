@@ -42,11 +42,12 @@ Each NetworkPolicy test:
 **Fixture-repo calls are routed through `np_gh` (test-common.sh), not ambient
 `gh` auth.** `np_gh` resolves the SAME token the operator uses (the
 `github-gitops-credentials` Secret): first from the plaintext manifest
-`temp/github-gitops-credentials-secret.yaml` at the repo root, then from the
-in-cluster Secret, and only falls back to ambient `gh` auth when neither
-resolves. This matters because an ambient PAT scoped to a different repo makes
-every cleanup ref-delete fail with 403 — stale `networkpolicy/*` branches and
-PRs then accumulate and break later runs with existing-branch conflicts.
+(`$GITHUB_GITOPS_SECRET_FILE`, default `temp/github-gitops-credentials-secret.yaml`
+at the repo root), then from the in-cluster Secret, and only falls back to
+ambient `gh` auth when neither resolves. This matters because an ambient PAT
+scoped to a different repo makes every cleanup ref-delete fail with 403 — stale
+`networkpolicy/*` branches and PRs then accumulate and break later runs with
+existing-branch conflicts.
 
 **Token scope requirements** (fine-grained PAT on the fixture repo):
 

@@ -13,14 +13,14 @@
 
 ### Setup
 ```bash
-export KUBECONFIG=$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)
+export KUBECONFIG=/path/to/kubeconfig   # default: $HOME/.kube/config (see ../README.md "Runner environment variables")
 cd example
 kubectl apply -k .
 ```
 
 ### Cleanup
 ```bash
-export KUBECONFIG=$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)
+export KUBECONFIG=/path/to/kubeconfig   # default: $HOME/.kube/config (see ../README.md "Runner environment variables")
 kubectl delete -k .
 ```
 

@@ -39,9 +39,10 @@ info_log() {
 # with --admin and additionally need merge/admin rights on the fixture repo.
 #
 # Resolution order (cached after the first call):
-#   1. Plaintext manifest temp/github-gitops-credentials-secret.yaml at the
-#      repo root (file-first: per-test cleanup DELETES the in-cluster Secret,
-#      so it is often absent exactly when cleanup needs the token).
+#   1. Plaintext manifest $GITHUB_GITOPS_SECRET_FILE, defaulting to
+#      temp/github-gitops-credentials-secret.yaml at the repo root (file-first:
+#      per-test cleanup DELETES the in-cluster Secret, so it is often absent
+#      exactly when cleanup needs the token).
 #   2. In-cluster Secret github-gitops-credentials in $NAMESPACE.
 #   3. Empty -> np_gh falls back to ambient gh auth (previous behavior).
 # ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ _NP_TOKEN_RESOLVED=""
 # get_np_token - print the operator's GitHub token (empty if unresolvable)
 get_np_token() {
     if [ -z "$_NP_TOKEN_RESOLVED" ]; then
-        local secret_file="${SCRIPT_DIR:-.}/../../temp/github-gitops-credentials-secret.yaml"
+        local secret_file="${GITHUB_GITOPS_SECRET_FILE:-${SCRIPT_DIR:-.}/../../temp/github-gitops-credentials-secret.yaml}"
         if [ -f "$secret_file" ]; then
             _NP_TOKEN=$(awk -F'"' '/^[[:space:]]*token:[[:space:]]*"/ {print $2; exit}' "$secret_file" 2>/dev/null)
         fi

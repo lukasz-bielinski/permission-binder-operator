@@ -18,12 +18,57 @@
 #   TEST_NS_PREFIX=pbo${INSTANCE}-
 #   RUN_DIR=/tmp/pbo-e2e-${INSTANCE}/
 # Without INSTANCE the behavior is exactly as before (defaults below).
+#
+# Environment (all optional):
+#   KUBECONFIG                  kubeconfig to use (default: $HOME/.kube/config).
+#                               The runner exits before any cleanup when the file
+#                               is unreadable or the API server does not answer
+#                               `kubectl get --raw /readyz`.
+#   OPERATOR_IMAGE              run the suite against this image (repo:tag or
+#                               repo@sha256:...) instead of the tag committed in
+#                               example/deployment/operator-deployment.yaml. It is
+#                               rendered into a per-run copy under $RUN_DIR (legacy
+#                               and INSTANCE modes); the source manifest is never
+#                               modified.
+#   OPERATOR_IMAGE_PULL_POLICY  imagePullPolicy for the override (default: Always
+#                               when OPERATOR_IMAGE is set; otherwise the manifest
+#                               value is kept).
+#   GITHUB_GITOPS_SECRET_FILE   Secret manifest with the GitHub GitOps credentials
+#                               used by the NetworkPolicy tests (default:
+#                               <repo>/temp/github-gitops-credentials-secret.yaml).
+#   GITHUB_GITOPS_READONLY_SECRET_FILE
+#                               read-only variant used by test 57 (default:
+#                               <repo>/temp/github-gitops-credentials-readonly-secret.yaml).
+#   E2E_WAIT_MULT               multiplies harness-owned sleeps/timeouts (default 1).
+#   E2E_ALLOW_LEGACY            =1 lets an INSTANCE run proceed beside a legacy
+#                               (cluster-wide) operator (see the preflight below).
 
 set +e  # Don't exit on errors - we want to run all tests
 
-# Respect the caller's KUBECONFIG; fall back to the default k3s kubeconfig.
-export KUBECONFIG="${KUBECONFIG:-$(readlink -f ~/workspace01/k3s-cluster/kubeconfig1)}"
+# Respect the caller's KUBECONFIG; otherwise use kubectl's default location.
+# Fail early with one clear message instead of 60 failing kubectl calls.
+KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+if [ ! -r "${KUBECONFIG%%:*}" ]; then     # KUBECONFIG may be a colon-separated list
+    echo "ERROR: kubeconfig not readable: ${KUBECONFIG%%:*} (export KUBECONFIG=/path/to/kubeconfig)" >&2
+    exit 1
+fi
+export KUBECONFIG
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Optional overrides for the GitHub GitOps credentials manifests (NetworkPolicy
+# tests). Resolved to absolute paths once here because the runner and the tests
+# cd around; an explicit override that cannot be read is a hard error (the
+# default path is merely optional - see Step 2 below).
+for var in GITHUB_GITOPS_SECRET_FILE GITHUB_GITOPS_READONLY_SECRET_FILE; do
+    if [ -n "${!var:-}" ]; then
+        if [ ! -r "${!var}" ]; then
+            echo "ERROR: $var not readable: ${!var}" >&2
+            exit 1
+        fi
+        printf -v "$var" '%s' "$(readlink -f "${!var}")"
+        export "${var?}"    # ${var?} form: shellcheck SC2163-clean indirect export
+    fi
+done
 
 # Per-instance isolation settings (defaults preserve current behavior).
 if [ -n "${INSTANCE:-}" ]; then
@@ -151,6 +196,15 @@ if [ ${#MISSING_TOOLS[@]} -gt 0 ]; then
     exit 1
 fi
 
+# Cluster preflight: fail BEFORE any cleanup/deploy when the API server is not
+# reachable through $KUBECONFIG. Without this a wrong or empty kubeconfig still
+# ends in "CLEANUP COMPLETE" (every delete in cleanup-operator.sh is
+# "|| echo (OK)"-guarded) and the runner logs "Cluster cleaned" against nothing.
+if ! kubectl get --raw /readyz --request-timeout=10s >/dev/null 2>&1; then
+    echo "❌ PREFLIGHT: API server not ready via KUBECONFIG=$KUBECONFIG (kubectl get --raw /readyz failed)" | tee $RESULTS_LOG
+    exit 1
+fi
+
 echo "╔═══════════════════════════════════════════════════════════════╗" | tee $RESULTS_LOG
 echo "║     🧪 E2E Tests with FULL ISOLATION                          ║" | tee -a $RESULTS_LOG
 echo "╚═══════════════════════════════════════════════════════════════╝" | tee -a $RESULTS_LOG
@@ -159,6 +213,10 @@ echo "Started: $(date)" | tee -a $RESULTS_LOG
 echo "Tests to run: ${#TEST_LIST[@]}" | tee -a $RESULTS_LOG
 echo "Tests: ${TEST_LIST[*]}" | tee -a $RESULTS_LOG
 echo "Results log: $RESULTS_LOG" | tee -a $RESULTS_LOG
+echo "Kubeconfig: $KUBECONFIG (context: $(kubectl config current-context 2>/dev/null || echo '<none>'))" | tee -a $RESULTS_LOG
+if [ -n "${GITHUB_GITOPS_SECRET_FILE:-}" ]; then
+    echo "GitHub GitOps secret file: $GITHUB_GITOPS_SECRET_FILE" | tee -a $RESULTS_LOG
+fi
 if [ -n "${INSTANCE:-}" ]; then
     echo "Instance: $INSTANCE" | tee -a $RESULTS_LOG
     echo "Operator namespace: $NAMESPACE" | tee -a $RESULTS_LOG
@@ -225,6 +283,40 @@ if [ -n "${INSTANCE:-}" ]; then
     render_instance_manifests
 fi
 
+# Optional image override (OPERATOR_IMAGE=repo/name:tag or repo/name@sha256:...):
+# rendered into a per-run copy under $RUN_DIR in BOTH legacy and INSTANCE modes
+# (it transforms whatever DEPLOYMENT_MANIFEST currently points at, so the
+# instance rendering above is preserved); the committed manifest is never
+# edited. imagePullPolicy defaults to Always so moving tags (sha-..., latest)
+# are re-pulled on every deploy; OPERATOR_IMAGE_PULL_POLICY overrides that.
+if [ -n "${OPERATOR_IMAGE:-}" ]; then
+    if ! [[ "$OPERATOR_IMAGE" =~ ^[A-Za-z0-9._/:@-]+$ ]]; then
+        echo -e "${RED}❌ ERROR: OPERATOR_IMAGE contains unexpected characters: $OPERATOR_IMAGE${NC}" | tee -a $RESULTS_LOG
+        exit 1
+    fi
+    OPERATOR_IMAGE_PULL_POLICY="${OPERATOR_IMAGE_PULL_POLICY:-Always}"
+    if ! [[ "$OPERATOR_IMAGE_PULL_POLICY" =~ ^(Always|IfNotPresent|Never)$ ]]; then
+        echo -e "${RED}❌ ERROR: OPERATOR_IMAGE_PULL_POLICY must be Always, IfNotPresent or Never (got: $OPERATOR_IMAGE_PULL_POLICY)${NC}" | tee -a $RESULTS_LOG
+        exit 1
+    fi
+    IMAGE_MANIFEST="$RUN_DIR/operator-deployment${INSTANCE:+-$INSTANCE}-image.yaml"
+    # Anchored on the manager container: it owns the only image:/imagePullPolicy:
+    # pair in the manifest, and the image line is matched by repository name so
+    # a manifest pointing elsewhere can never be silently overridden.
+    sed -e "s|^\( *\)image: lukaszbielinski/permission-binder-operator[:@].*\$|\1image: ${OPERATOR_IMAGE}|" \
+        -e "s|^\( *\)imagePullPolicy: .*\$|\1imagePullPolicy: ${OPERATOR_IMAGE_PULL_POLICY}|" \
+        "$DEPLOYMENT_MANIFEST" > "$IMAGE_MANIFEST"
+    if [ "$(grep -c "^ *image: ${OPERATOR_IMAGE}\$" "$IMAGE_MANIFEST")" != "1" ] \
+        || [ "$(grep -c "^ *imagePullPolicy: ${OPERATOR_IMAGE_PULL_POLICY}\$" "$IMAGE_MANIFEST")" != "1" ]; then
+        echo -e "${RED}❌ ERROR: OPERATOR_IMAGE override did not apply to $DEPLOYMENT_MANIFEST (see $IMAGE_MANIFEST)${NC}" | tee -a $RESULTS_LOG
+        exit 1
+    fi
+    DEPLOYMENT_MANIFEST="$IMAGE_MANIFEST"
+    echo "🖼️  Operator image override: $OPERATOR_IMAGE (imagePullPolicy: $OPERATOR_IMAGE_PULL_POLICY)" | tee -a $RESULTS_LOG
+    echo "   Rendered manifest: $IMAGE_MANIFEST" | tee -a $RESULTS_LOG
+    echo "" | tee -a $RESULTS_LOG
+fi
+
 # ONE-TIME SUITE SETUP: Install the PermissionBinder CRD once for the whole run.
 # The CRD is cluster-scoped and shared by every test, so there is no need to
 # delete/re-apply it per test (delete cascades all CRs and can hang on
@@ -289,7 +381,27 @@ for test_id in "${TEST_LIST[@]}"; do
     # STEP 1: CLEANUP CLUSTER (instance-scoped when INSTANCE is set)
     echo -e "${YELLOW}🧹 Step 1/3: Cleaning cluster...${NC}" | tee -a $RESULTS_LOG
     cd $SCRIPT_DIR
-    ./cleanup-operator.sh >"$RUN_DIR/cleanup-${test_id}.log" 2>&1
+    # cleanup-operator.sh runs under set -e and exits non-zero when its
+    # kubeconfig/readyz preflight fails or a delete errors out. Retry once on
+    # an API blip; if it still fails, do NOT deploy on top of the previous
+    # test's state - mark this test FAIL and move on.
+    : >"$RUN_DIR/cleanup-${test_id}.log"
+    cleanup_rc=0
+    for cleanup_attempt in 1 2; do
+        ./cleanup-operator.sh >>"$RUN_DIR/cleanup-${test_id}.log" 2>&1
+        cleanup_rc=$?
+        [ "$cleanup_rc" -eq 0 ] && break
+        if [ "$cleanup_attempt" -eq 1 ]; then
+            echo "   ⚠️  Cleanup exited $cleanup_rc - retrying once (see $RUN_DIR/cleanup-${test_id}.log)" | tee -a $RESULTS_LOG
+            e2e_sleep 5
+        fi
+    done
+    if [ "$cleanup_rc" -ne 0 ]; then
+        echo -e "   ${RED}❌ ERROR: cleanup failed twice (exit $cleanup_rc) - not deploying on an uncleaned cluster (check $RUN_DIR/cleanup-${test_id}.log)${NC}" | tee -a $RESULTS_LOG
+        results[$test_id]="FAIL"
+        failed=$((failed + 1))
+        continue
+    fi
 
     if grep -q "CLEANUP COMPLETE" "$RUN_DIR/cleanup-${test_id}.log"; then
         echo "   ✅ Cluster cleaned" | tee -a $RESULTS_LOG
@@ -304,7 +416,7 @@ for test_id in "${TEST_LIST[@]}"; do
     kubectl apply -f "$DEPLOYMENT_MANIFEST" -f "$SERVICEMONITOR_MANIFEST" >"$RUN_DIR/deploy-${test_id}.log" 2>&1
     
     # Create GitHub GitOps credentials Secret for NetworkPolicy tests (if file exists)
-    CREDENTIALS_FILE="$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml"
+    CREDENTIALS_FILE="${GITHUB_GITOPS_SECRET_FILE:-$SCRIPT_DIR/../../temp/github-gitops-credentials-secret.yaml}"
     if [ -f "$CREDENTIALS_FILE" ]; then
         echo "   Creating GitHub GitOps credentials Secret..." | tee -a $RESULTS_LOG
         sed "s/namespace: permissions-binder-operator/namespace: ${NAMESPACE}/" "$CREDENTIALS_FILE" | kubectl apply -f - >>"$RUN_DIR/deploy-${test_id}.log" 2>&1 || true
@@ -328,6 +440,31 @@ for test_id in "${TEST_LIST[@]}"; do
             echo "   ✅ Operator ready" | tee -a $RESULTS_LOG
             echo "      Pod: $POD_NAME" | tee -a $RESULTS_LOG
             echo "      Started: $POD_START" | tee -a $RESULTS_LOG
+            # Read the live image with a short retry: a transient API error
+            # must not look like a wrong image (kubectl_retry is not used here
+            # because it merges stderr into the captured value).
+            DEPLOYED_IMAGE=""
+            for image_attempt in 1 2 3; do
+                DEPLOYED_IMAGE=$(kubectl get deploy operator-controller-manager -n "$NAMESPACE" \
+                    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null) \
+                    && [ -n "$DEPLOYED_IMAGE" ] && break
+                [ "$image_attempt" -lt 3 ] && sleep 2
+            done
+            echo "      Image: ${DEPLOYED_IMAGE:-<unreadable>}" | tee -a $RESULTS_LOG
+            # With an override the live Deployment MUST carry it: a readable
+            # but different image means the whole run would validate the wrong
+            # build, so abort; an unreadable value only fails this test.
+            if [ -n "${OPERATOR_IMAGE:-}" ]; then
+                if [ -z "$DEPLOYED_IMAGE" ]; then
+                    echo -e "   ${RED}❌ ERROR: could not read the live Deployment image (3 attempts)${NC}" | tee -a $RESULTS_LOG
+                    results[$test_id]="FAIL"
+                    failed=$((failed + 1))
+                    continue
+                elif [ "$DEPLOYED_IMAGE" != "$OPERATOR_IMAGE" ]; then
+                    echo -e "   ${RED}❌ ERROR: deployed image '$DEPLOYED_IMAGE' does not match OPERATOR_IMAGE '$OPERATOR_IMAGE' - aborting the run${NC}" | tee -a $RESULTS_LOG
+                    exit 1
+                fi
+            fi
             pod_names[$test_id]=$POD_NAME
 
             # Baseline fixtures: every isolated test starts from a reconciled
