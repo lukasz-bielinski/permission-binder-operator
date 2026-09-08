@@ -37,10 +37,6 @@ const (
 	// AnnotationSource indicates the source of the NetworkPolicy (e.g., "template", "backup").
 	AnnotationSource = "network-policy.permission-binder.io/source"
 
-	// Retry configuration
-	maxRetryAttempts = 3
-	retryBackoffBase = 5 * time.Second
-
 	// maxStatusErrorMessageLength bounds the error message stored in
 	// NetworkPolicyStatus.ErrorMessage (git errors can be long)
 	maxStatusErrorMessageLength = 1024
@@ -52,6 +48,21 @@ const (
 	defaultReconciliationInterval = 1 * time.Hour
 	defaultStatusRetentionDays    = 30
 	defaultStalePRThreshold       = 30 * 24 * time.Hour
+
+	// gitRemoteOrigin is the conventional remote name used for all go-git operations.
+	gitRemoteOrigin = "origin"
+
+	// NetworkPolicy status state values recorded in PermissionBinder.Status.NetworkPolicies.
+	statePRCreated = "pr-created"
+	statePRMerged  = "pr-merged"
+	statePRPending = "pr-pending"
+	stateRemoved   = "removed"
+
+	// metricLabelCluster is the Prometheus label name for the cluster dimension.
+	metricLabelCluster = "cluster"
+
+	// gitBotUsername is the default git author/committer identity used for commits.
+	gitBotUsername = "permission-binder-operator"
 )
 
 // Git credentials structure
@@ -59,15 +70,6 @@ type gitCredentials struct {
 	token    string
 	username string
 	email    string
-}
-
-// NetworkPolicy PR creation result
-type networkPolicyPRResult struct {
-	prNumber  int
-	prBranch  string
-	prURL     string
-	variant   string
-	autoMerge bool
 }
 
 // pullRequest structure for different providers (used in Git operations)
@@ -90,15 +92,7 @@ var (
 			Name: "permission_binder_networkpolicy_prs_created_total",
 			Help: "Total number of NetworkPolicy PRs created",
 		},
-		[]string{"cluster", "namespace", "variant"},
-	)
-
-	networkPolicyPRsPending = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "permission_binder_networkpolicy_prs_pending",
-			Help: "Current number of pending NetworkPolicy PRs",
-		},
-		[]string{"cluster", "state"},
+		[]string{metricLabelCluster, "namespace", "variant"},
 	)
 
 	// NetworkPolicyPRCreationErrorsTotal counts the total number of PR creation errors.
@@ -108,7 +102,7 @@ var (
 			Name: "permission_binder_networkpolicy_pr_creation_errors_total",
 			Help: "Total number of NetworkPolicy PR creation errors",
 		},
-		[]string{"cluster", "namespace", "variant", "error_type"},
+		[]string{metricLabelCluster, "namespace", "variant", "error_type"},
 	)
 
 	// NetworkPolicyGitOperationsTotal counts Git operations (clone/push) by outcome.
@@ -128,7 +122,7 @@ var (
 			Name: "permission_binder_networkpolicy_template_validation_errors_total",
 			Help: "Total number of NetworkPolicy template validation errors",
 		},
-		[]string{"cluster", "template"},
+		[]string{metricLabelCluster, "template"},
 	)
 
 	// NetworkPolicyMultipleCRsWarningTotal counts warnings about multiple PermissionBinder CRs

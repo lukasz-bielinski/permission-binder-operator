@@ -28,6 +28,28 @@ import (
 	"time"
 )
 
+const (
+	// Git provider identifiers used across API and utility helpers.
+	gitProviderGitHub    = "github"
+	gitProviderGitLab    = "gitlab"
+	gitProviderBitbucket = "bitbucket"
+
+	// HTTP header names shared by the provider API calls below.
+	headerAuthorization = "Authorization"
+	headerContentType   = "Content-Type"
+	headerAccept        = "Accept"
+	headerPrivateToken  = "PRIVATE-TOKEN"
+
+	// JSON payload keys shared by the provider PR payloads.
+	payloadKeyTitle       = "title"
+	payloadKeyDescription = "description"
+	payloadKeyName        = "name"
+
+	// HTTP header values shared by the provider API calls.
+	contentTypeJSON = "application/json"
+	acceptGitHubV3  = "application/vnd.github.v3+json"
+)
+
 // gitAPIRequest makes HTTP request to Git provider API.
 // Handles JSON marshaling, request creation, and response parsing.
 // Returns error if status code is not 2xx.
@@ -65,7 +87,7 @@ func gitAPIRequest(ctx context.Context, method, endpoint string, payload interfa
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -95,46 +117,46 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 	}
 
 	switch provider {
-	case "github":
+	case gitProviderGitHub:
 		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("invalid GitHub repo URL: %s", repoURL)
 		}
 		endpoint = fmt.Sprintf("%s/repos/%s/%s/pulls", apiBaseURL, parts[0], strings.TrimSuffix(parts[1], ".git"))
 		payload = map[string]interface{}{
-			"title": title,
-			"head":  branchName,
-			"base":  baseBranch,
-			"body":  description,
+			payloadKeyTitle: title,
+			"head":          branchName,
+			"base":          baseBranch,
+			"body":          description,
 		}
 		if len(labels) > 0 {
 			payload["labels"] = labels
 		}
 		headers = map[string]string{
-			"Authorization": "token " + credentials.token,
-			"Content-Type":  "application/json",
-			"Accept":        "application/vnd.github.v3+json",
+			headerAuthorization: "token " + credentials.token,
+			headerContentType:   contentTypeJSON,
+			headerAccept:        acceptGitHubV3,
 		}
 
-	case "gitlab":
+	case gitProviderGitLab:
 		projectPath := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
 		projectPath = neturl.PathEscape(projectPath)
 		endpoint = fmt.Sprintf("%s/projects/%s/merge_requests", apiBaseURL, projectPath)
 		payload = map[string]interface{}{
-			"title":         title,
-			"source_branch": branchName,
-			"target_branch": baseBranch,
-			"description":   description,
+			payloadKeyTitle:       title,
+			"source_branch":       branchName,
+			"target_branch":       baseBranch,
+			payloadKeyDescription: description,
 		}
 		if len(labels) > 0 {
 			payload["labels"] = strings.Join(labels, ",")
 		}
 		headers = map[string]string{
-			"PRIVATE-TOKEN": credentials.token,
-			"Content-Type":  "application/json",
+			headerPrivateToken: credentials.token,
+			headerContentType:  contentTypeJSON,
 		}
 
-	case "bitbucket":
+	case gitProviderBitbucket:
 		// Detect Bitbucket Server vs Cloud based on API URL
 		if isBitbucketServer(apiBaseURL) {
 			// Bitbucket Server API format:
@@ -153,8 +175,8 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 
 			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/pull-requests", apiBaseURL, projectKey, repo)
 			payload = map[string]interface{}{
-				"title":       title,
-				"description": description,
+				payloadKeyTitle:       title,
+				payloadKeyDescription: description,
 				"fromRef": map[string]interface{}{
 					"id": "refs/heads/" + branchName,
 				},
@@ -163,8 +185,8 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 				},
 			}
 			headers = map[string]string{
-				"Authorization": "Bearer " + credentials.token,
-				"Content-Type":  "application/json",
+				headerAuthorization: "Bearer " + credentials.token,
+				headerContentType:   contentTypeJSON,
 			}
 		} else {
 			// Bitbucket Cloud API format:
@@ -176,18 +198,18 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 			repo := extractRepositoryFromURL(repoURL)
 			endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests", apiBaseURL, workspace, repo)
 			payload = map[string]interface{}{
-				"title": map[string]string{"raw": title},
+				payloadKeyTitle: map[string]string{"raw": title},
 				"source": map[string]interface{}{
-					"branch": map[string]string{"name": branchName},
+					"branch": map[string]string{payloadKeyName: branchName},
 				},
 				"destination": map[string]interface{}{
-					"branch": map[string]string{"name": baseBranch},
+					"branch": map[string]string{payloadKeyName: baseBranch},
 				},
-				"description": map[string]string{"raw": description},
+				payloadKeyDescription: map[string]string{"raw": description},
 			}
 			headers = map[string]string{
-				"Authorization": "Bearer " + credentials.token,
-				"Content-Type":  "application/json",
+				headerAuthorization: "Bearer " + credentials.token,
+				headerContentType:   contentTypeJSON,
 			}
 		}
 
@@ -205,7 +227,7 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 
 	var pr pullRequest
 	switch provider {
-	case "github":
+	case gitProviderGitHub:
 		var gh struct {
 			Number int    `json:"number"`
 			State  string `json:"state"`
@@ -218,7 +240,7 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 		pr.URL = gh.URL
 		pr.State = strings.ToUpper(gh.State)
 
-	case "gitlab":
+	case gitProviderGitLab:
 		var gl struct {
 			IID   int    `json:"iid"`
 			State string `json:"state"`
@@ -231,7 +253,7 @@ func createPullRequest(ctx context.Context, provider, apiBaseURL, repoURL, branc
 		pr.URL = gl.URL
 		pr.State = strings.ToUpper(gl.State)
 
-	case "bitbucket":
+	case gitProviderBitbucket:
 		var bb struct {
 			ID    int    `json:"id"`
 			State string `json:"state"`
@@ -265,7 +287,7 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 	}
 
 	switch provider {
-	case "github":
+	case gitProviderGitHub:
 		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("invalid GitHub repo URL: %s", repoURL)
@@ -273,19 +295,19 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 		owner := parts[0]
 		endpoint = fmt.Sprintf("%s/repos/%s/%s/pulls?head=%s:%s&state=all", apiBaseURL, owner, strings.TrimSuffix(parts[1], ".git"), owner, branchName)
 		headers = map[string]string{
-			"Authorization": "token " + credentials.token,
-			"Accept":        "application/vnd.github.v3+json",
+			headerAuthorization: "token " + credentials.token,
+			headerAccept:        acceptGitHubV3,
 		}
 
-	case "gitlab":
+	case gitProviderGitLab:
 		projectPath := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
 		projectPath = neturl.PathEscape(projectPath)
 		endpoint = fmt.Sprintf("%s/projects/%s/merge_requests?source_branch=%s&state=all", apiBaseURL, projectPath, branchName)
 		headers = map[string]string{
-			"PRIVATE-TOKEN": credentials.token,
+			headerPrivateToken: credentials.token,
 		}
 
-	case "bitbucket":
+	case gitProviderBitbucket:
 		// Detect Bitbucket Server vs Cloud
 		if isBitbucketServer(apiBaseURL) {
 			// Bitbucket Server API format:
@@ -302,7 +324,7 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 			projectKey := strings.ToUpper(project)
 			endpoint = fmt.Sprintf("%s/projects/%s/repos/%s/pull-requests?state=ALL", apiBaseURL, projectKey, repo)
 			headers = map[string]string{
-				"Authorization": "Bearer " + credentials.token,
+				headerAuthorization: "Bearer " + credentials.token,
 			}
 		} else {
 			// Bitbucket Cloud API format
@@ -313,7 +335,7 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 			repo := extractRepositoryFromURL(repoURL)
 			endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests?state=ALL", apiBaseURL, workspace, repo)
 			headers = map[string]string{
-				"Authorization": "Bearer " + credentials.token,
+				headerAuthorization: "Bearer " + credentials.token,
 			}
 		}
 
@@ -330,7 +352,7 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 	}
 
 	switch provider {
-	case "github":
+	case gitProviderGitHub:
 		var prs []struct {
 			Number  int    `json:"number"`
 			State   string `json:"state"`
@@ -344,7 +366,7 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 		}
 		return &pullRequest{Number: prs[0].Number, URL: prs[0].HTMLURL, State: strings.ToUpper(prs[0].State)}, nil
 
-	case "gitlab":
+	case gitProviderGitLab:
 		var mrs []struct {
 			IID   int    `json:"iid"`
 			State string `json:"state"`
@@ -358,7 +380,7 @@ func getPRByBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchNam
 		}
 		return &pullRequest{Number: mrs[0].IID, URL: mrs[0].URL, State: strings.ToUpper(mrs[0].State)}, nil
 
-	case "bitbucket":
+	case gitProviderBitbucket:
 		var resp struct {
 			Values []struct {
 				ID    int    `json:"id"`
@@ -403,7 +425,7 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 	}
 
 	switch provider {
-	case "github":
+	case gitProviderGitHub:
 		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 		if len(parts) < 2 {
 			return fmt.Errorf("invalid GitHub repo URL: %s", repoURL)
@@ -411,20 +433,20 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 		endpoint = fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", apiBaseURL, parts[0], strings.TrimSuffix(parts[1], ".git"), prNumber)
 		payload = map[string]interface{}{"merge_method": "merge"}
 		headers = map[string]string{
-			"Authorization": "token " + credentials.token,
-			"Content-Type":  "application/json",
-			"Accept":        "application/vnd.github.v3+json",
+			headerAuthorization: "token " + credentials.token,
+			headerContentType:   contentTypeJSON,
+			headerAccept:        acceptGitHubV3,
 		}
 
-	case "gitlab":
+	case gitProviderGitLab:
 		projectPath := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
 		projectPath = neturl.PathEscape(projectPath)
 		endpoint = fmt.Sprintf("%s/projects/%s/merge_requests/%d/merge", apiBaseURL, projectPath, prNumber)
 		headers = map[string]string{
-			"PRIVATE-TOKEN": credentials.token,
+			headerPrivateToken: credentials.token,
 		}
 
-	case "bitbucket":
+	case gitProviderBitbucket:
 		// Detect Bitbucket Server vs Cloud
 		if isBitbucketServer(apiBaseURL) {
 			// Bitbucket Server API format:
@@ -444,8 +466,8 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 				"version": 0, // Bitbucket Server requires version field (can use 0 for latest)
 			}
 			headers = map[string]string{
-				"Authorization": "Bearer " + credentials.token,
-				"Content-Type":  "application/json",
+				headerAuthorization: "Bearer " + credentials.token,
+				headerContentType:   contentTypeJSON,
 			}
 		} else {
 			// Bitbucket Cloud API format
@@ -456,7 +478,7 @@ func mergePullRequest(ctx context.Context, provider, apiBaseURL, repoURL string,
 			repo := extractRepositoryFromURL(repoURL)
 			endpoint = fmt.Sprintf("%s/repositories/%s/%s/pullrequests/%d/merge", apiBaseURL, workspace, repo, prNumber)
 			headers = map[string]string{
-				"Authorization": "Bearer " + credentials.token,
+				headerAuthorization: "Bearer " + credentials.token,
 			}
 		}
 
@@ -482,25 +504,25 @@ func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName
 	}
 
 	switch provider {
-	case "github":
+	case gitProviderGitHub:
 		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 		if len(parts) < 2 {
 			return fmt.Errorf("invalid GitHub repo URL: %s", repoURL)
 		}
 		endpoint = fmt.Sprintf("%s/repos/%s/%s/git/refs/heads/%s", apiBaseURL, parts[0], strings.TrimSuffix(parts[1], ".git"), branchName)
 		headers = map[string]string{
-			"Authorization": "token " + credentials.token,
+			headerAuthorization: "token " + credentials.token,
 		}
 
-	case "gitlab":
+	case gitProviderGitLab:
 		projectPath := strings.TrimSuffix(strings.TrimPrefix(u.Path, "/"), ".git")
 		projectPath = neturl.PathEscape(projectPath)
 		endpoint = fmt.Sprintf("%s/projects/%s/repository/branches/%s", apiBaseURL, projectPath, branchName)
 		headers = map[string]string{
-			"PRIVATE-TOKEN": credentials.token,
+			headerPrivateToken: credentials.token,
 		}
 
-	case "bitbucket":
+	case gitProviderBitbucket:
 		// Detect Bitbucket Server vs Cloud
 		if isBitbucketServer(apiBaseURL) {
 			// Bitbucket Server API format:
@@ -521,11 +543,11 @@ func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName
 			// If this fails, we'll need to construct a different base URL
 			endpoint = strings.Replace(endpoint, "/rest/api/1.0", "/rest/branch-utils/1.0", 1)
 			payload = map[string]interface{}{
-				"name": "refs/heads/" + branchName,
+				payloadKeyName: "refs/heads/" + branchName,
 			}
 			headers = map[string]string{
-				"Authorization": "Bearer " + credentials.token,
-				"Content-Type":  "application/json",
+				headerAuthorization: "Bearer " + credentials.token,
+				headerContentType:   contentTypeJSON,
 			}
 		} else {
 			// Bitbucket Cloud API format
@@ -536,7 +558,7 @@ func deleteBranch(ctx context.Context, provider, apiBaseURL, repoURL, branchName
 			repo := extractRepositoryFromURL(repoURL)
 			endpoint = fmt.Sprintf("%s/repositories/%s/%s/refs/branches/%s", apiBaseURL, workspace, repo, branchName)
 			headers = map[string]string{
-				"Authorization": "Bearer " + credentials.token,
+				headerAuthorization: "Bearer " + credentials.token,
 			}
 		}
 

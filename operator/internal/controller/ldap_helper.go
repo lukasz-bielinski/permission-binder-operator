@@ -180,7 +180,7 @@ func ConnectLdap(creds *LdapCredentials, tlsVerify bool) (*ldap.Conn, error) {
 	// Bind (authenticate)
 	err = conn.Bind(creds.Username, creds.Password)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		ldapConnectionsTotal.WithLabelValues("error").Inc()
 		return nil, fmt.Errorf("failed to bind to LDAP server: %w", err)
 	}
@@ -309,7 +309,7 @@ func (r *PermissionBinderReconciler) ProcessLdapGroupCreation(ctx context.Contex
 		logger.Error(err, "Failed to connect to LDAP server")
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	logger.Info("Connected to LDAP server",
 		"server", creds.Server,

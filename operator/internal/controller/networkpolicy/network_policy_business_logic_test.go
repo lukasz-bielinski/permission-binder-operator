@@ -273,7 +273,7 @@ func TestProcessTemplate(t *testing.T) {
 	// Create temporary directory for template
 	tmpDir, err := os.MkdirTemp("", "networkpolicy-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create template directory
 	templateDir := "templates"
@@ -319,7 +319,7 @@ spec:
 			ctx := context.Background()
 			r := setupFakeClient()
 
-			result, err := processTemplate(r, ctx, tmpDir, templateDir, "template.yaml", tt.namespace, tt.clusterName)
+			result, err := processTemplate(r, ctx, tmpDir, templateDir, "template.yaml", tt.namespace)
 			if tt.expectError {
 				require.Error(t, err)
 				assert.Nil(t, result)

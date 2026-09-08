@@ -65,7 +65,7 @@ func ProcessRemovedNamespaces(
 	// Find namespaces that were removed
 	removedNamespaces := make([]string, 0)
 	for _, status := range permissionBinder.Status.NetworkPolicies {
-		if !currentNamespaces[status.Namespace] && status.State != "removed" {
+		if !currentNamespaces[status.Namespace] && status.State != stateRemoved {
 			removedNamespaces = append(removedNamespaces, status.Namespace)
 		}
 	}
@@ -101,10 +101,10 @@ func ProcessRemovedNamespaces(
 			logger.Error(err, "Failed to clone repository", "namespace", namespace)
 			continue
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		// Checkout base branch
-		if err := gitCheckoutBranch(ctx, tmpDir, baseBranch, false); err != nil {
+		if err := gitCheckoutBranch(tmpDir, baseBranch, false); err != nil {
 			logger.Error(err, "Failed to checkout base branch", "namespace", namespace)
 			continue
 		}
@@ -121,7 +121,7 @@ func ProcessRemovedNamespaces(
 		branchName := generateBranchName(clusterName, namespace+"-removal")
 
 		// Create branch
-		if err := gitCheckoutBranch(ctx, tmpDir, branchName, true); err != nil {
+		if err := gitCheckoutBranch(tmpDir, branchName, true); err != nil {
 			logger.Error(err, "Failed to create branch", "namespace", namespace)
 			continue
 		}
@@ -173,7 +173,7 @@ func ProcessRemovedNamespaces(
 				"provider", provider,
 				"apiBaseURL", sanitizedAPIBaseURL,
 				"repoURL", sanitizedRepoURL)
-			os.RemoveAll(tmpDir)
+			_ = os.RemoveAll(tmpDir)
 			continue
 		}
 

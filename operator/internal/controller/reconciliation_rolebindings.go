@@ -218,9 +218,9 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 			},
 		},
 		RoleRef: rbacv1.RoleRef{
-			Kind:     "ClusterRole",
+			Kind:     clusterRoleKind,
 			Name:     clusterRole,
-			APIGroup: "rbac.authorization.k8s.io",
+			APIGroup: rbacAPIGroup,
 		},
 	}
 

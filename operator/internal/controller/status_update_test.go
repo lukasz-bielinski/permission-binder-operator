@@ -207,12 +207,9 @@ func TestStatusChangeDetection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Simulate the status change detection logic
-			statusChanged := false
 
 			// Compare RoleBindings
-			if !reflect.DeepEqual(tt.oldRoleBindings, tt.newRoleBindings) {
-				statusChanged = true
-			}
+			statusChanged := !reflect.DeepEqual(tt.oldRoleBindings, tt.newRoleBindings)
 
 			// Compare ServiceAccounts
 			if !reflect.DeepEqual(tt.oldSAs, tt.newSAs) {

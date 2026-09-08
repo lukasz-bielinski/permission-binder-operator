@@ -40,7 +40,7 @@ func sanitizeError(err error, credentials *gitCredentials) error {
 	// Remove username if present (might be sensitive)
 	if credentials != nil && credentials.username != "" {
 		// Only redact if it's not a default username
-		if credentials.username != "permission-binder-operator" {
+		if credentials.username != gitBotUsername {
 			errMsg = strings.ReplaceAll(errMsg, credentials.username, "[REDACTED]")
 		}
 	}
@@ -73,7 +73,7 @@ func sanitizeString(s string, credentials *gitCredentials) string {
 	}
 
 	// Remove username if present (might be sensitive)
-	if credentials != nil && credentials.username != "" && credentials.username != "permission-binder-operator" {
+	if credentials != nil && credentials.username != "" && credentials.username != gitBotUsername {
 		result = strings.ReplaceAll(result, credentials.username, "[REDACTED]")
 	}
 

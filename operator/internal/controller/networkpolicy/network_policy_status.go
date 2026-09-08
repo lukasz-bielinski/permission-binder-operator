@@ -115,7 +115,7 @@ func updateNetworkPolicyStatus(r ReconcilerInterface,
 		status.State = state
 		status.ErrorMessage = errorMessage
 
-		if state == "pr-created" || state == "pr-pending" {
+		if state == statePRCreated || state == statePRPending {
 			if status.CreatedAt == "" {
 				status.CreatedAt = time.Now().Format(time.RFC3339)
 			}
@@ -322,7 +322,7 @@ func CleanupStatus(
 		retentionDays = defaultStatusRetentionDays
 	}
 
-	cutoffTime := time.Now().AddDate(0, 0, -int(retentionDays))
+	cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
 
 	// Retry logic to handle race conditions (max 3 attempts)
 	maxRetries := 3
@@ -347,7 +347,7 @@ func CleanupStatus(
 			}
 
 			// Namespace removed - check retention
-			if statusEntry.State == "removed" {
+			if statusEntry.State == stateRemoved {
 				removedTime, err := time.Parse(time.RFC3339, statusEntry.RemovedAt)
 				if err == nil && removedTime.After(cutoffTime) {
 					// Still in retention period - keep it (preserve all fields)
@@ -356,7 +356,7 @@ func CleanupStatus(
 				// Outside retention period - remove it
 			} else {
 				// Namespace removed but not marked - mark as removed (preserve PR info)
-				statusEntry.State = "removed"
+				statusEntry.State = stateRemoved
 				statusEntry.RemovedAt = time.Now().Format(time.RFC3339)
 				// Preserve PR info even when marking as removed
 				cleanedStatus = append(cleanedStatus, statusEntry)
@@ -386,7 +386,7 @@ func CleanupStatus(
 func checkStalePRs(r ReconcilerInterface,
 	ctx context.Context,
 	permissionBinder *permissionv1.PermissionBinder,
-) error {
+) error { //nolint:unparam // error return kept for future-proofing; update failures are logged, not fatal
 	logger := log.FromContext(ctx)
 
 	thresholdStr := permissionBinder.Spec.NetworkPolicy.StalePRThreshold
@@ -404,7 +404,7 @@ func checkStalePRs(r ReconcilerInterface,
 
 	for i := range permissionBinder.Status.NetworkPolicies {
 		statusEntry := &permissionBinder.Status.NetworkPolicies[i]
-		if statusEntry.State == "pr-created" || statusEntry.State == "pr-pending" {
+		if statusEntry.State == statePRCreated || statusEntry.State == statePRPending {
 			createdAt, err := time.Parse(time.RFC3339, statusEntry.CreatedAt)
 			if err == nil && createdAt.Before(cutoffTime) {
 				logger.Info("Security warning: PR is stale (open for too long)",

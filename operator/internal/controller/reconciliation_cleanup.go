@@ -104,6 +104,8 @@ func canTakeOwnership(annotations map[string]string, ownerName, ownerNamespace s
 // cleanupManagedResources cleans up all resources managed by this PermissionBinder
 // SAFE MODE: We do NOT delete RoleBindings or namespaces when PermissionBinder is deleted
 // This prevents cascade failures and accidental data loss
+//
+//nolint:unparam // error return is part of the reconcile contract; annotation failures are logged, not fatal
 func (r *PermissionBinderReconciler) cleanupManagedResources(ctx context.Context, permissionBinder *permissionv1.PermissionBinder) error {
 	logger := log.FromContext(ctx)
 

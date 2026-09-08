@@ -279,7 +279,8 @@ func main() {
 		}
 		for _, ns := range reconcileNamespaces {
 			if _, ok := watched[ns]; !ok {
-				setupLog.Info("WARNING: RECONCILE_NAMESPACES entry is outside WATCH_NAMESPACE - PermissionBinders in this namespace will never be reconciled",
+				setupLog.Info("WARNING: RECONCILE_NAMESPACES entry is outside WATCH_NAMESPACE - "+
+					"PermissionBinders in this namespace will never be reconciled",
 					"namespace", ns)
 			}
 		}

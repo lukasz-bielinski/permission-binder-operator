@@ -95,7 +95,7 @@ func TestCloneGitRepo_ErrorHandling(t *testing.T) {
 				assert.NotEmpty(t, tmpDir)
 				// Cleanup
 				if tmpDir != "" {
-					os.RemoveAll(tmpDir)
+					_ = os.RemoveAll(tmpDir)
 				}
 			}
 		})
@@ -107,8 +107,6 @@ func TestGitCheckoutBranch_ErrorHandling(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping Git integration test in short mode")
 	}
-
-	ctx := context.Background()
 
 	tests := []struct {
 		name        string
@@ -187,11 +185,11 @@ func TestGitCheckoutBranch_ErrorHandling(t *testing.T) {
 			repoDir := tt.setupRepo(t)
 			defer func() {
 				if strings.HasPrefix(repoDir, os.TempDir()) {
-					os.RemoveAll(repoDir)
+					_ = os.RemoveAll(repoDir)
 				}
 			}()
 
-			err := gitCheckoutBranch(ctx, repoDir, tt.branchName, tt.create)
+			err := gitCheckoutBranch(repoDir, tt.branchName, tt.create)
 
 			if tt.wantErr {
 				assert.Error(t, err)
@@ -216,7 +214,7 @@ func TestGitCommitAndPush_NoChanges(t *testing.T) {
 	// Create a temporary Git repository
 	tmpDir, err := os.MkdirTemp("", "git-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Initialize Git repo using go-git
 	// Note: v5 uses bare as argument, v6 will use InitOptions.Bare
@@ -315,7 +313,7 @@ func TestGitCommitAndPush_ErrorHandling(t *testing.T) {
 			repoDir := tt.setupRepo(t)
 			defer func() {
 				if strings.HasPrefix(repoDir, os.TempDir()) {
-					os.RemoveAll(repoDir)
+					_ = os.RemoveAll(repoDir)
 				}
 			}()
 

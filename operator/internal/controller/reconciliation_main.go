@@ -66,6 +66,15 @@ const (
 
 	// Finalizer
 	PermissionBinderFinalizer = "permission-binder.io/finalizer"
+
+	// RBAC role reference identifiers used when binding ClusterRoles.
+	rbacAPIGroup    = "rbac.authorization.k8s.io"
+	clusterRoleKind = "ClusterRole"
+
+	// Recommended Kubernetes app labels stamped on managed ServiceAccounts.
+	labelAppManagedBy = "app.kubernetes.io/managed-by"
+	labelAppComponent = "app.kubernetes.io/component"
+	labelAppName      = "app.kubernetes.io/name"
 )
 
 // ManagedByValue is the value of the managed-by label/annotation stamped on
@@ -139,6 +148,8 @@ func (r *PermissionBinderReconciler) Status() client.StatusWriter {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.24.1/pkg/reconcile
+//
+//nolint:gocyclo // top-level reconcile orchestration; kept linear for readability
 func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -428,12 +439,9 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Check if status actually changed before updating
 	// This prevents unnecessary ResourceVersion changes
-	statusChanged := false
 
 	// Compare ProcessedRoleBindings
-	if !reflect.DeepEqual(permissionBinder.Status.ProcessedRoleBindings, newProcessedRoleBindings) {
-		statusChanged = true
-	}
+	statusChanged := !reflect.DeepEqual(permissionBinder.Status.ProcessedRoleBindings, newProcessedRoleBindings)
 
 	// Compare ProcessedServiceAccounts
 	if !reflect.DeepEqual(permissionBinder.Status.ProcessedServiceAccounts, newProcessedServiceAccounts) {

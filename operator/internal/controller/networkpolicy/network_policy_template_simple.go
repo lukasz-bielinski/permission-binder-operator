@@ -40,7 +40,6 @@ func processTemplate(r ReconcilerInterface,
 	templateDir string,
 	templateName string,
 	namespace string,
-	clusterName string,
 ) ([]byte, error) {
 	logger := log.FromContext(ctx)
 
@@ -182,9 +181,4 @@ func isInternalKubernetesAnnotation(key string) bool {
 		}
 	}
 	return false
-}
-
-// getAllTemplates lists all YAML files in template directory
-func getAllTemplates(r ReconcilerInterface, repoDir string, templateDir string) ([]string, error) {
-	return listFiles(repoDir, templateDir)
 }

@@ -67,7 +67,7 @@ func cloneGitRepo(ctx context.Context, repoURL string, credentials *gitCredentia
 	// Note: v5 uses bare as argument, v6 will use CloneOptions.Bare field
 	_, err = git.PlainCloneContext(ctx, tmpDir, false, cloneOptions)
 	if err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		NetworkPolicyGitOperationsTotal.WithLabelValues("clone", "error").Inc()
 		// Sanitize error to prevent token leakage
 		return "", fmt.Errorf("failed to clone repository: %w", sanitizeError(err, credentials))
@@ -80,7 +80,7 @@ func cloneGitRepo(ctx context.Context, repoURL string, credentials *gitCredentia
 // gitCheckoutBranch checks out or creates a branch using go-git.
 // If create is false, only checks out existing branch.
 // If create is true, creates new branch if it doesn't exist, or checks out if it already exists.
-func gitCheckoutBranch(ctx context.Context, repoDir string, branchName string, create bool) error {
+func gitCheckoutBranch(repoDir string, branchName string, create bool) error {
 	// Open repository
 	repo, err := git.PlainOpen(repoDir)
 	if err != nil {
@@ -205,7 +205,7 @@ func gitCommitAndPush(ctx context.Context, repoDir string, branchName string, co
 	}
 
 	// Get remote
-	remote, err := repo.Remote("origin")
+	remote, err := repo.Remote(gitRemoteOrigin)
 	if err != nil {
 		return fmt.Errorf("failed to get remote: %w", err)
 	}
@@ -240,7 +240,7 @@ func gitCommitAndPush(ctx context.Context, repoDir string, branchName string, co
 	// Prepare push options
 	pushOptions := &git.PushOptions{
 		Auth:            auth,
-		RemoteName:      "origin",
+		RemoteName:      gitRemoteOrigin,
 		InsecureSkipTLS: !tlsVerify,
 		RefSpecs: []config.RefSpec{
 			config.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/heads/%s", branchName, branchName)),
@@ -254,7 +254,7 @@ func gitCommitAndPush(ctx context.Context, repoDir string, branchName string, co
 		// Fetch latest changes
 		fetchOptions := &git.FetchOptions{
 			Auth:            auth,
-			RemoteName:      "origin",
+			RemoteName:      gitRemoteOrigin,
 			InsecureSkipTLS: !tlsVerify,
 			RefSpecs: []config.RefSpec{
 				config.RefSpec(fmt.Sprintf("refs/heads/%s:refs/remotes/origin/%s", branchName, branchName)),
