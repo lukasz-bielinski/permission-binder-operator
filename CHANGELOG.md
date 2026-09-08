@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🔧 Improvements
+- Keep example overlays aligned with generated manifests by installing `example/deployment/crd.yaml`, targeting the real controller Deployment in environment patches, and documenting the required kustomize load-restrictor behavior (#81).
+
 ## [1.8.1] - 2026-09-08
 
 ### 🚀 Highlights
@@ -791,7 +794,7 @@ data:
 ```
 
 **Migration Steps:**
-1. Update CRDs: `kubectl apply -f example/crd/`
+1. Update CRDs: `kubectl apply -f example/deployment/crd.yaml`
 2. Update PermissionBinder CR: Change `prefix:` to `prefixes: [...]`
 3. Update ConfigMap to use `whitelist.txt` format with LDAP DNs
 4. Upgrade operator to v2.0.0

@@ -53,6 +53,16 @@ argocd app sync permission-binder-operator
 
 ## Configuration for different environments
 
+Set kustomize load-restrictor options before creating environment-specific applications, because these overlays reference shared resources above the overlay directories:
+
+```yaml
+# argocd-cm
+data:
+  kustomize.buildOptions: "--load-restrictor LoadRestrictionsNone"
+```
+
+You can also set this per Application with `spec.source.kustomize.buildOptions: "--load-restrictor LoadRestrictionsNone"`.
+
 ### Staging
 
 ```bash

@@ -52,12 +52,17 @@ jobs:
         working-directory: operator
         run: make test
 
+      - name: Sync example manifests
+        working-directory: operator
+        run: make sync-examples
+
       - name: Check for uncommitted generated changes
         run: |
-          # make test runs manifests/generate/fmt; any resulting diff means
-          # generated files or formatting were not committed
+          # make test runs manifests/generate/fmt and make sync-examples updates
+          # the example CRD copy; any resulting diff means generated files,
+          # synced example manifests, or formatting were not committed
           git diff --exit-code || {
-            echo "::error::make test modified files - run 'make test' locally and commit the changes"
+            echo "::error::make test or make sync-examples modified files - run 'make test' and 'make sync-examples' locally and commit the changes"
             exit 1
           }
 
