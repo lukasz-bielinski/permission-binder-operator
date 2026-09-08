@@ -10,6 +10,31 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: operator/go.mod
+          cache-dependency-path: operator/go.sum
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+          working-directory: operator
+          # 85 pre-existing issues are not addressed in this PR; only fail on
+          # newly introduced issues so this check is enforceable immediately.
+          only-new-issues: true
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 25
