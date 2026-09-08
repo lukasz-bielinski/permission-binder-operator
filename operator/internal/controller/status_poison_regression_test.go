@@ -112,7 +112,7 @@ func startPoisonEnv(t *testing.T, wrapClient func(client.Client) client.Client) 
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 		BinaryAssetsDirectory: filepath.Join("..", "..", "bin", "k8s",
-			fmt.Sprintf("1.36.2-%s-%s", goruntime.GOOS, goruntime.GOARCH)),
+			fmt.Sprintf("1.37.0-%s-%s", goruntime.GOOS, goruntime.GOARCH)),
 	}
 	cfg, err := env.Start()
 	if err != nil {

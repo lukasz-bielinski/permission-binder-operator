@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 📊 Observability
 - `permission_binder_networkpolicy_git_operations_total` (clone/push by outcome) is now actually registered with the metrics registry — it was incremented but never exported, so it could not appear on `/metrics` (#54).
 
+### 🔧 Improvements
+- **envtest 1.37.0 / setup-envtest release-0.25** (#66): the unit + envtest suite now runs against a Kubernetes 1.37 apiserver, matching the controller-runtime v0.25.0 / k8s.io v0.37.0 stack from #64 (`ENVTEST_K8S_VERSION`, `ENVTEST_VERSION`, and the hardcoded `BinaryAssetsDirectory` fallbacks in `suite_test.go` / `status_poison_regression_test.go`).
+
 ## [1.8.0] - 2026-08-24
 
 ### 🚀 Highlights
