@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🔧 Improvements
+- **Example overlays install the generated CRD** (#84 — closes #81): `example/crd/` (a controller-gen v0.17.0 copy without the `networkPolicy` schema) is removed; both `example/environments/*` overlays now reference `example/deployment/crd.yaml`, which `make sync-examples` copies from the generated CRD and the `Tests` workflow keeps in sync via the drift gate; the overlay patch targets the real `operator-controller-manager` Deployment; docs show the `--load-restrictor LoadRestrictionsNone` build.
+
 ### 📝 Documentation
 - **Docs and repo hygiene refresh** (#86 — closes #85): `SECURITY.md` supported-versions table now states the real policy (latest 1.8.x line only), `docs/RUNBOOK.md`, `docs/SRE.md` and `docs/BACKUP.md` carry current version footers, `make test-e2e` runs the live-cluster suite under `example/tests/` instead of a non-existent Go package, and the stale `GIT_HISTORY_REWRITE_NOTICE.md` is folded into the 1.6.5 entry.
 
@@ -795,7 +798,7 @@ data:
 ```
 
 **Migration Steps:**
-1. Update CRDs: `kubectl apply -f example/crd/`
+1. Update CRDs: `kubectl apply -f example/deployment/crd.yaml`
 2. Update PermissionBinder CR: Change `prefix:` to `prefixes: [...]`
 3. Update ConfigMap to use `whitelist.txt` format with LDAP DNs
 4. Upgrade operator to v2.0.0

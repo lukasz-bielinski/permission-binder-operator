@@ -5,7 +5,7 @@ metadata:
   name: permission-binder-operator-staging
 
 resources:
-  - ../../crd/permission.permission-binder.io_permissionbinders.yaml
+  - ../../deployment/crd.yaml
   - ../../deployment/operator-deployment.yaml
   - ../../configmap/permission-config.yaml
   - ../../permissionbinder/permissionbinder-example.yaml
@@ -22,7 +22,7 @@ commonLabels:
 patches:
   - target:
       kind: Deployment
-      name: permission-binder-operator-controller-manager
+      name: operator-controller-manager
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/image

@@ -64,13 +64,15 @@ kubectl get pods -l app.kubernetes.io/name=permission-binder-operator
 
 #### Staging
 ```bash
-kubectl apply -k environments/staging/
+kubectl kustomize --load-restrictor LoadRestrictionsNone environments/staging/ | kubectl apply -f -
 ```
 
 #### Production
 ```bash
-kubectl apply -k environments/production/
+kubectl kustomize --load-restrictor LoadRestrictionsNone environments/production/ | kubectl apply -f -
 ```
+
+Use the load restrictor override because these overlays reference shared resources located above the environment directories.
 
 ## Configuration
 
