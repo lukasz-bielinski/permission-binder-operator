@@ -2,32 +2,42 @@
 set -e
 
 # Usage:
-#   ./cleanup-operator.sh          # Per-test cleanup - keeps the PermissionBinder CRD
-#   ./cleanup-operator.sh --full   # Full wipe - also deletes the CRD (manual resets)
+#   ./cleanup-operator.sh                         # Per-test cleanup - keeps the PermissionBinder CRD
+#   ./cleanup-operator.sh --full                  # Full wipe - also deletes the CRD (manual resets)
+#   ./cleanup-operator.sh --list-test-namespaces  # Dry run: print what Step 8 would delete, change nothing
 #
 # Per-instance isolation (set by run-tests-full-isolation.sh, all optional):
-#   NAMESPACE       operator namespace to clean (default: permissions-binder-operator)
-#   INSTANCE        instance id; cluster-scoped RBAC names carry a -${INSTANCE} suffix
-#   TEST_NS_PREFIX  when set, only test namespaces starting with this prefix are
-#                   deleted (instead of the legacy cluster-wide regex sweep)
+#   NAMESPACE         operator namespace to clean (default: permissions-binder-operator)
+#   INSTANCE          instance id; cluster-scoped RBAC names carry a -${INSTANCE} suffix
+#   TEST_NS_PREFIX    when set, only test namespaces starting with this prefix are
+#                     deleted (instead of the legacy sweep: managed-by label +
+#                     anchored allow-list, minus protected namespaces - see Step 8)
+#   MANAGED_BY_VALUE  managed-by label value stamped by this instance's operator
+#                     (default: permission-binder-operator[-${INSTANCE}])
 # With none of these set the behavior is the legacy single-instance cleanup.
 
 FULL_CLEANUP=false
+LIST_ONLY=false
 for arg in "$@"; do
     case "$arg" in
         --full)
             FULL_CLEANUP=true
             ;;
+        --list-test-namespaces)
+            LIST_ONLY=true
+            ;;
         -h|--help)
-            echo "Usage: $0 [--full]"
-            echo "  (default)  Remove operator, its resources and test namespaces; keep the CRD"
-            echo "  --full     Also delete the PermissionBinder CRD (full manual reset)"
+            echo "Usage: $0 [--full | --list-test-namespaces]"
+            echo "  (default)               Remove operator, its resources and test namespaces; keep the CRD"
+            echo "  --full                  Also delete the PermissionBinder CRD (full manual reset)"
+            echo "  --list-test-namespaces  Dry run: print the test namespaces Step 8 would delete"
+            echo "                          (one per line on stdout; skipped protected ones on stderr)"
             echo ""
-            echo "Env: NAMESPACE, INSTANCE, TEST_NS_PREFIX scope the cleanup to one instance."
+            echo "Env: NAMESPACE, INSTANCE, TEST_NS_PREFIX, MANAGED_BY_VALUE scope the cleanup to one instance."
             exit 0
             ;;
         *)
-            echo "ERROR: Unknown option: $arg (use --full for a complete wipe, -h for help)"
+            echo "ERROR: Unknown option: $arg (use --full for a complete wipe, --list-test-namespaces for a dry run, -h for help)"
             exit 1
             ;;
     esac
@@ -40,6 +50,90 @@ TEST_NS_PREFIX="${TEST_NS_PREFIX:-}"
 RBAC_SUFFIX=""
 if [ -n "$INSTANCE" ]; then
     RBAC_SUFFIX="-${INSTANCE}"
+fi
+# Label value stamped by THIS instance's operator (same derivation as
+# MANAGED_BY_VALUE in test-common.sh / the runner's deployment manifest).
+MANAGED_BY_VALUE="${MANAGED_BY_VALUE:-permission-binder-operator${RBAC_SUFFIX}}"
+MANAGED_BY_LABEL="permission-binder.io/managed-by=${MANAGED_BY_VALUE}"
+
+# ---------------------------------------------------------------------------
+# Test namespace selection (used by Step 8, Step 9 and --list-test-namespaces)
+#
+# Instance mode (TEST_NS_PREFIX set): every namespace starting with the prefix.
+# Legacy mode (no prefix): the UNION of
+#   (a) namespaces labelled managed-by=<MANAGED_BY_VALUE>, i.e. everything the
+#       e2e operator created or adopted from whitelist entries, and
+#   (b) an ANCHORED allow-list of the names the test bodies create themselves
+#       (kubectl create namespace / YAML - those carry no label),
+# MINUS protected namespaces (below). Both halves are anchored on the name
+# column; the historical `kubectl get ns | grep -E "(project|tenant|staging|test-|excluded-)"`
+# matched whole lines anywhere and could delete unrelated cluster namespaces
+# while missing test4-new-namespace, valid-test17-ns, ldap-mock, ... (issue #78).
+#
+# Inventory (legacy names, TEST_NS_PREFIX empty), derived from
+#   grep -rhoE 'TEST_NS_PREFIX\}[a-z0-9-]+' test-implementations/*.sh | sort -u
+# plus every `kubectl create namespace` and unprefixed literal in the tests:
+#   test-namespace-001 (00/03)  test-namespace (01)  excluded-test-ns (03)
+#   test4-new-namespace (04)  project3 (05)  project1 (10)
+#   valid-test17-ns another-valid-test17 (17)  large-project-1..50 (24)
+#   metrics-test-ns27 (27)  sa-test-31..41 sa-test-37-b sa-test-39-empty (31-41)
+#   test-hyphenated (42)  valid-invalid-test valid-invalid-test-2 stress-invalid-test (43)
+#   np-test-44 np-test-44-2 np-test-45-backup np-test-46..50 np-test-51-r1..5
+#   np-test-52-variant-c (44-52)  test-git-failure (53, unprefixed literal)
+#   np-test-54 np-test-55-a/b np-test-56..58 np-test-59-a/b np-test-60 np-test-60-1..3 (54-60)
+#   ldap-mock ldap-test-61 (61)
+# Not created (invalid whitelist entries): incomplete (20), ns-unknownrole (43).
+# kube-system (47) is ADOPTED via the whitelist, never created: protected below.
+#
+# New tests: name namespaces "${TEST_NS_PREFIX}test-NN-<slug>" (covered by the
+# test-?[0-9]+-... family) or extend TEST_NS_ALLOWLIST in the same PR
+# (see ADDING_NEW_TESTS.md, "Test namespace naming").
+# ---------------------------------------------------------------------------
+TEST_NS_ALLOWLIST='^(test-namespace(-[0-9]{3})?|test-?[0-9]+-[a-z0-9-]+|test-hyphenated|test-git-failure|excluded-test-ns|valid-invalid-test(-2)?|stress-invalid-test|valid-test17-ns|another-valid-test17|project[0-9]+|large-project-[0-9]+|metrics-test-ns[0-9]+|sa-test-[0-9]+(-[a-z0-9]+)?|np-test-[0-9]+(-[a-z0-9-]+)?|ldap-mock|ldap-test-[0-9]+(-[a-z0-9]+)?)$'
+
+# Never deleted, whichever half selected them (plus $NAMESPACE, owned by Step 7).
+PROTECTED_NS_PATTERN='^(kube-.*|default|monitoring|argocd.*|metallb-system|cattle-.*|openshift-.*|permission-binder-.*)$'
+# Legacy mode only: a parallel slot's namespaces (operator pbo-e2e-N, tests
+# pboN-*) may belong to a run that is still going - only that slot's own
+# prefixed cleanup touches them. (Reachable via the label half when a leftover
+# legacy operator adopted a slot namespace under the default label, issue #55.)
+SIBLING_NS_PATTERN='^(pbo-e2e-.*|pbo[0-9]+-.*)$'
+
+is_protected_namespace() { [[ "$1" =~ $PROTECTED_NS_PATTERN ]] || [ "$1" = "$NAMESPACE" ]; }
+is_sibling_namespace()   { [ -z "$TEST_NS_PREFIX" ] && [[ "$1" =~ $SIBLING_NS_PATTERN ]]; }
+# Keep every `|| true`: the script runs under `set -e` and var=$(cmd) aborts on
+# a grep that matches nothing.
+all_namespaces()     { kubectl get ns -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null || true; }
+managed_namespaces() { kubectl get ns -l "$MANAGED_BY_LABEL" -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null || true; }
+
+list_test_namespaces() {
+    local candidates ns
+    if [ -n "$TEST_NS_PREFIX" ]; then
+        candidates=$(all_namespaces | grep "^${TEST_NS_PREFIX}" || true)
+    else
+        candidates=$( { managed_namespaces; all_namespaces | grep -E "$TEST_NS_ALLOWLIST" || true; } | sort -u )
+    fi
+    for ns in $candidates; do
+        if is_protected_namespace "$ns"; then
+            echo "  🛡️  protected namespace skipped: $ns" >&2
+            continue
+        fi
+        if is_sibling_namespace "$ns"; then
+            echo "  🛡️  parallel-slot namespace skipped (its own prefixed cleanup owns it): $ns" >&2
+            continue
+        fi
+        echo "$ns"
+    done
+}
+
+# Dry run: print what Step 8 would delete and exit without touching anything.
+if [ "$LIST_ONLY" = true ]; then
+    if [ -z "$KUBECONFIG" ]; then
+        echo "ERROR: KUBECONFIG not set" >&2
+        exit 1
+    fi
+    list_test_namespaces
+    exit 0
 fi
 
 echo "╔═══════════════════════════════════════════════════════════════╗"
@@ -225,15 +319,21 @@ sleep 5
 echo ""
 echo "Step 8: Clean up test namespaces (auto-cleanup for E2E tests)"
 echo "----------------------------------------------------------------------"
-# When TEST_NS_PREFIX is set, delete ONLY this instance's test namespaces.
-# Legacy mode (no prefix) keeps the historical cluster-wide regex sweep.
-list_test_namespaces() {
-    if [ -n "$TEST_NS_PREFIX" ]; then
-        kubectl get ns -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null | grep "^${TEST_NS_PREFIX}" || true
-    else
-        kubectl get ns 2>/dev/null | grep -E "(project|tenant|staging|test-|excluded-)" | awk '{print $1}' || true
-    fi
-}
+# Selection: list_test_namespaces() at the top of the file - this instance's
+# TEST_NS_PREFIX, or in legacy mode the managed-by label + anchored allow-list,
+# minus protected namespaces.
+
+# Protected namespaces adopted by a test (47 whitelists kube-system) keep the
+# operator's ownership marks and a managed RoleBinding: strip both, never
+# delete. Label-scoped, so only objects this instance's operator created are
+# touched. Runs first so the namespace drops out of the selection below.
+for ns in $(managed_namespaces); do
+    is_protected_namespace "$ns" || continue
+    echo "Stripping operator marks from protected namespace: $ns"
+    kubectl delete rolebinding -n "$ns" -l "$MANAGED_BY_LABEL" --ignore-not-found=true 2>/dev/null || true
+    # Merge patch with null values: removes the keys, never fails on a missing one.
+    kubectl patch ns "$ns" --type=merge -p '{"metadata":{"labels":{"permission-binder.io/managed-by":null},"annotations":{"permission-binder.io/managed-by":null,"permission-binder.io/created-at":null,"permission-binder.io/permission-binder":null,"permission-binder.io/permission-binder-namespace":null,"permission-binder.io/orphaned-at":null,"permission-binder.io/orphaned-by":null}}}' >/dev/null 2>&1 || true
+done
 
 # Batch deletion: one non-blocking kubectl call for ALL test namespaces, then
 # poll until they are gone (sequential --timeout=30s deletes serialized the
