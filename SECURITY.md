@@ -28,8 +28,8 @@ If you discover a security vulnerability in the Permission Binder Operator, plea
 
 | Version | Supported          | Security Updates |
 | ------- | ------------------ | ---------------- |
-| 1.0.x   | :white_check_mark: | Yes              |
-| < 1.0   | :x:                | No               |
+| 1.8.x   | :white_check_mark: | Yes              |
+| < 1.8   | :x:                | No               |
 
 ## Security Features
 
@@ -109,7 +109,7 @@ The operator processes ConfigMap data to create RoleBindings. Ensure:
 ## Security Updates
 
 Security updates are released as:
-- **Patch versions**: For security fixes (e.g., 1.0.1)
+- **Patch versions**: For security fixes (e.g., 1.8.2)
 - **Announced via**: GitHub Security Advisories
 - **Documented in**: CHANGELOG.md
 
@@ -153,6 +153,6 @@ We appreciate the work of security researchers and will acknowledge contributors
 
 ---
 
-**Last Updated**: November 24, 2025  
-**Next Review**: v1.6.8 release (TBD)
+**Last Updated**: 2026-09-08  
+**Next Review**: next minor release
 

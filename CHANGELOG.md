@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 🔧 Improvements
 - **Example overlays install the generated CRD** (#84 — closes #81): `example/crd/` (a controller-gen v0.17.0 copy without the `networkPolicy` schema) is removed; both `example/environments/*` overlays now reference `example/deployment/crd.yaml`, which `make sync-examples` copies from the generated CRD and the `Tests` workflow keeps in sync via the drift gate; the overlay patch targets the real `operator-controller-manager` Deployment; docs show the `--load-restrictor LoadRestrictionsNone` build.
 
+### 📝 Documentation
+- **Docs and repo hygiene refresh** (#86 — closes #85): `SECURITY.md` supported-versions table now states the real policy (latest 1.8.x line only), `docs/RUNBOOK.md`, `docs/SRE.md` and `docs/BACKUP.md` carry current version footers, `make test-e2e` runs the live-cluster suite under `example/tests/` instead of a non-existent Go package, and the stale `GIT_HISTORY_REWRITE_NOTICE.md` is folded into the 1.6.5 entry.
+
 ## [1.8.1] - 2026-09-08
 
 ### 🚀 Highlights
@@ -268,6 +271,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Repository size reduced: ~100MB+ → 1.4MB (.git directory)
   - Cleaner, faster clones for contributors
   - **Note**: This required force push and history rewrite
+- Second history rewrite (2025-11-14): removed `.internal-docs/` and `.session-states/` from history; clones older than 2025-11-14 must be re-cloned or reset with `git fetch --force && git reset --hard origin/main` (rewrite #1, 2025-11-13, is the binary cleanup above).
 
 ### 🔧 Improvements
 - **Credential Handling**: Simplified with go-git's `BasicAuth`
