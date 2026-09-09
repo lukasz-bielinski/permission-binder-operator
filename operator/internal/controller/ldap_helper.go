@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -160,27 +161,33 @@ const (
 //   - "ldap://host[:port]"  -> plain LDAP
 //   - "host[:port]"         -> plain LDAP (backward compatible)
 //
-// Any other scheme is rejected instead of being dialed as "ldap://<scheme>://…".
+// Any other scheme is rejected instead of being dialed as "ldap://<scheme>://…",
+// and values without a hostname ("ldap://", "ldap:///", "ldap://:389") are
+// rejected instead of being dialed against the pod's own loopback.
 func normalizeLdapURL(server string) (dialURL string, useTLS bool, err error) {
 	trimmed := strings.TrimSpace(server)
 	if trimmed == "" {
 		return "", false, fmt.Errorf("domain_server is empty")
 	}
 	scheme, hostPort, hasScheme := strings.Cut(trimmed, "://")
-	if !hasScheme {
-		return ldapSchemePlain + "://" + trimmed, false, nil
-	}
-	if hostPort == "" {
-		return "", false, fmt.Errorf("domain_server %q has no host", trimmed)
-	}
-	switch strings.ToLower(scheme) {
-	case ldapSchemePlain:
-		return ldapSchemePlain + "://" + hostPort, false, nil
-	case ldapSchemeSecure:
-		return ldapSchemeSecure + "://" + hostPort, true, nil
+	switch {
+	case !hasScheme:
+		dialURL = ldapSchemePlain + "://" + trimmed
+	case strings.EqualFold(scheme, ldapSchemePlain):
+		dialURL = ldapSchemePlain + "://" + hostPort
+	case strings.EqualFold(scheme, ldapSchemeSecure):
+		dialURL, useTLS = ldapSchemeSecure+"://"+hostPort, true
 	default:
 		return "", false, fmt.Errorf("unsupported scheme %q in domain_server %q (use ldap:// or ldaps://)", scheme, trimmed)
 	}
+	u, perr := url.Parse(dialURL)
+	if perr != nil {
+		return "", false, fmt.Errorf("domain_server %q is not a valid URL: %w", trimmed, perr)
+	}
+	if u.Hostname() == "" {
+		return "", false, fmt.Errorf("domain_server %q has no host", trimmed)
+	}
+	return dialURL, useTLS, nil
 }
 
 // ConnectLdap establishes connection to LDAP/AD server

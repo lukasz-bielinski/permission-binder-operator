@@ -388,6 +388,10 @@ func TestNormalizeLdapURL(t *testing.T) {
 		{name: "empty", server: "", wantErr: true},
 		{name: "whitespace only", server: "   ", wantErr: true},
 		{name: "scheme without host", server: "ldap://", wantErr: true},
+		{name: "scheme with empty host and path", server: "ldap:///", wantErr: true},
+		{name: "scheme with port but no host", server: "ldap://:389", wantErr: true},
+		{name: "scheme with empty host and DN path", server: "ldap:///dc=example,dc=com", wantErr: true},
+		{name: "invalid port", server: "ldap://ldap.example.com:abc", wantErr: true},
 		{name: "unsupported scheme", server: "ftp://ldap.example.com:21", wantErr: true},
 		{name: "ldapi unsupported", server: "ldapi:///var/run/slapd/ldapi", wantErr: true},
 	}

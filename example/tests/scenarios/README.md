@@ -87,7 +87,7 @@ Each test scenario is documented in a separate file for easy navigation and fast
 - [Test 60: NetworkPolicy - High Frequency Reconciliation](60-networkpolicy---high-frequency-reconciliation.md)
 
 ### LDAP Integration (Test 61) {#ldap-integration-test-61}
-- [Test 61: LDAP Mock Group Creation (LDAPS + custom CA)](61-ldap-mock-group-creation.md)
+- [Test 61: LDAP Mock Group Creation (LDAPS + custom CA, then plain ldap://)](61-ldap-mock-group-creation.md)
 
 ## Adding New Tests
 

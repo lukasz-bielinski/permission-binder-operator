@@ -1,6 +1,6 @@
-# LDAP mock — LDAPS server for test 61 (createLdapGroups, verified TLS)
+# LDAP mock — LDAPS server for test 61 (createLdapGroups, verified TLS, then plain ldap://)
 
-Assets for **Test 61: LDAP Mock Group Creation (LDAPS + custom CA)**
+Assets for **Test 61: LDAP Mock Group Creation (LDAPS + custom CA, then plain ldap://)**
 (`../test-implementations/test-61-ldap-mock-group-creation.sh`). The mock
 validates, against a real (mock) LDAP server:
 
