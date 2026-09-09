@@ -30,32 +30,46 @@ else
         pass_test "Test skipped (ServiceMonitor not configured)"
     else
         pass_test "ServiceMonitor configured in monitoring namespace"
-        PROM_POD=$(kubectl get pods -n monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}')
 
-        # Instance-scoped query (issue #35): only this operator namespace's series
-        Q_RB=$(printf '%s' "permission_binder_managed_rolebindings_total{namespace=\"${NAMESPACE:?}\"}" | jq -sRr @uri)
-        
-        # Wait for Prometheus to scrape metrics (scrape_interval: 30s)
-        info_log "⏳ Waiting 45s for Prometheus to scrape operator metrics..."
-        sleep 45
-        
-        # Query basic operator metrics
-        METRICS_COUNT=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_RB}" 2>/dev/null | jq -r '.data.result | length')
-        if [ "$METRICS_COUNT" -gt 0 ]; then
-            pass_test "Prometheus collecting operator metrics"
-            CURRENT_RB=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_RB}" 2>/dev/null | jq -r '.data.result[0].value[1]')
-            info_log "Current RoleBindings metric: $CURRENT_RB"
+        # Scope the query to THIS operator pod (issue #92): the runner deploys
+        # a fresh pod per test, and Prometheus keeps series queryable for 5m
+        # after the target disappears, so an unscoped query can be satisfied
+        # by the previous pod's stale series. prometheus-operator's generated
+        # relabeling always stamps pod=<pod name> on ServiceMonitor targets
+        # (verified via /api/v1/status/config), so match on the pod name -
+        # unlike instance=<podIP:port>, a recycled pod IP cannot alias it.
+        OPERATOR_POD=$(kubectl get pod -n "$NAMESPACE" -l control-plane=controller-manager \
+            --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -z "$OPERATOR_POD" ]; then
+            fail_test "Operator pod name not readable - cannot scope the Prometheus query to the current pod"
         else
-            # One more retry after additional wait
-            info_log "⏳ Metrics not found, waiting additional 30s..."
-            sleep 30
-            METRICS_COUNT=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_RB}" 2>/dev/null | jq -r '.data.result | length')
+            # Instance- and pod-scoped query: only series THIS pod exports
+            Q_RB="permission_binder_managed_rolebindings_total{namespace=\"${NAMESPACE:?}\",pod=\"${OPERATOR_POD}\"}"
+
+            # Poll instead of a fixed wait: prometheus-operator config
+            # propagation (watch -> Secret -> config-reloader -> reload) takes
+            # ~90-120s worst case, plus one 30s scrape interval. Budget
+            # ~180s in 15s steps, scaled by E2E_WAIT_MULT.
+            MAX_WAIT=$(e2e_max_wait 180)
+            STEP=$(e2e_max_wait 15)
+            info_log "⏳ Polling Prometheus for operator metrics (up to ${MAX_WAIT}s, pod ${OPERATOR_POD})..."
+            ELAPSED=0
+            METRICS_COUNT=0
+            while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+                METRICS_COUNT=$(prom_query_raw "$Q_RB" | jq -r '.data.result | length')
+                if [ "$METRICS_COUNT" -gt 0 ]; then
+                    break
+                fi
+                e2e_sleep 15
+                ELAPSED=$((ELAPSED + STEP))
+            done
+
             if [ "$METRICS_COUNT" -gt 0 ]; then
-                pass_test "Prometheus collecting operator metrics (after extended wait)"
-                CURRENT_RB=$(kubectl exec -n monitoring $PROM_POD -- wget -q -O- "http://localhost:9090/api/v1/query?query=${Q_RB}" 2>/dev/null | jq -r '.data.result[0].value[1]')
+                pass_test "Prometheus collecting operator metrics (after ${ELAPSED}s)"
+                CURRENT_RB=$(prom_query "$Q_RB")
                 info_log "Current RoleBindings metric: $CURRENT_RB"
             else
-                fail_test "Prometheus not collecting operator metrics after 75s wait (check ServiceMonitor and Service labels)"
+                fail_test "Prometheus not collecting metrics from the current operator pod after ${MAX_WAIT}s (check ServiceMonitor and Service labels)"
             fi
         fi
     fi

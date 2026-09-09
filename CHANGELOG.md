@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🧪 Testing & CI
+- **E2E test 25 made timing-robust, test 02 made a real test** (#92): test 25 (Prometheus Metrics Collection) replaced its fixed `sleep 45` + single 30s retry (75s total — shorter than the ~90-120s prometheus-operator config-propagation worst case measured on kube-prometheus-stack 90.0.0, where kubelet Secret propagation alone took ~84s) with an `E2E_WAIT_MULT`-scaled poll of up to 180s in 15s steps, and the query is now scoped to the current operator pod via `pod="<pod name>"` (prometheus-operator stamps the `pod` label on every ServiceMonitor target) so a re-run can no longer "pass" on the previous pod's stale series inside Prometheus' 5-minute lookback window; it fails fast when the pod name is unreadable. Test 02 (Prefix Changes) previously contained no assertions at all (it passed on exit code); it now asserts — with a `fail_test` path per assertion — that the operator processed the new prefix and that a `NEW-PREFIX` ConfigMap entry yields its namespace and an owned RoleBinding, then restores the original `COMPANY-K8S` prefix and drops the new-prefix entry. The assertions run after the ConfigMap edit because a prefix-only spec change is not applied by the operator on its own (skip guard gap, tracked as #94); `scenarios/02-prefix-changes.md` updated to match.
+
 ## [1.8.2] - 2026-09-09
 
 ### 🚀 Highlights
