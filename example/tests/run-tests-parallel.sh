@@ -193,7 +193,7 @@ if [ ${#EXPLICIT_TESTS[@]} -gt 0 ]; then
     EXP_START=$(date +%s)
     # Legacy mode (no INSTANCE): the caller may pick pool-C tests, which rely
     # on unprefixed namespaces, fixed ClusterRole names (test 16) and the
-    # legacy regex namespace sweep.
+    # legacy namespace sweep (managed-by label + anchored allow-list).
     "$RUNNER" "${EXPLICIT_TESTS[@]}" 2>&1 | tee -a "$RESULTS_LOG"
     EXP_RC=${PIPESTATUS[0]}
     EXP_END=$(date +%s)
@@ -240,10 +240,13 @@ log ""
 # ownership (first-owner-wins -> resources get the default managed-by label
 # and the instance-scoped counts read 0). Sweep it in LEGACY mode (no
 # INSTANCE / TEST_NS_PREFIX env -> cleanup defaults to the
-# permissions-binder-operator namespace + the unanchored regex namespace
-# sweep) - safe here because no slots are running yet.
+# permissions-binder-operator namespace + the managed-by label / anchored
+# allow-list namespace sweep). No slot is running yet, so this is the ONE
+# legacy call that may also reclaim pboN-* namespaces the leftover operator
+# adopted under the default label (SWEEP_SLOT_NAMESPACES=1); every other
+# legacy call (explicit lists, Pool C) keeps the parallel-slot guard.
 log "🧹 Pre-parallel sweep: removing legacy (non-instance) operator leftovers..."
-if "$SCRIPT_DIR/cleanup-operator.sh" >>"/tmp/e2e-parallel-${SUITE_ID}-legacy-sweep.log" 2>&1; then
+if SWEEP_SLOT_NAMESPACES=1 "$SCRIPT_DIR/cleanup-operator.sh" >>"/tmp/e2e-parallel-${SUITE_ID}-legacy-sweep.log" 2>&1; then
     log "   ✅ Legacy leftovers swept"
 else
     log "   ⚠️  Legacy sweep had warnings (/tmp/e2e-parallel-${SUITE_ID}-legacy-sweep.log)"
@@ -361,7 +364,8 @@ SERIAL_START=$(date +%s)
 # Pool C runs in LEGACY mode (no INSTANCE): its tests were deliberately left
 # unprefixed (serial-only), test 16 mutates the fixed-name ClusterRole that
 # only exists without the -${INSTANCE} suffix, and the NetworkPolicy tests
-# depend on the legacy regex namespace sweep between tests.
+# depend on the legacy namespace sweep (managed-by label + anchored
+# allow-list) between tests.
 "$RUNNER" "${POOL_C[@]}" >"$SERIAL_LOG" 2>&1
 SERIAL_RC=$?
 SERIAL_END=$(date +%s)

@@ -153,6 +153,55 @@ kubectl apply -f deployment/operator-deployment.yaml -f deployment/servicemonito
 - Test uses common functions from `test-common.sh`
 - Results logged to individual test log file
 
+### Test namespace sweep (legacy mode)
+
+Step 1 deletes the test namespaces of the run it belongs to. With `INSTANCE`
+set (parallel slots) that is every namespace starting with `TEST_NS_PREFIX`
+(`pboN-`). In **legacy mode** (no `INSTANCE`: `./run-tests-full-isolation.sh`,
+explicit lists such as `./run-tests-parallel.sh 04 17`, the pre-parallel sweep
+and the Pool C serial phase) `cleanup-operator.sh` deletes the union of
+
+- namespaces labelled `permission-binder.io/managed-by=<MANAGED_BY_VALUE>`
+  (default `permission-binder-operator`), i.e. everything the e2e operator
+  created or adopted from whitelist entries, and
+- an **anchored allow-list** (`TEST_NS_ALLOWLIST` in `cleanup-operator.sh`) of
+  every namespace name the test bodies create themselves,
+
+minus **protected namespaces** (`kube-*`, `default`, `monitoring`, `argocd*`,
+`metallb-system`, `cattle-*`, `openshift-*`, `permission-binder-*`, the
+operator namespace) and, in legacy mode, the parallel-slot namespaces
+(`pbo-e2e-N`, `pboN-*`) that may belong to a run that is still going. A
+protected namespace adopted by a test (test 47 whitelists `kube-system`) is
+never deleted: its operator marks (`permission-binder.io/*` label and
+annotations) and the managed RoleBinding are stripped instead.
+
+The parallel-slot guard means a `pboN-*` namespace that a leftover legacy
+operator adopted under the default label (issue #55) is normally reclaimed only
+when that slot number runs again. The pre-parallel sweep in
+`run-tests-parallel.sh` - the one legacy call where no slot can be running -
+sets `SWEEP_SLOT_NAMESPACES=1` to lift the guard and reclaim them there; do not
+set it on any other call.
+
+`MANAGED_BY_VALUE` follows `test-common.sh` exactly: default
+`permission-binder-operator`, env-overridable in legacy mode, always
+`permission-binder-operator-<INSTANCE>` when `INSTANCE` is set.
+
+Dry run - print what the sweep would delete without touching anything:
+```bash
+./cleanup-operator.sh --list-test-namespaces
+# stdout: one namespace per line (empty on an idle cluster)
+# stderr: the kubeconfig/context in use; protected / parallel-slot namespaces
+#         that were skipped (a protected namespace that carries the managed-by
+#         label is reported as "marks stripped, never deleted")
+# exit:   non-zero (nothing printed on stdout) when the kubeconfig is
+#         unreadable or the API server fails the /readyz probe - an empty list
+#         therefore always means "nothing to delete", never "unreachable"
+```
+
+The label half deletes whatever an operator running with the default
+`MANAGED_BY_VALUE` manages, so run legacy cleanup on **test clusters only**.
+Naming rules for new tests: [`ADDING_NEW_TESTS.md`](ADDING_NEW_TESTS.md#test-namespace-naming-cleanup-contract).
+
 ## Test Categories
 
 - **Basic Functionality (Tests 1-11)**: Core operator features, role mapping, prefixes, ConfigMap handling

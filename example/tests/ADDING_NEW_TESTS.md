@@ -179,6 +179,38 @@ Available variables (set by `run-tests-full-isolation.sh`):
 - **`$TEST_RESULTS`** - Path to test results log file
 - **`$SCRIPT_DIR`** - Directory where test scripts are located
 - **`$KUBECONFIG`** - Path to kubeconfig file
+- **`$TEST_NS_PREFIX`** - Namespace prefix of this instance (`pboN-` under `INSTANCE=N`, empty in legacy mode)
+
+## Test namespace naming (cleanup contract)
+
+`cleanup-operator.sh` runs before every test and must be able to find the
+namespaces your test leaves behind. Two rules keep a new test covered:
+
+1. **Always prefix**: build every namespace name as `"${TEST_NS_PREFIX}<name>"`
+   and put the same string into the whitelist CN. Under `INSTANCE=N` the prefix
+   is `pboN-` and the cleanup deletes every namespace starting with it; in
+   legacy mode the prefix is empty.
+2. **Pick a `<name>` the legacy sweep recognises**. Without a prefix the
+   cleanup deletes the union of namespaces labelled
+   `permission-binder.io/managed-by=permission-binder-operator` (whitelist
+   entry -> operator-created -> labelled: covered automatically) and the
+   anchored allow-list `TEST_NS_ALLOWLIST` in `cleanup-operator.sh`. Namespaces
+   your test creates directly (`kubectl create namespace`, YAML) carry no
+   label, so name them `test-NN-<slug>` (matched as `test-?[0-9]+-[a-z0-9-]+`,
+   e.g. `test-62-mock-server`) or extend `TEST_NS_ALLOWLIST` in the same PR.
+   Families already covered: `test-namespace[-NNN]`, `sa-test-NN[-x]`,
+   `np-test-NN[-x]`, `large-project-N`, `ldap-test-NN[-x]`, `ldap-mock`,
+   `project<N>` and the one-offs listed next to the regex.
+
+Never target a shared namespace by name (`default`, `kube-system`,
+`monitoring`, ...): those are protected and never deleted. If a test must
+whitelist one (test 47 adopts `kube-system`), the sweep only strips the
+operator's marks and managed RoleBinding from it.
+
+Check what the legacy sweep would delete right now, without touching anything:
+```bash
+./cleanup-operator.sh --list-test-namespaces
+```
 
 ## Best Practices
 
@@ -284,6 +316,7 @@ Before submitting a new test:
 - [ ] Test runs successfully: `./run-tests-full-isolation.sh XX`
 - [ ] Test is idempotent (can run multiple times)
 - [ ] Test cleans up after itself (if needed)
+- [ ] Test namespaces use `${TEST_NS_PREFIX}` and a name the legacy sweep recognises (`test-NN-<slug>`, or `TEST_NS_ALLOWLIST` extended) - see [Test namespace naming](#test-namespace-naming-cleanup-contract)
 - [ ] Test uses helper functions (`pass_test`, `fail_test`, `info_log`)
 - [ ] Test file has execute permissions
 
