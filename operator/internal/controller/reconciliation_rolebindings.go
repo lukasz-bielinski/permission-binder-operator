@@ -355,7 +355,21 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 		existing.Labels[LabelManagedBy] = ManagedByValue
 
 		if err := r.Update(ctx, &existing); err != nil {
-			return false, fmt.Errorf("failed to update RoleBinding %s/%s: %w", namespace, name, err)
+			if !errors.IsNotFound(err) {
+				return false, fmt.Errorf("failed to update RoleBinding %s/%s: %w", namespace, name, err)
+			}
+			// NotFound = the cached Get above was stale the other way round
+			// (informer lag after a delete): the RoleBinding is gone
+			// server-side. Routine since issue #94: the prefix cleanup of this
+			// very pass deletes a RoleBinding whose group matches none of the
+			// new prefixes, and the whitelist maps the same namespace/role
+			// under a new prefix. Create it fresh instead of reporting an
+			// incomplete pass (mirror of the AlreadyExists handling above).
+			logger.Info("RoleBinding vanished before update (stale cache read), creating it",
+				"namespace", namespace, "roleBinding", name)
+			if createErr := r.Create(ctx, roleBinding); createErr != nil {
+				return false, fmt.Errorf("failed to create RoleBinding %s/%s after stale update: %w", namespace, name, createErr)
+			}
 		}
 	}
 

@@ -369,6 +369,15 @@ spec:
                 description: LastProcessedConfigMapVersion tracks the last processed
                   ConfigMap version
                 type: string
+              lastProcessedGeneration:
+                description: |-
+                  LastProcessedGeneration is the metadata.generation of the PermissionBinder
+                  whose spec was last processed to completion. Together with
+                  LastProcessedConfigMapVersion and LastProcessedRoleMappingHash it forms the
+                  skip guard: a spec-only change (prefixes, excludeList, ...) bumps the
+                  generation and is reprocessed against the unchanged ConfigMap (issue #94).
+                format: int64
+                type: integer
               lastProcessedRoleMappingHash:
                 description: |-
                   LastProcessedRoleMappingHash tracks the hash of the last processed role mapping

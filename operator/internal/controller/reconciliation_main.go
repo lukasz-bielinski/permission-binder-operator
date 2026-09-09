@@ -222,23 +222,40 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Check if role mapping has changed
 	roleMappingChanged, currentHash := r.hasRoleMappingChanged(&permissionBinder)
+	// Check if the spec has changed (issue #94): a spec-only edit (prefixes,
+	// excludeList, ...) bumps metadata.generation but leaves the ConfigMap
+	// version and the role mapping hash untouched, so it needs its own change
+	// input or the skip guard below drops it. LastProcessedGeneration is 0 on
+	// CRs last processed by an older operator, which yields one extra full
+	// pass after upgrade (idempotent, desired).
+	specChanged := permissionBinder.Status.LastProcessedGeneration != permissionBinder.Generation
+	generationAtFirstCheck := permissionBinder.Generation
 	if r.DebugMode {
 		logger.Info("🔍 DEBUG: Role mapping check",
 			"changed", roleMappingChanged,
 			"currentHash", currentHash,
 			"lastProcessedHash", permissionBinder.Status.LastProcessedRoleMappingHash,
-			"isFirstTime", permissionBinder.Status.LastProcessedRoleMappingHash == "")
+			"isFirstTime", permissionBinder.Status.LastProcessedRoleMappingHash == "",
+			"specChanged", specChanged)
+		logger.Info("🔍 DEBUG: Spec generation check",
+			"changed", specChanged,
+			"generation", permissionBinder.Generation,
+			"lastProcessedGeneration", permissionBinder.Status.LastProcessedGeneration)
 	}
-	if roleMappingChanged {
-		logger.Info("Role mapping has changed, reconciling all managed resources",
+	if roleMappingChanged || specChanged {
+		logger.Info("Role mapping or spec has changed, reconciling all managed resources",
+			"roleMappingChanged", roleMappingChanged,
+			"specChanged", specChanged,
 			"currentHash", currentHash,
-			"previousHash", permissionBinder.Status.LastProcessedRoleMappingHash)
+			"previousHash", permissionBinder.Status.LastProcessedRoleMappingHash,
+			"generation", permissionBinder.Generation,
+			"lastProcessedGeneration", permissionBinder.Status.LastProcessedGeneration)
 		if err := r.reconcileAllManagedResources(ctx, &permissionBinder); err != nil {
 			logger.Error(err, "Failed to reconcile all managed resources")
 			return ctrl.Result{}, err
 		}
 		// Note: We don't update status here to avoid multiple Status().Update() calls
-		// The hash will be updated in the final status update at the end of reconciliation
+		// The hash and generation will be updated in the final status update at the end of reconciliation
 		// The predicate will filter out status-only updates, so this won't cause loops
 	}
 
@@ -254,7 +271,8 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			"generation", permissionBinder.Generation,
 			"resourceVersion", permissionBinder.ResourceVersion,
 			"lastProcessedRoleMappingHash", permissionBinder.Status.LastProcessedRoleMappingHash,
-			"lastProcessedConfigMapVersion", permissionBinder.Status.LastProcessedConfigMapVersion)
+			"lastProcessedConfigMapVersion", permissionBinder.Status.LastProcessedConfigMapVersion,
+			"lastProcessedGeneration", permissionBinder.Status.LastProcessedGeneration)
 	}
 
 	// Fetch the ConfigMap
@@ -291,28 +309,63 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		currentHash = currentHashAfterRefetch
 	}
 
+	// Re-check the spec generation after re-fetch (mirrors the role mapping
+	// re-check above): a generation that moved between the two fetches must
+	// still be processed in this pass - it stamps the new generation, so the
+	// follow-up event would otherwise be swallowed by the skip guard. The
+	// managed-resource cleanup above ran against the spec of the FIRST fetch,
+	// so whenever the generation moved (not only when specChanged flipped) it
+	// has to run again for the spec that is actually processed now.
+	specChangedAfterRefetch := permissionBinder.Status.LastProcessedGeneration != permissionBinder.Generation
+	generationMoved := permissionBinder.Generation != generationAtFirstCheck
+	if specChanged != specChangedAfterRefetch || generationMoved {
+		if r.DebugMode {
+			logger.Info("🔍 DEBUG: Spec generation moved during reconciliation, re-checking",
+				"previousCheck", specChanged,
+				"afterRefetch", specChangedAfterRefetch,
+				"generationAtFirstCheck", generationAtFirstCheck,
+				"generation", permissionBinder.Generation,
+				"lastProcessedGeneration", permissionBinder.Status.LastProcessedGeneration)
+		}
+		if specChangedAfterRefetch {
+			logger.Info("Spec changed during reconciliation, reconciling all managed resources",
+				"generationAtFirstCheck", generationAtFirstCheck,
+				"generation", permissionBinder.Generation,
+				"lastProcessedGeneration", permissionBinder.Status.LastProcessedGeneration)
+			if err := r.reconcileAllManagedResources(ctx, &permissionBinder); err != nil {
+				logger.Error(err, "Failed to reconcile all managed resources")
+				return ctrl.Result{}, err
+			}
+		}
+		specChanged = specChangedAfterRefetch
+	}
+
 	if r.DebugMode {
 		logger.Info("🔍 DEBUG: ConfigMap version check",
 			"currentVersion", configMapVersion,
 			"lastProcessedVersion", permissionBinder.Status.LastProcessedConfigMapVersion,
 			"roleMappingChanged", roleMappingChanged,
 			"roleMappingChangedAfterRefetch", roleMappingChangedAfterRefetch,
-			"skipReconciliation", permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged)
+			"specChanged", specChanged,
+			"skipReconciliation", permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged && !specChanged)
 	}
-	if permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged {
+	if permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged && !specChanged {
 		if r.DebugMode {
 			logger.Info("🔍 DEBUG: Skipping reconciliation - no changes detected",
 				"configMapVersion", configMapVersion,
-				"roleMappingChanged", roleMappingChanged)
+				"roleMappingChanged", roleMappingChanged,
+				"specChanged", specChanged)
 		}
-		logger.Info("ConfigMap and role mapping have not changed, skipping reconciliation")
+		logger.Info("ConfigMap, role mapping and spec have not changed, skipping reconciliation")
 		return ctrl.Result{}, nil
 	}
 
 	if r.DebugMode {
-		reason := "Role mapping changed"
+		reason := "Spec generation changed"
 		if permissionBinder.Status.LastProcessedConfigMapVersion != configMapVersion {
 			reason = "ConfigMap version changed"
+		} else if roleMappingChanged {
+			reason = "Role mapping changed"
 		}
 		logger.Info("🔍 DEBUG: Processing ConfigMap",
 			"reason", reason,
@@ -420,21 +473,26 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if roleMappingChanged {
 		newRoleMappingHash = currentHash
 	}
+	newGeneration := permissionBinder.Generation
 
 	// An incomplete pass (dropped whitelist entries or failed ServiceAccounts)
 	// must never be stamped into status: with LastProcessedConfigMapVersion
 	// set, the skip guard would pin the partial result permanently (an
 	// unchanged ConfigMap fires no further events to retry the dropped
-	// pieces). Keep the previous ConfigMap version, role-mapping hash and
-	// resource lists (this pass's lists are lower bounds, publishing them
-	// would shrink a previously-complete status), but still publish a
-	// Processed=False condition so the CR stays observable under persistent
-	// failures. The error return at the end requeues the reconcile.
+	// pieces). Keep the previous ConfigMap version, role-mapping hash,
+	// generation and resource lists (this pass's lists are lower bounds,
+	// publishing them would shrink a previously-complete status), but still
+	// publish a Processed=False condition so the CR stays observable under
+	// persistent failures. The generation is part of the skip guard too
+	// (issue #94), so it must not be stamped on an incomplete pass either - a
+	// spec-only change would otherwise be pinned the same way. The error
+	// return at the end requeues the reconcile.
 	if result.IncompleteError != nil {
 		newProcessedRoleBindings = permissionBinder.Status.ProcessedRoleBindings
 		newProcessedServiceAccounts = permissionBinder.Status.ProcessedServiceAccounts
 		newConfigMapVersion = permissionBinder.Status.LastProcessedConfigMapVersion
 		newRoleMappingHash = permissionBinder.Status.LastProcessedRoleMappingHash
+		newGeneration = permissionBinder.Status.LastProcessedGeneration
 	}
 
 	// Check if status actually changed before updating
@@ -455,6 +513,11 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	// Compare role mapping hash
 	if permissionBinder.Status.LastProcessedRoleMappingHash != newRoleMappingHash {
+		statusChanged = true
+	}
+
+	// Compare spec generation
+	if permissionBinder.Status.LastProcessedGeneration != newGeneration {
 		statusChanged = true
 	}
 
@@ -491,6 +554,7 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		permissionBinder.Status.ProcessedServiceAccounts = newProcessedServiceAccounts
 		permissionBinder.Status.LastProcessedConfigMapVersion = newConfigMapVersion
 		permissionBinder.Status.LastProcessedRoleMappingHash = newRoleMappingHash
+		permissionBinder.Status.LastProcessedGeneration = newGeneration
 
 		// Update Conditions - preserve LastTransitionTime if condition already exists with same status
 		transitionTime := metav1.Now()
@@ -532,9 +596,11 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		if r.DebugMode {
 			logger.Info("🔍 DEBUG: Status updated",
 				"configMapVersion", configMapVersion,
+				"generation", newGeneration,
 				"roleBindingsCount", len(newProcessedRoleBindings),
 				"serviceAccountsCount", len(newProcessedServiceAccounts),
-				"roleMappingHashChanged", roleMappingChanged)
+				"roleMappingHashChanged", roleMappingChanged,
+				"specChanged", specChanged)
 		}
 	}
 

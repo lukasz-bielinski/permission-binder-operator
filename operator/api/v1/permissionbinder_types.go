@@ -279,6 +279,14 @@ type PermissionBinderStatus struct {
 	// This is used to detect when role mapping changes and trigger reconciliation
 	LastProcessedRoleMappingHash string `json:"lastProcessedRoleMappingHash,omitempty"`
 
+	// LastProcessedGeneration is the metadata.generation of the PermissionBinder
+	// whose spec was last processed to completion. Together with
+	// LastProcessedConfigMapVersion and LastProcessedRoleMappingHash it forms the
+	// skip guard: a spec-only change (prefixes, excludeList, ...) bumps the
+	// generation and is reprocessed against the unchanged ConfigMap (issue #94).
+	// +kubebuilder:validation:Optional
+	LastProcessedGeneration int64 `json:"lastProcessedGeneration,omitempty"`
+
 	// Conditions represent the latest available observations of the PermissionBinder's state
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
