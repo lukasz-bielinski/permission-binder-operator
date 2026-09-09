@@ -34,15 +34,17 @@ else
         # Scope the query to THIS operator pod (issue #92): the runner deploys
         # a fresh pod per test, and Prometheus keeps series queryable for 5m
         # after the target disappears, so an unscoped query can be satisfied
-        # by the previous pod's stale series. The ServiceMonitor does not
-        # relabel pod, but instance defaults to <podIP>:8080.
-        OPERATOR_POD_IP=$(kubectl get pod -n "$NAMESPACE" -l control-plane=controller-manager \
-            -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
-        if [ -z "$OPERATOR_POD_IP" ]; then
-            fail_test "Operator pod IP not readable - cannot scope the Prometheus query to the current pod"
+        # by the previous pod's stale series. prometheus-operator's generated
+        # relabeling always stamps pod=<pod name> on ServiceMonitor targets
+        # (verified via /api/v1/status/config), so match on the pod name -
+        # unlike instance=<podIP:port>, a recycled pod IP cannot alias it.
+        OPERATOR_POD=$(kubectl get pod -n "$NAMESPACE" -l control-plane=controller-manager \
+            --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        if [ -z "$OPERATOR_POD" ]; then
+            fail_test "Operator pod name not readable - cannot scope the Prometheus query to the current pod"
         else
             # Instance- and pod-scoped query: only series THIS pod exports
-            Q_RB="permission_binder_managed_rolebindings_total{namespace=\"${NAMESPACE:?}\",instance=~\"${OPERATOR_POD_IP}:.*\"}"
+            Q_RB="permission_binder_managed_rolebindings_total{namespace=\"${NAMESPACE:?}\",pod=\"${OPERATOR_POD}\"}"
 
             # Poll instead of a fixed wait: prometheus-operator config
             # propagation (watch -> Secret -> config-reloader -> reload) takes
@@ -50,7 +52,7 @@ else
             # ~180s in 15s steps, scaled by E2E_WAIT_MULT.
             MAX_WAIT=$(e2e_max_wait 180)
             STEP=$(e2e_max_wait 15)
-            info_log "⏳ Polling Prometheus for operator metrics (up to ${MAX_WAIT}s, pod ${OPERATOR_POD_IP})..."
+            info_log "⏳ Polling Prometheus for operator metrics (up to ${MAX_WAIT}s, pod ${OPERATOR_POD})..."
             ELAPSED=0
             METRICS_COUNT=0
             while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
