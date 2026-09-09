@@ -8,7 +8,9 @@ set -e
 # Configuration
 IMAGE_NAME="lukaszbielinski/permission-binder-operator"
 VERSION=${1:-"latest"}
-PLATFORMS="linux/arm64,linux/amd64"
+# arm64 build disabled - restore the line below to re-enable:
+# PLATFORMS="linux/arm64,linux/amd64"
+PLATFORMS="linux/amd64"
 
 echo "🚀 Building multi-architecture Docker image locally"
 echo "Image: ${IMAGE_NAME}:${VERSION}"
