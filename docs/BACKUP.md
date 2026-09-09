@@ -403,6 +403,7 @@ echo "DR Drill $(date): SUCCESS" >> dr-drill-log.txt
 
 ## Version History
 
+- **v1.8.2** (2026-09-09): version/footer refresh; no procedural change
 - **v1.8.1** (2026-09-08): version/footer refresh; no procedural change
 - **v1.5** (2025-10-30): Updated for ServiceAccount management and comprehensive E2E test suite
 - **v1.0** (2025-10-15): Initial version with Kasten K10 integration
