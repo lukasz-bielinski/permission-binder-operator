@@ -142,21 +142,21 @@ argocd app sync permission-binder-operator --force
 
 1. Check operator logs:
 ```bash
-kubectl logs -l app.kubernetes.io/name=permission-binder-operator
+kubectl logs -n permissions-binder-operator -l control-plane=controller-manager
 ```
 
 2. Check RBAC:
 ```bash
-kubectl describe clusterrole permission-binder-operator-manager-role
-kubectl describe clusterrolebinding permission-binder-operator-manager-rolebinding
+kubectl describe clusterrole operator-manager-role
+kubectl describe clusterrolebinding operator-manager-rolebinding
 ```
 
 ### Missing permissions
 
 Check if the operator has appropriate permissions:
 ```bash
-kubectl auth can-i create rolebindings --as=system:serviceaccount:default:permission-binder-operator-controller-manager
-kubectl auth can-i create namespaces --as=system:serviceaccount:default:permission-binder-operator-controller-manager
+kubectl auth can-i create rolebindings --as=system:serviceaccount:permissions-binder-operator:operator-controller-manager
+kubectl auth can-i create namespaces --as=system:serviceaccount:permissions-binder-operator:operator-controller-manager
 ```
 
 ## Updates

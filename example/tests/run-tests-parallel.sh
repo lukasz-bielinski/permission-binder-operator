@@ -5,7 +5,8 @@
 #   Pool A (25): parallel after parameterization alone
 #   Pool B (19): parallel after the assertion rewrites
 #   Pool C (17): serial-only — GitHub-repo-sharing NetworkPolicy tests and
-#                test 16 (mutates a fixed-name ClusterRole)
+#                test 16 (instance-safe since #90; kept serial pending a
+#                parallel-suite proof)
 #
 # Scheduling:
 #   - Pools A+B are sharded across N slots (default 3); each slot runs one
@@ -192,8 +193,9 @@ if [ ${#EXPLICIT_TESTS[@]} -gt 0 ]; then
     log ""
     EXP_START=$(date +%s)
     # Legacy mode (no INSTANCE): the caller may pick pool-C tests, which rely
-    # on unprefixed namespaces, fixed ClusterRole names (test 16) and the
-    # legacy namespace sweep (managed-by label + anchored allow-list).
+    # on unprefixed namespaces and the legacy namespace sweep (managed-by
+    # label + anchored allow-list). Test 16 targets the ClusterRole of the
+    # instance it runs in (operator-manager-role[-INSTANCE]) since #90.
     "$RUNNER" "${EXPLICIT_TESTS[@]}" 2>&1 | tee -a "$RESULTS_LOG"
     EXP_RC=${PIPESTATUS[0]}
     EXP_END=$(date +%s)
@@ -362,10 +364,11 @@ log "  log: $SERIAL_LOG"
 log "────────────────────────────────────────────────────────────────"
 SERIAL_START=$(date +%s)
 # Pool C runs in LEGACY mode (no INSTANCE): its tests were deliberately left
-# unprefixed (serial-only), test 16 mutates the fixed-name ClusterRole that
-# only exists without the -${INSTANCE} suffix, and the NetworkPolicy tests
-# depend on the legacy namespace sweep (managed-by label + anchored
-# allow-list) between tests.
+# unprefixed (serial-only) and the NetworkPolicy tests depend on the legacy
+# namespace sweep (managed-by label + anchored allow-list) between tests.
+# Test 16 is instance-safe since #90 (operator-manager-role[-INSTANCE],
+# instance-scoped namespace/logs/CR) but stays here until a full parallel
+# suite run proves it as a Pool B member.
 "$RUNNER" "${POOL_C[@]}" >"$SERIAL_LOG" 2>&1
 SERIAL_RC=$?
 SERIAL_END=$(date +%s)
