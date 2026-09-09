@@ -15,7 +15,7 @@ echo "-----------------------"
 # This test verifies prefix change behavior
 
 # Test namespace carries the per-instance prefix (empty in legacy mode)
-TEST2_NS="${TEST_NS_PREFIX}prefix-test-02"
+TEST2_NS="${TEST_NS_PREFIX}test-02-prefix"
 WHITELIST_PREFIX="${RUN_DIR:-/tmp}/whitelist-prefix.txt"
 
 # Count RoleBindings with current prefix
@@ -52,8 +52,9 @@ kubectl_retry kubectl annotate permissionbinder permissionbinder-example -n $NAM
 e2e_sleep 30
 
 # Check namespace created from the NEW-PREFIX entry
-NS_EXISTS=$(kubectl_retry kubectl get namespace "$TEST2_NS" 2>/dev/null | wc -l)
-if [ "$NS_EXISTS" -gt 0 ]; then
+# kubectl_retry folds stderr into stdout, so "NotFound" would count as a line:
+# test the exit status, not the line count (test 03 pattern).
+if kubectl_retry kubectl get namespace "$TEST2_NS" >/dev/null 2>&1; then
     pass_test "Namespace created for entry with new prefix"
 else
     fail_test "Namespace not created for new-prefix entry"
