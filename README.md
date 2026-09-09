@@ -4,32 +4,28 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.8.1-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
-[![GitHub Release](https://img.shields.io/badge/Release-v1.8.1-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.8.1)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.8.2-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![GitHub Release](https://img.shields.io/badge/Release-v1.8.2-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.8.2)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
-## 🚀 What's New in v1.8.1
+## 🚀 What's New in v1.8.2
 
-### 🐛 NetworkPolicy Error Status (#54)
-- ✅ Git/PR failures now land in `status.networkPolicies` as `state: error` with a sanitized `errorMessage` (1 KiB cap), keep retrying on later passes, and clear themselves on recovery — the v1.8.0 known issue.
-- ✅ `permission_binder_networkpolicy_git_operations_total` is now registered and visible on `/metrics`.
+### 🐛 LDAP URL Fix (#77)
+- ✅ `ldap://host:port` in `domain_server` now connects — `ConnectLdap` used to dial `ldap://ldap://host:389`, so the documented plain-LDAP form always failed (the latent known issue listed since v1.8.0). Scheme is case-insensitive, surrounding whitespace is ignored, bare `host[:port]` still means plain LDAP, and unknown schemes or host-less values are rejected with a clear error before dialing.
+- ✅ Covered by table-driven unit tests and a new plain-`ldap://` phase of e2e test 61 against the OpenLDAP mock (red on images before this fix).
 
-### 🔐 Supply Chain
-- ✅ **Key-pair Cosign signatures** next to keyless, on the index and every platform manifest — verify offline with [`cosign.pub`](cosign.pub) or pin it in an OpenShift `ClusterImagePolicy` (v1.8.0 re-signed too).
-- ✅ gRPC 1.83.2 closes CVE-2026-84304 (Trivy alerts #48/#49; not reachable at runtime — scanner hygiene); `golang.org/x/crypto` 0.57.0 closes GO-2026-6354/6355 (`x/crypto/ssh`, reachable via the go-git push path).
+### 🧪 E2E Harness Hardening
+- ✅ `KUBECONFIG` defaults to `~/.kube/config` with a `/readyz` preflight **before any cleanup**; `OPERATOR_IMAGE` (+ `OPERATOR_IMAGE_PULL_POLICY`) validates a release candidate without editing the committed manifest; `GITHUB_GITOPS_SECRET_FILE` is finally honoured; ServiceMonitor leftovers are removed (#79).
+- ✅ Legacy namespace sweep anchored on the `permission-binder.io/managed-by` label plus an allow-list and a protected-namespace guard, with a `--list-test-namespaces` dry run (#78); test 16 now really removes the `rolebindings` rule and asserts the degradation and the recovery (#80).
 
-### ⬆️ Dependencies
-- ✅ `sigs.k8s.io/controller-runtime` **v0.25.0** with the k8s.io api/apimachinery/client-go stack at **v0.37.0**; envtest on apiserver 1.37.0; gomega 1.43.0. Drop-in, no API/RBAC/manifest change.
-- ✅ Indirect dependency tree refreshed (`go get -u`): OpenTelemetry 1.46, ProtonMail/go-crypto 1.4.1, go-openapi/swag 0.29.2, golang.org/x/* current (net 0.59.0); dev tools kustomize v5.8.1 and controller-gen v0.22.0; `go` directive now 1.27 (#76).
+### 🔧 Examples, CI & Docs
+- ✅ Example overlays install the generated CRD: `example/crd/` removed, `make sync-examples` keeps `example/deployment/crd.yaml` in sync under the CI drift gate, the overlay patch targets the real Deployment; build with `--load-restrictor LoadRestrictionsNone` (#81).
+- ✅ `shellcheck` job in CI over all 73 tracked `*.sh` at `--severity=warning`, `.shellcheckrc` at the repository root (#83); `make test-e2e` runs the live-cluster suite; `SECURITY.md` support table and docs footers refreshed (#85).
+- ✅ Unit + envtest **626 pass / 0 fail / 3 skip** on envtest 1.37.0; isolated 62-test parallel e2e suite on a live cluster against the tested image `sha-694dcc7` (60/62 — the two failures are the documented #60 cases, see the release notes).
 
-### 🧪 Testing & CI
-- ✅ New `Tests` workflow: unit + envtest on every PR/push with a generated-file drift gate — the first CI that runs `go test`.
-- ✅ golangci-lint **v2.13.2** lint job in CI: all 85 pre-existing findings fixed, zero-issue baseline enforced; CI Go version read from `operator/go.mod`; GitHub Actions referenced by major version only.
-- ✅ Full suite green: **605 pass / 0 fail / 3 skip** on envtest 1.37.0; NetworkPolicy e2e tests self-contained under first-owner-wins; isolated 62-test parallel e2e suite on a live cluster (59/62 — the 3 remaining failures are the documented expected set, see the release notes).
-
-📖 **Full Release Notes**: [v1.8.1 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.8.1) | [Changelog](CHANGELOG.md)
+📖 **Full Release Notes**: [v1.8.2 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.8.2) | [Changelog](CHANGELOG.md)
 
 ---
 
@@ -409,7 +405,7 @@ All Docker images are **cryptographically signed** and include **supply chain at
 **Using Cosign with the repository public key (offline, no Sigstore infrastructure needed):**
 ```bash
 # cosign.pub is committed at the repository root
-cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.8.1
+cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.8.2
 ```
 
 **Using Cosign keyless (workflow identity):**
@@ -418,7 +414,7 @@ cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.8.1
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:1.8.1
+  lukaszbielinski/permission-binder-operator:1.8.2
 ```
 
 **Enforcing on OpenShift (`ClusterImagePolicy`, OpenShift 4.17+):**
@@ -444,7 +440,7 @@ The key pair does not change between releases, so a new tag needs no policy chan
 ```bash
 # Verify GitHub Attestations
 gh attestation verify \
-  oci://lukaszbielinski/permission-binder-operator:1.8.1 \
+  oci://lukaszbielinski/permission-binder-operator:1.8.2 \
   --owner lukasz-bielinski
 ```
 
@@ -667,16 +663,16 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** v1.8.1  
-**Last Updated:** 2026-09-08  
+**Version:** v1.8.2  
+**Last Updated:** 2026-09-09  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes (v1.8.1)
-- ✅ **NetworkPolicy Error Status** - git/PR failures surface in `status.networkPolicies` (`state: error`, sanitized message, retryable) and the git-operations counter is exported (#54)
-- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.8.1` (golang 1.27 builder), keyless + key-pair Cosign signatures on the index and every platform manifest
-- ✅ **Dependency Refresh** - controller-runtime v0.25.0, k8s.io v0.37.0 stack, gomega 1.43.0, gRPC 1.83.2 (CVE-2026-84304), x/crypto 0.57.0 (GO-2026-6354/6355), indirect tree refreshed (OTel 1.46, go-crypto 1.4.1); envtest 1.37.0; kustomize v5.8.1 / controller-gen v0.22.0
-- ✅ **CI** - `Tests` workflow runs unit + envtest and golangci-lint v2.13.2 (85 findings fixed, zero baseline enforced) on every PR/push; Go version from `go.mod`; actions pinned to majors
-- ✅ **Docs** - key-pair verification and OpenShift `ClusterImagePolicy` example in Image Security & Supply Chain
+### Recent Changes (v1.8.2)
+- ✅ **LDAP URL Fix** - `ldap://host:port` in `domain_server` now connects (it always dialed `ldap://ldap://host:389` before); unknown schemes and host-less values are rejected before dialing and connect errors report the dialed URL (#77)
+- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.8.2` (golang 1.27 builder), keyless + key-pair Cosign signatures on the index and every platform manifest
+- ✅ **E2E Harness** - `KUBECONFIG` default + `/readyz` preflight, `OPERATOR_IMAGE` override, `GITHUB_GITOPS_SECRET_FILE` honoured, ServiceMonitor cleanup (#79); anchored legacy namespace sweep + `--list-test-namespaces` (#78); test 16 is a real RBAC-loss test (#80); test 61 gains a plain-`ldap://` phase (#77)
+- ✅ **Examples** - overlays install the generated CRD (`example/crd/` removed, `make sync-examples` + CI drift gate, real Deployment patch target); build with `--load-restrictor LoadRestrictionsNone` (#81)
+- ✅ **CI & Docs** - `shellcheck` job over every tracked `*.sh` with a root `.shellcheckrc` (#83); `make test-e2e` runs the live-cluster suite, `SECURITY.md` support table and docs footers refreshed (#85)
 
 ---
 

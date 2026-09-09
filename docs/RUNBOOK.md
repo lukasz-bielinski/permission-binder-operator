@@ -1,7 +1,7 @@
 # Permission Binder Operator - Operational Runbook
 
-**Version:** v1.8.1  
-**Last Updated:** 2026-09-08  
+**Version:** v1.8.2  
+**Last Updated:** 2026-09-09  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)  
 **Severity Levels:** P1 (Critical), P2 (High), P3 (Medium), P4 (Low)
 
