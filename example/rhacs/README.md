@@ -231,7 +231,7 @@ oc get configmap -n rhacs-operator
 cosign verify \
   --certificate-identity-regexp "https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:1.8.2
+  lukaszbielinski/permission-binder-operator:1.9.0
 
 # Check RHACS can reach Rekor
 oc exec -n rhacs-operator deployment/central -- curl -I https://rekor.sigstore.dev

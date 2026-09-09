@@ -603,5 +603,5 @@ sequenceDiagram
 ---
 
 **Last Updated**: 2026-09-09  
-**Version**: v1.8.2
+**Version**: v1.9.0
 

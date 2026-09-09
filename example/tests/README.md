@@ -234,7 +234,7 @@ Naming rules for new tests: [`ADDING_NEW_TESTS.md`](ADDING_NEW_TESTS.md#test-nam
 
 ### Test Fails During Deployment
 - Check `/tmp/deploy-<test_id>.log` for errors
-- Verify Docker image is available: `docker pull lukaszbielinski/permission-binder-operator:1.8.2`
+- Verify Docker image is available: `docker pull lukaszbielinski/permission-binder-operator:1.9.0`
 - Check operator pod logs: `kubectl logs -n permissions-binder-operator deployment/operator-controller-manager`
 
 ### Test Fails During Execution
