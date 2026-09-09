@@ -32,6 +32,30 @@ jobs:
           version: v2.13.2
           working-directory: operator
 
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          command -v shellcheck
+          shellcheck --version
+
+      - name: Run shellcheck on every tracked *.sh
+        # Dialect, source resolution and the (justified) disabled codes live in
+        # .shellcheckrc at the repository root; keep this command in sync with
+        # the "Linting the scripts" section of example/tests/README.md.
+        run: |
+          shellcheck --severity=warning $(git ls-files '*.sh')
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 25

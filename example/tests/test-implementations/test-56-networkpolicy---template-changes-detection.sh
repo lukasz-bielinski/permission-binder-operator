@@ -29,7 +29,6 @@ CONFIGMAP_NAME="permission-config-template"
 TEST_NAMESPACE="${TEST_NS_PREFIX}np-test-56"
 GITHUB_REPO="lukasz-bielinski/tests-network-policies"
 TEMPLATE_PATH="networkpolicies/templates/deny-all-ingress.yaml"
-METRICS_PORT=8080
 
 ORIGINAL_TEMPLATE_BASE64=""
 UPDATED_TEMPLATE_SHA=""
@@ -156,7 +155,7 @@ fi
 # green as soon as that operator gap is fixed (issue #59).
 info_log "Waiting for operator to record pr-merged (up to 120s, nudging reconciliation every 15s)"
 MERGED_RECORDED=false
-for attempt in $(seq 1 8); do
+for _ in $(seq 1 8); do
     touch_np_configmap "$CONFIGMAP_NAME"
     if wait_for_pr_state "$BINDER_NAME" "$TEST_NAMESPACE" "pr-merged" 15; then
         MERGED_RECORDED=true

@@ -144,7 +144,7 @@ fi
 # until that operator gap is fixed.
 info_log "Waiting for operator to detect merged state (up to 120s, nudging reconciliation every 15s)"
 MERGED_RECORDED=false
-for attempt in $(seq 1 8); do
+for _ in $(seq 1 8); do
     touch_np_configmap "$CONFIGMAP_NAME"
     if wait_for_pr_state "$BINDER_NAME" "$TEST_NAMESPACE" "pr-merged" 15; then
         MERGED_RECORDED=true

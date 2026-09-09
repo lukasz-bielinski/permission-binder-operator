@@ -483,6 +483,7 @@ verify_pr_file_content() {
     local repo=$1  # e.g., "lukasz-bielinski/tests-network-policies"
     local pr_number=$2
     local file_path=$3
+    # shellcheck disable=SC2034  # reserved: full content verification is not implemented yet (see below)
     local expected_content_pattern=$4  # Regex pattern to match
     
     if [ -z "$pr_number" ] || [ "$pr_number" == "null" ] || [ "$pr_number" == "" ]; then
@@ -778,7 +779,7 @@ cleanup_networkpolicy_test_artifacts() {
     local pr_state=""
     
     if [ -n "$pr_details" ]; then
-        IFS='|' read -r pr_num pr_url pr_branch pr_state <<< "$pr_details"
+        IFS='|' read -r _ pr_url pr_branch pr_state <<< "$pr_details"
     fi
     
     # If branch name or state not found in status, try to get it from GitHub API

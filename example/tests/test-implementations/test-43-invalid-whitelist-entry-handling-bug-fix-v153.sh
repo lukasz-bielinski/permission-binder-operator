@@ -138,7 +138,6 @@ fi
 LOG_ENTRY_VALID="${RUN_DIR:-/tmp}/log-entry-43-valid.txt"
 LOG_ENTRY_STATUS="${RUN_DIR:-/tmp}/log-entry-43-status.txt"
 rm -f "$LOG_ENTRY_VALID" "$LOG_ENTRY_STATUS"
-LOG_ENTRY_FOUND=false
 kubectl logs -n $NAMESPACE deployment/operator-controller-manager --since=5m 2>/dev/null | while IFS= read -r line; do
     # Try to parse as JSON and check if it matches
     if echo "$line" | jq -e 'select(.message | contains("Skipping invalid")) | select(.line != null) | select(.reason != null) | select(.action == "skip")' >/dev/null 2>&1; then

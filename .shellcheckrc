@@ -1,0 +1,17 @@
+# ShellCheck configuration for every *.sh tracked in this repository.
+# CI: job "shellcheck" in .github/workflows/test.yml runs
+#   shellcheck --severity=warning $(git ls-files '*.sh')
+# Run the same command locally from the repository root (example/tests/README.md).
+
+# Every script is #!/bin/bash; parse as bash regardless of how it is invoked.
+shell=bash
+
+# Resolve `source "$SCRIPT_DIR/test-common.sh"`: SCRIPT_DIR is the script's own
+# directory for the runners and its parent for example/tests/test-implementations/*.sh.
+source-path=SCRIPTDIR
+source-path=SCRIPTDIR/..
+external-sources=true
+
+# Disabled checks - only codes that are mass false positives here, one line of justification each.
+# SC2155: `local x=$(cmd)` masks cmd's exit status - 43 of the 54 baseline findings (22 in test-common.sh, 21 in tests 44/45/52); `local` masks the status by construction, so no caller reads it, and none of those scripts runs under `set -e` (the only `set -e` sites - cleanup-operator.sh, the rhacs/ and operator/scripts/ build scripts, an openssl-only subshell in test 61 - source none of them), so the split would be 43 mechanical rewrites with no behavior change; out of scope for #83, re-enable once rewritten.
+disable=SC2155

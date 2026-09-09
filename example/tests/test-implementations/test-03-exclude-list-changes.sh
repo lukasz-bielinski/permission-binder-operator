@@ -20,7 +20,7 @@ kubectl_retry kubectl delete namespace "$EXCLUDED_NS" --ignore-not-found --timeo
 if kubectl get namespace "$EXCLUDED_NS" 2>/dev/null | grep -q Terminating; then
     kubectl delete namespace "$EXCLUDED_NS" --force --grace-period=0 >/dev/null 2>&1 || true
 fi
-for i in {1..10}; do
+for _ in {1..10}; do
     kubectl get namespace "$EXCLUDED_NS" >/dev/null 2>&1 || break
     sleep 1
 done
