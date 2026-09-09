@@ -241,10 +241,12 @@ log ""
 # and the instance-scoped counts read 0). Sweep it in LEGACY mode (no
 # INSTANCE / TEST_NS_PREFIX env -> cleanup defaults to the
 # permissions-binder-operator namespace + the managed-by label / anchored
-# allow-list namespace sweep, which skips pbo-e2e-N / pboN-* slot namespaces)
-# - and no slots are running yet anyway.
+# allow-list namespace sweep). No slot is running yet, so this is the ONE
+# legacy call that may also reclaim pboN-* namespaces the leftover operator
+# adopted under the default label (SWEEP_SLOT_NAMESPACES=1); every other
+# legacy call (explicit lists, Pool C) keeps the parallel-slot guard.
 log "🧹 Pre-parallel sweep: removing legacy (non-instance) operator leftovers..."
-if "$SCRIPT_DIR/cleanup-operator.sh" >>"/tmp/e2e-parallel-${SUITE_ID}-legacy-sweep.log" 2>&1; then
+if SWEEP_SLOT_NAMESPACES=1 "$SCRIPT_DIR/cleanup-operator.sh" >>"/tmp/e2e-parallel-${SUITE_ID}-legacy-sweep.log" 2>&1; then
     log "   ✅ Legacy leftovers swept"
 else
     log "   ⚠️  Legacy sweep had warnings (/tmp/e2e-parallel-${SUITE_ID}-legacy-sweep.log)"

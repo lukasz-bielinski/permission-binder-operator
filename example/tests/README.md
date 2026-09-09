@@ -175,11 +175,27 @@ protected namespace adopted by a test (test 47 whitelists `kube-system`) is
 never deleted: its operator marks (`permission-binder.io/*` label and
 annotations) and the managed RoleBinding are stripped instead.
 
+The parallel-slot guard means a `pboN-*` namespace that a leftover legacy
+operator adopted under the default label (issue #55) is normally reclaimed only
+when that slot number runs again. The pre-parallel sweep in
+`run-tests-parallel.sh` - the one legacy call where no slot can be running -
+sets `SWEEP_SLOT_NAMESPACES=1` to lift the guard and reclaim them there; do not
+set it on any other call.
+
+`MANAGED_BY_VALUE` follows `test-common.sh` exactly: default
+`permission-binder-operator`, env-overridable in legacy mode, always
+`permission-binder-operator-<INSTANCE>` when `INSTANCE` is set.
+
 Dry run - print what the sweep would delete without touching anything:
 ```bash
 ./cleanup-operator.sh --list-test-namespaces
 # stdout: one namespace per line (empty on an idle cluster)
-# stderr: protected / parallel-slot namespaces that were skipped
+# stderr: the kubeconfig/context in use; protected / parallel-slot namespaces
+#         that were skipped (a protected namespace that carries the managed-by
+#         label is reported as "marks stripped, never deleted")
+# exit:   non-zero (nothing printed on stdout) when the kubeconfig is
+#         unreadable or the API server fails the /readyz probe - an empty list
+#         therefore always means "nothing to delete", never "unreachable"
 ```
 
 The label half deletes whatever an operator running with the default

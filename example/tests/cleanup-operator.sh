@@ -13,7 +13,14 @@ set -e
 #                     deleted (instead of the legacy sweep: managed-by label +
 #                     anchored allow-list, minus protected namespaces - see Step 8)
 #   MANAGED_BY_VALUE  managed-by label value stamped by this instance's operator
-#                     (default: permission-binder-operator[-${INSTANCE}])
+#                     (default permission-binder-operator; with INSTANCE set it
+#                     is always permission-binder-operator-${INSTANCE}, exactly
+#                     as test-common.sh derives it)
+#   SWEEP_SLOT_NAMESPACES=1
+#                     legacy mode only: also delete parallel-slot namespaces
+#                     (pbo-e2e-N, pboN-*) that the label / allow-list halves
+#                     select. Set ONLY when no slot can be running (the
+#                     pre-parallel sweep in run-tests-parallel.sh).
 # With none of these set the behavior is the legacy single-instance cleanup.
 
 FULL_CLEANUP=false
@@ -31,9 +38,12 @@ for arg in "$@"; do
             echo "  (default)               Remove operator, its resources and test namespaces; keep the CRD"
             echo "  --full                  Also delete the PermissionBinder CRD (full manual reset)"
             echo "  --list-test-namespaces  Dry run: print the test namespaces Step 8 would delete"
-            echo "                          (one per line on stdout; skipped protected ones on stderr)"
+            echo "                          (one per line on stdout; skipped protected / parallel-slot"
+            echo "                          namespaces and the kubeconfig in use on stderr; exits non-zero"
+            echo "                          when the cluster cannot be listed)"
             echo ""
-            echo "Env: NAMESPACE, INSTANCE, TEST_NS_PREFIX, MANAGED_BY_VALUE scope the cleanup to one instance."
+            echo "Env: NAMESPACE, INSTANCE, TEST_NS_PREFIX, MANAGED_BY_VALUE scope the cleanup to one instance;"
+            echo "     SWEEP_SLOT_NAMESPACES=1 lifts the legacy-mode parallel-slot guard (see header)."
             exit 0
             ;;
         *)
@@ -51,9 +61,13 @@ RBAC_SUFFIX=""
 if [ -n "$INSTANCE" ]; then
     RBAC_SUFFIX="-${INSTANCE}"
 fi
-# Label value stamped by THIS instance's operator (same derivation as
-# MANAGED_BY_VALUE in test-common.sh / the runner's deployment manifest).
-MANAGED_BY_VALUE="${MANAGED_BY_VALUE:-permission-binder-operator${RBAC_SUFFIX}}"
+# Label value stamped by THIS instance's operator - the SAME derivation and
+# precedence as test-common.sh (env override honoured in legacy mode only; an
+# INSTANCE always wins, so both scripts agree on what "this instance" owns).
+MANAGED_BY_VALUE="${MANAGED_BY_VALUE:-permission-binder-operator}"
+if [ -n "$INSTANCE" ]; then
+    MANAGED_BY_VALUE="permission-binder-operator-${INSTANCE}"
+fi
 MANAGED_BY_LABEL="permission-binder.io/managed-by=${MANAGED_BY_VALUE}"
 
 # ---------------------------------------------------------------------------
@@ -95,51 +109,53 @@ TEST_NS_ALLOWLIST='^(test-namespace(-[0-9]{3})?|test-?[0-9]+-[a-z0-9-]+|test-hyp
 PROTECTED_NS_PATTERN='^(kube-.*|default|monitoring|argocd.*|metallb-system|cattle-.*|openshift-.*|permission-binder-.*)$'
 # Legacy mode only: a parallel slot's namespaces (operator pbo-e2e-N, tests
 # pboN-*) may belong to a run that is still going - only that slot's own
-# prefixed cleanup touches them. (Reachable via the label half when a leftover
-# legacy operator adopted a slot namespace under the default label, issue #55.)
+# prefixed cleanup touches them. They reach the label half when a leftover
+# legacy operator adopted a slot namespace under the default label (issue #55);
+# SWEEP_SLOT_NAMESPACES=1 lifts the guard for the one legacy call where no slot
+# can be running (the pre-parallel sweep in run-tests-parallel.sh). Without it
+# a slot namespace leaked that way is reclaimed only when that slot number runs
+# again (its own prefixed cleanup).
 SIBLING_NS_PATTERN='^(pbo-e2e-.*|pbo[0-9]+-.*)$'
+SWEEP_SLOT_NAMESPACES="${SWEEP_SLOT_NAMESPACES:-0}"
 
 is_protected_namespace() { [[ "$1" =~ $PROTECTED_NS_PATTERN ]] || [ "$1" = "$NAMESPACE" ]; }
-is_sibling_namespace()   { [ -z "$TEST_NS_PREFIX" ] && [[ "$1" =~ $SIBLING_NS_PATTERN ]]; }
+is_sibling_namespace()   { [ -z "$TEST_NS_PREFIX" ] && [ "$SWEEP_SLOT_NAMESPACES" != 1 ] && [[ "$1" =~ $SIBLING_NS_PATTERN ]]; }
 # Keep every `|| true`: the script runs under `set -e` and var=$(cmd) aborts on
 # a grep that matches nothing.
 all_namespaces()     { kubectl get ns -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null || true; }
 managed_namespaces() { kubectl get ns -l "$MANAGED_BY_LABEL" -o custom-columns=NAME:.metadata.name --no-headers 2>/dev/null || true; }
 
+# list_test_namespaces [quiet] - the namespaces Step 8 deletes, one per line.
+# Skip notices go to stderr on the first call and in the dry run; the Step 8
+# polling loop and the final counts pass "quiet" so they are not repeated.
 list_test_namespaces() {
-    local candidates ns
+    local quiet="${1:-}" candidates managed="" ns
     if [ -n "$TEST_NS_PREFIX" ]; then
         candidates=$(all_namespaces | grep "^${TEST_NS_PREFIX}" || true)
     else
-        candidates=$( { managed_namespaces; all_namespaces | grep -E "$TEST_NS_ALLOWLIST" || true; } | sort -u )
+        managed=$(managed_namespaces)
+        candidates=$( { echo "$managed"; all_namespaces | grep -E "$TEST_NS_ALLOWLIST" || true; } | sort -u )
     fi
     for ns in $candidates; do
         if is_protected_namespace "$ns"; then
-            echo "  🛡️  protected namespace skipped: $ns" >&2
+            if [ -z "$quiet" ]; then
+                if grep -qx "$ns" <<<"$managed"; then
+                    echo "  🛡️  protected namespace carries this instance's managed-by label: operator marks and managed RoleBindings are stripped, the namespace is never deleted: $ns" >&2
+                else
+                    echo "  🛡️  protected namespace skipped: $ns" >&2
+                fi
+            fi
             continue
         fi
         if is_sibling_namespace "$ns"; then
-            echo "  🛡️  parallel-slot namespace skipped (its own prefixed cleanup owns it): $ns" >&2
+            if [ -z "$quiet" ]; then
+                echo "  🛡️  parallel-slot namespace skipped (its own prefixed cleanup owns it; SWEEP_SLOT_NAMESPACES=1 overrides): $ns" >&2
+            fi
             continue
         fi
         echo "$ns"
     done
 }
-
-# Dry run: print what Step 8 would delete and exit without touching anything.
-if [ "$LIST_ONLY" = true ]; then
-    if [ -z "$KUBECONFIG" ]; then
-        echo "ERROR: KUBECONFIG not set" >&2
-        exit 1
-    fi
-    list_test_namespaces
-    exit 0
-fi
-
-echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║   🧹 Permission Binder Operator - Complete Cleanup Script     ║"
-echo "╚═══════════════════════════════════════════════════════════════╝"
-echo ""
 
 # Colors
 RED='\033[0;31m'
@@ -147,21 +163,13 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-if [ "$FULL_CLEANUP" = true ]; then
-    echo -e "${YELLOW}Mode: FULL cleanup (CRD will be deleted)${NC}"
-else
-    echo -e "${YELLOW}Mode: per-test cleanup (CRD is kept; use --full to delete it)${NC}"
-fi
-if [ -n "$INSTANCE" ]; then
-    echo -e "${YELLOW}Instance: $INSTANCE (namespace: $NAMESPACE, test-ns prefix: ${TEST_NS_PREFIX:-<none>})${NC}"
-fi
-echo ""
-
 # KUBECONFIG: the runner exports its resolved value; when run standalone fall
 # back to kubectl's default location. Fail BEFORE touching anything when the
 # file is unreadable or the API server does not answer: every delete below is
 # "|| echo (OK)"-guarded and the final banner is unconditional, so without this
-# a dead or wrong cluster would still end in "CLEANUP COMPLETE".
+# a dead or wrong cluster would still end in "CLEANUP COMPLETE" - and the
+# helpers above swallow kubectl errors, so a dry run against an unreachable
+# cluster would print a false "nothing to delete".
 KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 if [ ! -r "${KUBECONFIG%%:*}" ]; then     # KUBECONFIG may be a colon-separated list
     echo -e "${RED}ERROR: kubeconfig not readable: ${KUBECONFIG%%:*} (export KUBECONFIG=/path/to/kubeconfig)${NC}" >&2
@@ -183,9 +191,33 @@ if [ "$READYZ_OK" != true ]; then
     exit 1
 fi
 # Say which cluster is about to be swept (this script deletes namespaces by
-# regex and, with --full, the CRD - the default kubeconfig may not be the
-# cluster the caller had in mind).
-echo "Kubeconfig: $KUBECONFIG (context: $(kubectl config current-context 2>/dev/null || echo '<none>'))"
+# managed-by label / allow-list and, with --full, the CRD - the default
+# kubeconfig may not be the cluster the caller had in mind).
+kubeconfig_banner() { echo "Kubeconfig: $KUBECONFIG (context: $(kubectl config current-context 2>/dev/null || echo '<none>'))"; }
+
+# Dry run: print what Step 8 would delete and exit without touching anything.
+# stdout carries only namespace names; the cluster in use goes to stderr.
+if [ "$LIST_ONLY" = true ]; then
+    kubeconfig_banner >&2
+    list_test_namespaces
+    exit 0
+fi
+
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║   🧹 Permission Binder Operator - Complete Cleanup Script     ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+echo ""
+
+if [ "$FULL_CLEANUP" = true ]; then
+    echo -e "${YELLOW}Mode: FULL cleanup (CRD will be deleted)${NC}"
+else
+    echo -e "${YELLOW}Mode: per-test cleanup (CRD is kept; use --full to delete it)${NC}"
+fi
+if [ -n "$INSTANCE" ]; then
+    echo -e "${YELLOW}Instance: $INSTANCE (namespace: $NAMESPACE, test-ns prefix: ${TEST_NS_PREFIX:-<none>})${NC}"
+fi
+echo ""
+kubeconfig_banner
 echo ""
 
 # PermissionBinder deletion MUST complete (verified gone) BEFORE the operator
@@ -349,7 +381,7 @@ if [ -n "$TEST_NS_LIST" ]; then
     # Poll until all test namespaces are gone (up to ~90s)
     WAITED=0
     while [ "$WAITED" -lt 90 ]; do
-        if [ -z "$(list_test_namespaces)" ]; then
+        if [ -z "$(list_test_namespaces quiet)" ]; then
             break
         fi
         sleep 3
@@ -357,7 +389,7 @@ if [ -n "$TEST_NS_LIST" ]; then
     done
 
     # Force delete stragglers stuck in Terminating
-    list_test_namespaces | while read ns; do
+    list_test_namespaces quiet | while read ns; do
         [ -z "$ns" ] && continue
         if kubectl get ns "$ns" 2>/dev/null | grep -q Terminating; then
             echo "Force deleting stuck namespace: $ns"
@@ -366,7 +398,7 @@ if [ -n "$TEST_NS_LIST" ]; then
     done
 fi
 
-DELETED_COUNT=$(list_test_namespaces | grep -c . || true)
+DELETED_COUNT=$(list_test_namespaces quiet | grep -c . || true)
 if [ "${DELETED_COUNT:-0}" -eq 0 ]; then
     echo "✅ All test namespaces cleaned"
 else
@@ -387,7 +419,7 @@ else
 fi
 kubectl get clusterrole 2>/dev/null | grep -qE "^operator-manager-role${RBAC_SUFFIX}[[:space:]]" && echo -e "${RED}❌ ClusterRoles: STILL EXIST${NC}" || echo -e "${GREEN}✅ ClusterRoles: DELETED${NC}"
 
-MANAGED_NS_COUNT=$(list_test_namespaces | grep -c . || true)
+MANAGED_NS_COUNT=$(list_test_namespaces quiet | grep -c . || true)
 echo -e "${YELLOW}ℹ️  Managed namespaces remaining: ${MANAGED_NS_COUNT:-0}${NC}"
 
 echo ""
