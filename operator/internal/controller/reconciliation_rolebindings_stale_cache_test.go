@@ -156,3 +156,63 @@ func TestCreateRoleBinding_ForeignClaimStillRefusedAfterStaleCache(t *testing.T)
 		t.Errorf("foreign RoleBinding was mutated: %v", rb.RoleRef)
 	}
 }
+
+// TestCreateRoleBinding_UpdateNotFoundStaleCache: the mirror race (issue #94
+// follow-up). The cached Get still serves a RoleBinding this CR owns, but the
+// object was deleted server-side moments ago - routinely by the prefix
+// cleanup of the same pass, when the whitelist maps the same namespace/role
+// under a new prefix. The Update then returns NotFound; createRoleBinding must
+// create the RoleBinding fresh instead of reporting an incomplete pass.
+func TestCreateRoleBinding_UpdateNotFoundStaleCache(t *testing.T) {
+	stale := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "team-stale-admin", Namespace: "team-stale",
+			Annotations: map[string]string{
+				AnnotationManagedBy:                 ManagedByValue,
+				AnnotationPermissionBinder:          "my-binder",
+				AnnotationPermissionBinderNamespace: "my-namespace",
+				AnnotationRole:                      "admin",
+				AnnotationCreatedAt:                 "2026-01-01T00:00:00Z",
+			},
+			Labels: map[string]string{LabelManagedBy: ManagedByValue},
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "admin",
+		},
+		Subjects: []rbacv1.Subject{{
+			APIGroup: "rbac.authorization.k8s.io", Kind: "Group", Name: "OLD-PFX-team-stale-admin",
+		}},
+	}
+	// Server truth: the RoleBinding is gone (empty store).
+	base := fake.NewClientBuilder().WithScheme(newStaleCacheScheme()).Build()
+	staleClient := interceptor.NewClient(base, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if rb, ok := obj.(*rbacv1.RoleBinding); ok && key.Name == stale.Name && key.Namespace == stale.Namespace {
+				stale.DeepCopyInto(rb)
+				return nil
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	})
+
+	r := &PermissionBinderReconciler{Client: staleClient, APIReader: base}
+	managed, err := r.createRoleBinding(context.Background(), "team-stale", "team-stale-admin",
+		"admin", "NEW-PFX-team-stale-admin", "admin", staleCacheBinder())
+	if err != nil {
+		t.Fatalf("createRoleBinding must tolerate stale-cache NotFound on update, got: %v", err)
+	}
+	if !managed {
+		t.Fatal("createRoleBinding must report managed=true after recreating the vanished RoleBinding")
+	}
+
+	var rb rbacv1.RoleBinding
+	if err := base.Get(context.Background(), types.NamespacedName{Name: "team-stale-admin", Namespace: "team-stale"}, &rb); err != nil {
+		t.Fatalf("RoleBinding not recreated after stale-cache NotFound on update: %v", err)
+	}
+	if rb.Annotations[AnnotationPermissionBinder] != "my-binder" {
+		t.Errorf("ownership annotations missing on the recreated RoleBinding: %v", rb.Annotations)
+	}
+	if len(rb.Subjects) != 1 || rb.Subjects[0].Name != "NEW-PFX-team-stale-admin" {
+		t.Errorf("recreated RoleBinding does not carry the new group subject: %v", rb.Subjects)
+	}
+}

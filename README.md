@@ -196,6 +196,7 @@ subjects:
 ### Key Behaviors
 
 - **Prefix Change** → Removes old RoleBindings, creates new ones
+- **Spec Change** (prefixes, excludeList, …) → Reprocessed against the current ConfigMap; skipped only when ConfigMap version, roleMapping hash and spec generation are all unchanged
 - **Role Removed from Mapping** → Deletes all RoleBindings for that role
 - **Manual Edit** → Operator overrides back to desired state
 - **PermissionBinder Deleted** → Resources marked as "orphaned" (NOT deleted - SAFE MODE)

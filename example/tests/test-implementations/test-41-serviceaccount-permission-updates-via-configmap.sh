@@ -20,10 +20,11 @@ SA_NAME="${TEST_NS}-sa-perm-test"
 RB_NAME="sa-${TEST_NS}-perm-test"
 
 # apply_pb_with_role <clusterrole> - (re)apply the PB mapping perm-test to it,
-# then touch the ConfigMap: a serviceAccountMapping-only change does not bust
-# the operator's skip guard (change detection hashes ConfigMap version +
-# roleMapping only), so the ConfigMap annotation drives the actual reprocess -
-# matching this scenario's title (permission updates VIA CONFIGMAP).
+# then touch the ConfigMap. Since #95 a serviceAccountMapping-only change is
+# reprocessed on its own (the spec generation is part of the skip guard); the
+# ConfigMap annotation is kept so the reprocess is driven by the ConfigMap
+# regardless of that path - matching this scenario's title (permission updates
+# VIA CONFIGMAP).
 apply_pb_with_role() {
     _apply_pb_spec_with_role "$1"
     kubectl_retry kubectl annotate configmap "$CM_NAME" -n "$NAMESPACE" \

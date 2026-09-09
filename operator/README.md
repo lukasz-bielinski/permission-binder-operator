@@ -186,6 +186,8 @@ ldd bin/manager-amd64  # Should show "No dynamic dependencies"
 Operator tracks status in PermissionBinder:
 - `processedRoleBindings` - list of created RoleBindings
 - `lastProcessedConfigMapVersion` - version of last processed ConfigMap
+- `lastProcessedRoleMappingHash` - hash of the last processed roleMapping
+- `lastProcessedGeneration` - metadata.generation of the last fully processed spec
 - `conditions` - status conditions
 
 ## Requirements

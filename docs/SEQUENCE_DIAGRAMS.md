@@ -37,8 +37,8 @@ sequenceDiagram
         REC-->>K8S: Return (deletion complete)
     end
     
-    REC->>REC: Check RoleMapping Hash
-    alt RoleMapping Changed
+    REC->>REC: Check RoleMapping Hash + Spec Generation
+    alt RoleMapping or Spec Changed
         REC->>REC: reconcileAllManagedResources()
         REC->>RBAC: Reconcile All RoleBindings
         RBAC-->>REC: Success
@@ -50,8 +50,8 @@ sequenceDiagram
     REC->>CM: Fetch ConfigMap
     CM-->>REC: ConfigMap Data
     
-    REC->>REC: Compare ConfigMap Version
-    alt ConfigMap Changed
+    REC->>REC: Compare ConfigMap Version, RoleMapping Hash, Spec Generation
+    alt ConfigMap, RoleMapping or Spec Changed
         REC->>RBAC: processConfigMap()
         RBAC->>RBAC: Parse LDAP DNs
         RBAC->>RBAC: Process Entries

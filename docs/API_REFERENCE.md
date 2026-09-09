@@ -50,6 +50,7 @@ status:
   processedServiceAccounts: <[]string>
   lastProcessedConfigMapVersion: <string>
   lastProcessedRoleMappingHash: <string>
+  lastProcessedGeneration: <int64>
   conditions: <[]metav1.Condition>
   networkPolicies: <[]NetworkPolicyStatus>
   lastNetworkPolicyReconciliation: <*metav1.Time>
@@ -600,7 +601,7 @@ processedServiceAccounts:
 
 **Behavior**:
 - Used to detect ConfigMap changes
-- Reconciliation skipped if version unchanged
+- Reconciliation skipped only when the roleMapping hash and spec generation are unchanged too (see `lastProcessedRoleMappingHash`, `lastProcessedGeneration`)
 - Prevents unnecessary reconciliation loops
 
 ---
@@ -614,6 +615,19 @@ processedServiceAccounts:
 - Used to detect role mapping changes
 - Triggers full reconciliation when changed
 - SHA256 hash of sorted role mapping
+
+---
+
+### `lastProcessedGeneration` (optional)
+
+**Type**: `int64`  
+**Description**: `metadata.generation` of the PermissionBinder whose spec was last processed to completion.
+
+**Behavior**:
+- Part of the skip guard together with `lastProcessedConfigMapVersion` and `lastProcessedRoleMappingHash`
+- A spec-only change (prefixes, excludeList, ...) bumps the generation and is reprocessed against the unchanged ConfigMap
+- Never stamped on an incomplete pass (the previous value is kept, so the retry is not skipped)
+- `0`/absent on a CR last processed by an older operator → one full pass after upgrade
 
 ---
 

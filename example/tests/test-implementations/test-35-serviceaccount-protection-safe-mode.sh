@@ -76,9 +76,10 @@ spec:
   serviceAccountMapping: {}
 EOF
 
-# A serviceAccountMapping-only change does not bust the operator's skip guard
-# (change detection hashes ConfigMap version + roleMapping only), so force a
-# full reprocess by annotating the test's own ConfigMap.
+# Force a full reprocess by annotating the test's own ConfigMap. Since #95 a
+# serviceAccountMapping-only change is reprocessed on its own (the spec
+# generation is part of the skip guard); the touch keeps this test independent
+# of that path.
 kubectl_retry kubectl annotate configmap "$CM_NAME" -n "$NAMESPACE" \
     test-reconcile="$(date +%s)" --overwrite >/dev/null 2>&1
 
