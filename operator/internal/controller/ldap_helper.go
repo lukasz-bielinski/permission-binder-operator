@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -148,33 +149,73 @@ func buildTlsConfig(tlsVerify bool, caCertPEM string) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
+const (
+	ldapSchemePlain  = "ldap"
+	ldapSchemeSecure = "ldaps"
+)
+
+// normalizeLdapURL turns the Secret's domain_server value into the URL handed
+// to ldap.DialURL and reports whether the endpoint is LDAPS. Accepted forms
+// (scheme case-insensitive, surrounding whitespace ignored):
+//   - "ldaps://host[:port]" -> LDAPS (tls.Config from buildTlsConfig applies)
+//   - "ldap://host[:port]"  -> plain LDAP
+//   - "host[:port]"         -> plain LDAP (backward compatible)
+//
+// Any other scheme is rejected instead of being dialed as "ldap://<scheme>://…",
+// and values without a hostname ("ldap://", "ldap:///", "ldap://:389") are
+// rejected instead of being dialed against the pod's own loopback.
+func normalizeLdapURL(server string) (dialURL string, useTLS bool, err error) {
+	trimmed := strings.TrimSpace(server)
+	if trimmed == "" {
+		return "", false, fmt.Errorf("domain_server is empty")
+	}
+	scheme, hostPort, hasScheme := strings.Cut(trimmed, "://")
+	switch {
+	case !hasScheme:
+		dialURL = ldapSchemePlain + "://" + trimmed
+	case strings.EqualFold(scheme, ldapSchemePlain):
+		dialURL = ldapSchemePlain + "://" + hostPort
+	case strings.EqualFold(scheme, ldapSchemeSecure):
+		dialURL, useTLS = ldapSchemeSecure+"://"+hostPort, true
+	default:
+		return "", false, fmt.Errorf("unsupported scheme %q in domain_server %q (use ldap:// or ldaps://)", scheme, trimmed)
+	}
+	u, perr := url.Parse(dialURL)
+	if perr != nil {
+		return "", false, fmt.Errorf("domain_server %q is not a valid URL: %w", trimmed, perr)
+	}
+	if u.Hostname() == "" {
+		return "", false, fmt.Errorf("domain_server %q has no host", trimmed)
+	}
+	return dialURL, useTLS, nil
+}
+
 // ConnectLdap establishes connection to LDAP/AD server
 func ConnectLdap(creds *LdapCredentials, tlsVerify bool) (*ldap.Conn, error) {
-	var conn *ldap.Conn
-	var err error
+	dialURL, useTLS, err := normalizeLdapURL(creds.Server)
+	if err != nil {
+		ldapConnectionsTotal.WithLabelValues("error").Inc()
+		return nil, err
+	}
 
-	// Check if using LDAPS (secure)
-	if strings.HasPrefix(creds.Server, "ldaps://") {
+	var conn *ldap.Conn
+	if useTLS {
 		// LDAPS connection with configurable TLS verification and optional custom CA
-		serverAddr := strings.TrimPrefix(creds.Server, "ldaps://")
 		tlsConfig, tlsErr := buildTlsConfig(tlsVerify, creds.CACert)
 		if tlsErr != nil {
 			ldapConnectionsTotal.WithLabelValues("error").Inc()
-			return nil, fmt.Errorf("failed to build TLS config for LDAP server %s: %w", creds.Server, tlsErr)
+			return nil, fmt.Errorf("failed to build TLS config for LDAP server %s: %w", dialURL, tlsErr)
 		}
-		conn, err = ldap.DialURL(fmt.Sprintf("ldaps://%s", serverAddr), ldap.DialWithTLSConfig(tlsConfig))
+		conn, err = ldap.DialURL(dialURL, ldap.DialWithTLSConfig(tlsConfig))
 	} else {
 		// Plain LDAP connection
-		serverAddr := strings.TrimPrefix(creds.Server, "ldap://")
-		if !strings.Contains(serverAddr, "://") {
-			serverAddr = creds.Server // No prefix, assume plain
-		}
-		conn, err = ldap.DialURL(fmt.Sprintf("ldap://%s", serverAddr))
+		conn, err = ldap.DialURL(dialURL)
 	}
 
 	if err != nil {
 		ldapConnectionsTotal.WithLabelValues("error").Inc()
-		return nil, fmt.Errorf("failed to connect to LDAP server %s: %w", creds.Server, err)
+		// Report the URL actually dialed, not the raw Secret value.
+		return nil, fmt.Errorf("failed to connect to LDAP server %s: %w", dialURL, err)
 	}
 
 	// Bind (authenticate)

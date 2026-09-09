@@ -95,7 +95,7 @@ This document tracks test coverage for all Permission Binder Operator features. 
 
 ### ✅ LDAP Integration
 
-- [x] **LDAP Mock Group Creation (LDAPS + custom CA, verified TLS)** (Test 61)
+- [x] **LDAP Mock Group Creation (LDAPS + custom CA, then plain ldap://)** (Test 61)
 
 ## Coverage Gaps (Potential Future Tests)
 

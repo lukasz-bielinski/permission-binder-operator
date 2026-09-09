@@ -1,6 +1,6 @@
-# LDAP mock — LDAPS server for test 61 (createLdapGroups, verified TLS)
+# LDAP mock — LDAPS server for test 61 (createLdapGroups, verified TLS, then plain ldap://)
 
-Assets for **Test 61: LDAP Mock Group Creation (LDAPS + custom CA)**
+Assets for **Test 61: LDAP Mock Group Creation (LDAPS + custom CA, then plain ldap://)**
 (`../test-implementations/test-61-ldap-mock-group-creation.sh`). The mock
 validates, against a real (mock) LDAP server:
 
@@ -52,10 +52,11 @@ validates, against a real (mock) LDAP server:
   prefix `COMPANY-K8S`, role `developer` (roleMapping key → ClusterRole
   `view`), namespace `<target-ns>`. The LDAP group is created at the FULL DN,
   so `OU=Kubernetes,DC=example,DC=com` is pre-seeded (02b).
-- **`domain_server` uses the production convention** `ldaps://host:636` —
-  the healthy LDAPS branch of `ConnectLdap()`. (The plain-LDAP branch has a
-  latent bug: an explicit `ldap://` prefix gets mangled to
-  `ldap://ldap://host:389`; not relevant here.)
+- **`domain_server`**: phase 1 uses the production convention `ldaps://host:636`
+  (the LDAPS branch of `ConnectLdap()` with the custom CA); phase 2 rewrites
+  the Secret to plain `ldap://host:389` (no `ca.crt`) and creates a second
+  group over the plain branch — the regression check for issue #77 (an
+  explicit `ldap://` prefix used to be mangled to `ldap://ldap://host:389`).
 - **Custom schema (02)** defines `sAMAccountName` and objectClass `group`
   with the real AD OIDs so the operator's Add succeeds on OpenLDAP.
 - osixia/openldap:1.5.0 is amd64 → `nodeSelector kubernetes.io/hostname: n5pro`.
