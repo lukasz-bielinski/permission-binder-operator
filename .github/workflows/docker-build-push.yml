@@ -6,20 +6,22 @@ on:
       - main
     tags:
       - 'v*.*.*'
-      - 'v*.*.*-multi-arch'
+      # arm64 build disabled (kept for re-enable):
+      # - 'v*.*.*-multi-arch'
   pull_request:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      multi_arch:
-        description: 'Build multi-architecture image (amd64 + arm64)'
-        required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
+    # arm64 build disabled - multi_arch input kept for re-enable:
+    # inputs:
+    #   multi_arch:
+    #     description: 'Build multi-architecture image (amd64 + arm64)'
+    #     required: false
+    #     default: 'false'
+    #     type: choice
+    #     options:
+    #       - 'false'
+    #       - 'true'
 
 env:
   REGISTRY: docker.io
@@ -46,21 +48,24 @@ jobs:
           # Default: amd64 only (faster builds)
           PLATFORMS="linux/amd64"
           
+          # arm64 build disabled - multi-arch branch kept commented for re-enable.
           # Multi-arch if:
           # 1. Tag contains '-multi-arch'
           # 2. workflow_dispatch with multi_arch input = 'true'
-          if [[ "${{ github.ref }}" == *"-multi-arch" ]] || [[ "${{ github.event.inputs.multi_arch }}" == "true" ]]; then
-            PLATFORMS="linux/amd64,linux/arm64"
-            echo "Building multi-architecture image: $PLATFORMS"
-          else
-            echo "Building single-architecture image (amd64 only): $PLATFORMS"
-          fi
+          # if [[ "${{ github.ref }}" == *"-multi-arch" ]] || [[ "${{ github.event.inputs.multi_arch }}" == "true" ]]; then
+          #   PLATFORMS="linux/amd64,linux/arm64"
+          #   echo "Building multi-architecture image: $PLATFORMS"
+          # else
+          #   echo "Building single-architecture image (amd64 only): $PLATFORMS"
+          # fi
+          echo "Building single-architecture image (amd64 only): $PLATFORMS"
           
           echo "platforms=$PLATFORMS" >> $GITHUB_OUTPUT
 
-      - name: Set up QEMU
-        if: steps.platforms.outputs.platforms == 'linux/amd64,linux/arm64'
-        uses: docker/setup-qemu-action@v4
+      # arm64 build disabled - QEMU only needed for the multi-arch path:
+      # - name: Set up QEMU
+      #   if: steps.platforms.outputs.platforms == 'linux/amd64,linux/arm64'
+      #   uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

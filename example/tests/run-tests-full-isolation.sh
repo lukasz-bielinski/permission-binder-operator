@@ -156,6 +156,9 @@ if [ $# -eq 0 ]; then
     fi
     for test_id in "${AVAILABLE_NUMERIC_TESTS[@]}"; do
         (( test_id == 0 )) && continue
+        # Test 12 (multi-architecture verification) disabled together with the
+        # arm64 image build - drop the next line to re-enable it in full runs.
+        (( 10#$test_id == 12 )) && continue
         TEST_LIST+=("$test_id")
     done
     if [ ${#TEST_LIST[@]} -eq 0 ]; then
