@@ -127,7 +127,7 @@ EOF
 
 info_log "Waiting for removal reconciliation (up to 180s)"
 REMOVAL_STATE=""
-for i in {1..36}; do
+for _ in {1..36}; do
     REMOVAL_STATE=$(kubectl get permissionbinder "$BINDER_NAME" -n "$NAMESPACE" -o jsonpath='{.status.networkPolicies[?(@.namespace=="'$NAMESPACE_B'")].state}' 2>/dev/null || echo "")
     if [ "$REMOVAL_STATE" == "pr-removal" ] || [ "$REMOVAL_STATE" == "removed" ]; then
         break

@@ -183,12 +183,12 @@ if [ ${#MISSING_TOOLS[@]} -gt 0 ]; then
     done
     echo "" | tee -a $RESULTS_LOG
     echo "📦 Installation instructions:" | tee -a $RESULTS_LOG
-    if [[ " ${MISSING_TOOLS[@]} " =~ " jq " ]]; then
+    if [[ " ${MISSING_TOOLS[*]} " =~ " jq " ]]; then
         echo "   jq: sudo apt-get install jq  # Debian/Ubuntu" | tee -a $RESULTS_LOG
         echo "        brew install jq          # macOS" | tee -a $RESULTS_LOG
         echo "        yum install jq           # RHEL/CentOS" | tee -a $RESULTS_LOG
     fi
-    if [[ " ${MISSING_TOOLS[@]} " =~ " kubectl " ]]; then
+    if [[ " ${MISSING_TOOLS[*]} " =~ " kubectl " ]]; then
         echo "   kubectl: https://kubernetes.io/docs/tasks/tools/" | tee -a $RESULTS_LOG
     fi
     echo "" | tee -a $RESULTS_LOG
@@ -380,7 +380,7 @@ for test_id in "${TEST_LIST[@]}"; do
     
     # STEP 1: CLEANUP CLUSTER (instance-scoped when INSTANCE is set)
     echo -e "${YELLOW}🧹 Step 1/3: Cleaning cluster...${NC}" | tee -a $RESULTS_LOG
-    cd $SCRIPT_DIR
+    cd "$SCRIPT_DIR" || exit 1
     # cleanup-operator.sh runs under set -e and exits non-zero when its
     # kubeconfig/readyz preflight fails or a delete errors out. Retry once on
     # an API blip; if it still fails, do NOT deploy on top of the previous
@@ -412,7 +412,7 @@ for test_id in "${TEST_LIST[@]}"; do
     # STEP 2: DEPLOY FRESH OPERATOR (namespace/RBAC/Deployment only - CRD was
     # installed once at suite start and is intentionally NOT re-applied here)
     echo -e "${YELLOW}📦 Step 2/3: Deploying fresh operator...${NC}" | tee -a $RESULTS_LOG
-    cd $SCRIPT_DIR/..
+    cd "$SCRIPT_DIR/.." || exit 1
     kubectl apply -f "$DEPLOYMENT_MANIFEST" -f "$SERVICEMONITOR_MANIFEST" >"$RUN_DIR/deploy-${test_id}.log" 2>&1
     
     # Create GitHub GitOps credentials Secret for NetworkPolicy tests (if file exists)
@@ -480,7 +480,7 @@ for test_id in "${TEST_LIST[@]}"; do
                 "$SCRIPT_DIR/fixtures/permissionbinder-base.yaml" > "$RUN_DIR/fixture-pb-${test_id}.yaml"
             kubectl apply -f "$RUN_DIR/fixture-cm-${test_id}.yaml" -f "$RUN_DIR/fixture-pb-${test_id}.yaml" >>"$RUN_DIR/deploy-${test_id}.log" 2>&1
             BASELINE_OK=false
-            for i in $(seq 1 30); do
+            for _ in $(seq 1 30); do
                 if kubectl get namespace "${TEST_NS_PREFIX}test-namespace-001" >/dev/null 2>&1; then
                     BASELINE_OK=true
                     break

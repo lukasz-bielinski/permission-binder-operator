@@ -145,7 +145,7 @@ fi
 # the command for its error check and only matches connection-refused-style
 # API server errors, the wrong failure mode here.
 DATA_OUT=""; DATA_RC=1
-for attempt in 1 2 3; do
+for _ in 1 2 3; do
     DATA_OUT=$(kubectl exec -i -n "$MOCK_NS" deploy/openldap -- \
         ldapadd -x -H ldap://localhost:389 \
         -D "$LDAP_ADMIN_DN" -w "$LDAP_ADMIN_PW" < "$MOCK_DIR/02b-init-data.ldif" 2>&1)

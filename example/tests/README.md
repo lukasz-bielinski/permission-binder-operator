@@ -67,6 +67,20 @@ GITHUB_GITOPS_SECRET_FILE=/secure/github-gitops-credentials-secret.yaml ./run-te
 - `pre` or `00` - Pre-Test: Initial State Verification
 - `1-48` - Individual test numbers
 
+### Linting the scripts (shellcheck)
+
+CI (`.github/workflows/test.yml`, job `shellcheck`) runs [ShellCheck](https://www.shellcheck.net/) at `--severity=warning` over every `*.sh` tracked in the repository — the runners, `cleanup-operator.sh`, `test-common.sh`, all test bodies and the helper scripts under `example/rhacs/scripts/` and `operator/scripts/`. The dialect (`bash`), the `source` resolution for `test-common.sh` and the few disabled codes (each with its justification) live in `.shellcheckrc` at the repository root, so the same command gives the same result locally:
+
+```bash
+# From the repository root (shellcheck: apt-get install shellcheck / brew install shellcheck)
+shellcheck --severity=warning $(git ls-files '*.sh')
+
+# A single script (the rc file is picked up from the parent directories)
+shellcheck --severity=warning example/tests/test-implementations/test-44-*.sh
+```
+
+Exit code 0 means clean; a PR whose scripts emit a warning or error fails the `shellcheck` job. Findings below `warning` (`info`/`style`, e.g. SC2086 unquoted expansions) are not gated.
+
 ## Test Documentation
 
 - **Main Documentation**: `e2e-test-scenarios.md` - Overview and quick reference
