@@ -158,7 +158,9 @@ docker-push: ## Push docker image with the manager.
 # - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 # - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
 # To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64
+# arm64 build disabled - override with PLATFORMS=linux/arm64,linux/amd64 to re-enable:
+# PLATFORMS ?= linux/arm64,linux/amd64
+PLATFORMS ?= linux/amd64
 .PHONY: docker-buildx
 docker-buildx: ## Build and push docker image for the manager for cross-platform support
 	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
@@ -189,9 +191,10 @@ multi-arch-build-local: ## Build multi-architecture image locally (aarch64 + x86
 
 .PHONY: build-static
 build-static: ## Build static binaries for all architectures
-	@echo "Building static binaries for amd64 and arm64"
+	@echo "Building static binaries for amd64 (arm64 disabled)"
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -ldflags '-extldflags "-static"' -o bin/manager-amd64 cmd/main.go
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -ldflags '-extldflags "-static"' -o bin/manager-arm64 cmd/main.go
+	# arm64 build disabled (use build-static-arm64 explicitly to re-enable):
+	# CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -ldflags '-extldflags "-static"' -o bin/manager-arm64 cmd/main.go
 	@echo "Static binaries built successfully:"
 	@ls -la bin/manager-*
 
