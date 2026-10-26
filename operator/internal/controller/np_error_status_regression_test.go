@@ -125,6 +125,12 @@ func TestNetworkPolicyGitFailureSurfacesInStatus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("envtest-based, skipped in -short mode")
 	}
+	// The NetworkPolicy feature ships disabled; this regression test covers
+	// the feature itself, so it opts in for its own duration.
+	originalNPSupport := NetworkPolicySupportEnabled
+	t.Cleanup(func() { NetworkPolicySupportEnabled = originalNPSupport })
+	NetworkPolicySupportEnabled = true
+
 	pe := startPoisonEnv(t, nil)
 	createNPGitFailureFixtures(t, pe)
 

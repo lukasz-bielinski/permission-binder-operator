@@ -260,6 +260,17 @@ func main() {
 		setupLog.Info("Using custom managed-by value", "managedByValue", managedByValue)
 	}
 
+	// ENABLE_NETWORK_POLICY re-enables the NetworkPolicy GitOps feature, which
+	// ships disabled (see controller.NetworkPolicySupportEnabled). Off by
+	// default, so no Git remote or credentials Secret is touched unless asked.
+	if enableNP := strings.TrimSpace(os.Getenv("ENABLE_NETWORK_POLICY")); enableNP == "true" || enableNP == "1" {
+		controller.NetworkPolicySupportEnabled = true
+		setupLog.Info("NetworkPolicy support ENABLED via ENABLE_NETWORK_POLICY")
+	} else {
+		setupLog.Info("NetworkPolicy support disabled (default) - spec.networkPolicy is ignored",
+			"reEnableWith", "ENABLE_NETWORK_POLICY=true")
+	}
+
 	// RECONCILE_NAMESPACES (comma-separated) restricts which PermissionBinder CRs
 	// this instance reconciles, by CR namespace (issue #43). Unlike WATCH_NAMESPACE
 	// it does NOT scope the cache, so dynamically created target namespaces stay

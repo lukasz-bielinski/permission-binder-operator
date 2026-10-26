@@ -129,7 +129,7 @@ spec:
 6. **RoleBinding Creation** - Creates RoleBinding linking LDAP group DN to ClusterRole
 7. **ServiceAccount Management** - Optionally creates ServiceAccounts for CI/CD and runtime pods with RoleBindings
 8. **LDAP Group Creation** - Optionally creates LDAP/AD groups automatically (see [LDAP Integration](docs/LDAP_INTEGRATION.md))
-9. **NetworkPolicy GitOps** - Automated NetworkPolicy management via GitHub Pull Requests (template-based, drift detection, auto-merge)
+9. **NetworkPolicy GitOps** - Automated NetworkPolicy management via GitHub Pull Requests (template-based, drift detection, auto-merge). **Disabled by default** since it is unused in practice; `spec.networkPolicy` is ignored unless the operator runs with `ENABLE_NETWORK_POLICY=true`.
 10. **Reconciliation** - Continuously ensures desired state
 
 ### ConfigMap Format
@@ -382,7 +382,7 @@ make test
 - **Metrics & Monitoring (25-30)**: Prometheus metrics, metrics updates
 - **ServiceAccount Management (31-41)**: Creation, protection, updates
 - **Bug Fixes (42-43)**: Regression tests for fixed bugs
-- **NetworkPolicy Management (44-60)**: GitOps-based NetworkPolicy management (17 tests)
+- **NetworkPolicy Management (44-60)**: GitOps-based NetworkPolicy management (17 tests). Out of the default pools while the feature ships disabled - deploy with `ENABLE_NETWORK_POLICY=true` and restore the commented `POOL_C` line in `run-tests-parallel.sh` to run them. Test 58 (disabled mode) stays enabled.
 - **LDAP Integration (61)**: createLdapGroups against an LDAPS mock with verified TLS (custom CA)
 
 See [NetworkPolicy Testing Guide](example/tests/NETWORKPOLICY_TESTING.md) for details.
@@ -491,6 +491,13 @@ PermissionBinder CR. Three env vars scope an instance:
   never cleaned up. Onboarding a new namespace requires an operator restart
   with an updated list. Unsuitable for dynamic namespace onboarding; prefer
   `RECONCILE_NAMESPACES`. Unset = cluster-wide cache (unchanged default).
+- `ENABLE_NETWORK_POLICY=true` re-enables the NetworkPolicy GitOps feature,
+  which **ships disabled**. With it off, `spec.networkPolicy` is ignored (one
+  warning per reconcile pass says so), the operator never clones the GitOps
+  repository or reads its credentials Secret, existing `status.networkPolicies`
+  entries are left untouched, and the five `permission_binder_networkpolicy_*`
+  metrics stay at zero. Nothing is removed - the code, the CRD schema and the
+  e2e tests are intact - so this is a flag flip, not a migration.
 - `MANAGED_BY_VALUE` overrides the `permission-binder.io/managed-by` value this
   instance stamps on resources it creates and selects in cluster-wide lists.
   **Not isolation by itself**: with a cluster-wide watch and no

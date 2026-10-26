@@ -76,6 +76,22 @@ const (
 	serviceAccountKind = "ServiceAccount"
 )
 
+// NetworkPolicySupportEnabled gates the whole NetworkPolicy GitOps feature
+// (template rendering, Git/PR operations, drift detection, periodic
+// reconciliation and status cleanup).
+//
+// It ships DISABLED: the feature is unused in the deployments this operator
+// runs in, and leaving it off keeps the operator away from a Git remote and a
+// credentials Secret it has no reason to touch. Nothing is removed - the
+// networkpolicy package, the CRD's spec.networkPolicy schema, the metrics and
+// the e2e tests are all intact - so re-enabling is a flag flip:
+//
+//	ENABLE_NETWORK_POLICY=true on the operator Deployment.
+//
+// With the gate off, a CR that sets spec.networkPolicy.enabled is reconciled
+// normally for RBAC and logs one warning per pass about the ignored block.
+var NetworkPolicySupportEnabled = false
+
 // ManagedByValue is the value of the managed-by label/annotation stamped on
 // resources created by this operator instance and used to select its own
 // resources in cluster-wide lists. It is a variable (not a constant) so that
@@ -428,8 +444,9 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
-	// Process NetworkPolicies if enabled
-	if permissionBinder.Spec.NetworkPolicy != nil && permissionBinder.Spec.NetworkPolicy.Enabled {
+	// Process NetworkPolicies if enabled (and if the feature is built in at
+	// all - see NetworkPolicySupportEnabled)
+	if NetworkPolicySupportEnabled && permissionBinder.Spec.NetworkPolicy != nil && permissionBinder.Spec.NetworkPolicy.Enabled {
 		// Check for multiple PermissionBinder CRs with NetworkPolicy enabled
 		if err := networkpolicy.CheckMultiplePermissionBinders(ctx, r, r.ReconcileNamespaces); err != nil {
 			logger.Error(err, "Failed to check multiple PermissionBinders (non-fatal)")
@@ -510,6 +527,14 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			logger.Error(err, "Failed to cleanup NetworkPolicy status (non-fatal)")
 			// Continue - don't fail reconciliation
 		}
+	} else if permissionBinder.Spec.NetworkPolicy != nil && permissionBinder.Spec.NetworkPolicy.Enabled {
+		// Never silently ignore a CR that asks for the feature: without this
+		// line the only symptom would be NetworkPolicy PRs that never appear.
+		// Any existing status.networkPolicy entries are left as they are -
+		// stale, but not rewritten by a disabled feature.
+		logger.Info("NetworkPolicy support is disabled in this operator - spec.networkPolicy is ignored",
+			"hint", "set ENABLE_NETWORK_POLICY=true on the operator Deployment to re-enable",
+			"severity", "warning")
 	}
 
 	// Prepare new status values
