@@ -12,9 +12,14 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the go source
+# internal/ is copied whole, not package by package: a per-package list silently
+# breaks the image build the moment a new package is added (internal/metadata
+# did exactly that - unit tests and lint stayed green because only the
+# Dockerfile's COPY list was incomplete), and the layer-cache saving is not
+# worth a build that fails only after merge.
 COPY cmd/main.go cmd/main.go
 COPY api/ api/
-COPY internal/controller/ internal/controller/
+COPY internal/ internal/
 
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command
