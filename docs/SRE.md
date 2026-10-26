@@ -208,6 +208,9 @@ See `docs/RUNBOOK.md` for detailed incident response procedures:
    ```bash
    kubectl delete rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator
    ```
+   This includes the ServiceAccount RoleBindings (`sa-<namespace>-<type>`), so
+   workloads lose their permissions as well. Append
+   `-l '!permission-binder.io/sa-type'` to spare them.
 
 ---
 

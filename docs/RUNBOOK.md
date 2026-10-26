@@ -167,6 +167,12 @@ kubectl get rolebindings -A -o json \
 ```
 
 **Option B: Manual cleanup** (if intentional)
+
+> **Note:** the `permission-binder.io/managed-by` selector matches **both**
+> group RoleBindings and ServiceAccount RoleBindings (`sa-<namespace>-<type>`).
+> To keep the SA ones, add
+> `-l '!permission-binder.io/sa-type'` to the delete command.
+
 ```bash
 # 1. Delete orphaned RoleBindings
 kubectl delete rolebindings -A -l permission-binder.io/managed-by=permission-binder-operator
@@ -580,6 +586,11 @@ permission_binder_configmap_entries_processed_total
 ### Emergency: Revoke All Permissions Immediately
 
 **Scenario:** Security incident, need to revoke all permissions
+
+The selector covers group **and** ServiceAccount RoleBindings, so workloads
+using the operator-managed ServiceAccounts lose their permissions too - which
+is usually what an incident calls for. Scope it with
+`-l '!permission-binder.io/sa-type'` if the SA bindings must stay.
 
 ```bash
 # Option 1: Delete all RoleBindings (FAST, 30 seconds)

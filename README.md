@@ -558,6 +558,34 @@ All managed resources have annotations:
 - `permission-binder.io/orphaned-at: ...` (when orphaned)
 - `permission-binder.io/orphaned-by: permission-binder-deletion` (why orphaned)
 
+ServiceAccounts and their RoleBindings carry the same two ownership
+annotations (`permission-binder.io/permission-binder` and
+`…-namespace`) plus `permission-binder.io/created-by`,
+`permission-binder.io/sa-type` and, on the RoleBinding,
+`permission-binder.io/service-account`; they do not carry `created-at`.
+
+### The `permission-binder.io/managed-by` label
+
+Every resource the operator creates also carries
+`permission-binder.io/managed-by: <MANAGED_BY_VALUE>` as a **label**, which is
+how the operator selects its own resources cluster-wide (orphan annotation on
+CR deletion, the `permission_binder_managed_*` gauges) and how the runbooks
+list them. Namespaces, group RoleBindings, ServiceAccounts and SA RoleBindings
+are all in scope, so `-l permission-binder.io/managed-by=…` returns the
+complete inventory.
+
+ServiceAccounts and SA RoleBindings additionally carry the recommended
+Kubernetes labels (`app.kubernetes.io/managed-by`, `…/component`, `…/name`).
+
+**Upgrades:** objects created by an older operator version are re-stamped on
+the first reconcile pass after the new version starts. That pass is forced for
+every CR (the skip guard only sees ConfigMap, roleMapping and spec changes,
+none of which happen on an operator upgrade), it is idempotent, and it does not
+run the deletion sweep. Resources claimed by a *different* PermissionBinder are
+left untouched, and resources no longer in scope (a namespace dropped from the
+whitelist, an SA removed from `spec.serviceAccountMapping`) are not revisited -
+they keep whatever stamp they had.
+
 ### Finalizer
 
 `permission-binder.io/finalizer` ensures:

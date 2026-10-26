@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -102,6 +103,49 @@ type PermissionBinderReconciler struct {
 	// created target namespaces stay visible - this is the knob that makes
 	// MANAGED_BY_VALUE safe in multi-instance deployments.
 	ReconcileNamespaces []string
+
+	// stampBackfilledMu guards stampBackfilled.
+	stampBackfilledMu sync.Mutex
+	// stampBackfilled records which PermissionBinder CRs this process has
+	// already reconciled to completion, so the metadata stamp (ownership
+	// annotations + the permission-binder.io/managed-by inventory label) is
+	// re-applied once after every operator start - see needsStampBackfill.
+	stampBackfilled map[types.UID]bool
+}
+
+// needsStampBackfill reports whether this process still owes the given CR one
+// forced full pass.
+//
+// The skip guard compares the ConfigMap resourceVersion, the roleMapping hash
+// and metadata.generation - none of which change when the OPERATOR changes. On
+// a steady-state cluster an upgrade would therefore never revisit the managed
+// objects, so metadata the new version stamps but the old one did not (the
+// inventory label on ServiceAccounts and SA RoleBindings) would stay missing
+// until the next ConfigMap, roleMapping or spec edit - possibly for months,
+// leaving the cluster-wide managed-by selector incomplete in exactly the
+// incident runbooks that rely on it.
+//
+// One forced pass per CR per process closes that window. The pass is the same
+// idempotent reconcile as any other: it writes only where the live object
+// differs from the desired state, and the status update is still gated by
+// statusChanged. Process-local state (not a status field) deliberately keeps
+// this out of the CRD contract; the cost of re-running it after an unrelated
+// restart is one no-op pass.
+func (r *PermissionBinderReconciler) needsStampBackfill(uid types.UID) bool {
+	r.stampBackfilledMu.Lock()
+	defer r.stampBackfilledMu.Unlock()
+	return !r.stampBackfilled[uid]
+}
+
+// markStampBackfilled records a completed pass for the given CR. Called only
+// for a complete pass, so a persistently incomplete one keeps being forced.
+func (r *PermissionBinderReconciler) markStampBackfilled(uid types.UID) {
+	r.stampBackfilledMu.Lock()
+	defer r.stampBackfilledMu.Unlock()
+	if r.stampBackfilled == nil {
+		r.stampBackfilled = make(map[types.UID]bool)
+	}
+	r.stampBackfilled[uid] = true
 }
 
 // uncachedReader returns the direct API reader when configured, falling back
@@ -229,6 +273,10 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// CRs last processed by an older operator, which yields one extra full
 	// pass after upgrade (idempotent, desired).
 	specChanged := permissionBinder.Status.LastProcessedGeneration != permissionBinder.Generation
+	// Operator upgrades are not visible in any of the three change inputs
+	// above, so the first pass after a process start is forced regardless of
+	// them (see needsStampBackfill).
+	stampBackfillDue := r.needsStampBackfill(permissionBinder.UID)
 	generationAtFirstCheck := permissionBinder.Generation
 	if r.DebugMode {
 		logger.Info("🔍 DEBUG: Role mapping check",
@@ -347,9 +395,10 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			"roleMappingChanged", roleMappingChanged,
 			"roleMappingChangedAfterRefetch", roleMappingChangedAfterRefetch,
 			"specChanged", specChanged,
-			"skipReconciliation", permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged && !specChanged)
+			"stampBackfillDue", stampBackfillDue,
+			"skipReconciliation", permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged && !specChanged && !stampBackfillDue)
 	}
-	if permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged && !specChanged {
+	if permissionBinder.Status.LastProcessedConfigMapVersion == configMapVersion && !roleMappingChanged && !specChanged && !stampBackfillDue {
 		if r.DebugMode {
 			logger.Info("🔍 DEBUG: Skipping reconciliation - no changes detected",
 				"configMapVersion", configMapVersion,
@@ -618,6 +667,10 @@ func (r *PermissionBinderReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			"Reconciliation incomplete - status published without ConfigMap version stamp, requeuing")
 		return ctrl.Result{}, result.IncompleteError
 	}
+
+	// A complete pass has re-applied the metadata stamp on every object in
+	// scope, so this CR no longer owes a forced pass in this process.
+	r.markStampBackfilled(permissionBinder.UID)
 
 	logger.Info("Successfully processed ConfigMap",
 		"roleBindings", len(result.ProcessedRoleBindings),
