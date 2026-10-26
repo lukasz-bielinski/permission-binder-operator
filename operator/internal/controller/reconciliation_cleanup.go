@@ -122,7 +122,7 @@ func isServiceAccountRoleBinding(roleBinding *rbacv1.RoleBinding) bool {
 		return true
 	}
 	for _, subject := range roleBinding.Subjects {
-		if subject.Kind == "ServiceAccount" {
+		if subject.Kind == serviceAccountKind {
 			return true
 		}
 	}

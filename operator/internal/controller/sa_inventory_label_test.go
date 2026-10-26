@@ -257,7 +257,7 @@ func TestIsServiceAccountRoleBinding(t *testing.T) {
 		{
 			name: "no annotations, ServiceAccount subject fallback",
 			roleBinding: &rbacv1.RoleBinding{
-				Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: "team-a-sa-deploy"}},
+				Subjects: []rbacv1.Subject{{Kind: serviceAccountKind, Name: "team-a-sa-deploy"}},
 			},
 			want: true,
 		},

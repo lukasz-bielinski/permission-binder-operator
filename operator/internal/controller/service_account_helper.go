@@ -38,6 +38,47 @@ func GenerateServiceAccountName(pattern, namespace, name string) string {
 	return result
 }
 
+// backfillServiceAccountInventoryLabel stamps LabelManagedBy on a
+// ServiceAccount created before it was part of the contract, so
+// `-l permission-binder.io/managed-by` returns the complete set of managed
+// resources (ServiceAccounts included) and SAFE-MODE cleanup can find them.
+//
+// Labels only - never the spec - and only when the ownership gate allows
+// writing, so a ServiceAccount claimed by another PermissionBinder is left
+// untouched. Unlike the ownership re-stamp on RoleBindings, a failure here is
+// non-fatal: the label is bookkeeping, it grants no permissions, and the next
+// pass retries it.
+func backfillServiceAccountInventoryLabel(
+	ctx context.Context,
+	k8sClient client.Client,
+	serviceAccount *corev1.ServiceAccount,
+	ownerName string,
+	ownerNamespace string,
+) {
+	if serviceAccount.Labels[LabelManagedBy] == ManagedByValue {
+		return
+	}
+	if !canTakeOwnership(serviceAccount.Annotations, ownerName, ownerNamespace) {
+		return
+	}
+
+	logger := log.FromContext(ctx)
+	if serviceAccount.Labels == nil {
+		serviceAccount.Labels = make(map[string]string)
+	}
+	serviceAccount.Labels[LabelManagedBy] = ManagedByValue
+
+	if err := k8sClient.Update(ctx, serviceAccount); err != nil {
+		logger.Error(err, "Failed to backfill managed-by label on ServiceAccount (non-fatal)",
+			"name", serviceAccount.Name,
+			"namespace", serviceAccount.Namespace)
+		return
+	}
+	logger.Info("Backfilled managed-by label on ServiceAccount",
+		"name", serviceAccount.Name,
+		"namespace", serviceAccount.Namespace)
+}
+
 // ProcessServiceAccounts creates ServiceAccounts and RoleBindings for a namespace
 // based on the ServiceAccountMapping configuration
 // ownerName and ownerNamespace identify the owning PermissionBinder CR; they are
@@ -148,30 +189,7 @@ func ProcessServiceAccounts(
 					"reconciledByNamespace", ownerNamespace)
 			}
 
-			// Backfill the inventory label on ServiceAccounts created before it
-			// was stamped, so `-l permission-binder.io/managed-by` returns the
-			// complete set of managed resources (SAs included) and SAFE-MODE
-			// cleanup can find them. Labels only - never the spec - and only
-			// when the ownership gate allows writing, so a foreign-claimed SA
-			// is left untouched. Unlike the ownership re-stamp on RoleBindings
-			// below, a failure here is non-fatal: the label is bookkeeping, it
-			// grants no permissions, and the next pass retries it.
-			if sa.Labels[LabelManagedBy] != ManagedByValue &&
-				canTakeOwnership(sa.Annotations, ownerName, ownerNamespace) {
-				if sa.Labels == nil {
-					sa.Labels = make(map[string]string)
-				}
-				sa.Labels[LabelManagedBy] = ManagedByValue
-				if err := k8sClient.Update(ctx, sa); err != nil {
-					logger.Error(err, "Failed to backfill managed-by label on ServiceAccount (non-fatal)",
-						"name", fullSAName,
-						"namespace", namespace)
-				} else {
-					logger.Info("Backfilled managed-by label on ServiceAccount",
-						"name", fullSAName,
-						"namespace", namespace)
-				}
-			}
+			backfillServiceAccountInventoryLabel(ctx, k8sClient, sa, ownerName, ownerNamespace)
 		}
 
 		// 2. Create or update RoleBinding for ServiceAccount
@@ -219,7 +237,7 @@ func ProcessServiceAccounts(
 					},
 					Subjects: []rbacv1.Subject{
 						{
-							Kind:      "ServiceAccount",
+							Kind:      serviceAccountKind,
 							Name:      fullSAName,
 							Namespace: namespace,
 						},
@@ -371,7 +389,7 @@ func ProcessServiceAccounts(
 					},
 					Subjects: []rbacv1.Subject{
 						{
-							Kind:      "ServiceAccount",
+							Kind:      serviceAccountKind,
 							Name:      fullSAName,
 							Namespace: namespace,
 						},

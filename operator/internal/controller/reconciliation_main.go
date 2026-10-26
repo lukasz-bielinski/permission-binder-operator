@@ -72,6 +72,10 @@ const (
 	rbacAPIGroup    = "rbac.authorization.k8s.io"
 	clusterRoleKind = "ClusterRole"
 
+	// serviceAccountKind is the RoleBinding subject kind of a ServiceAccount
+	// subject (as opposed to the group flow's "Group").
+	serviceAccountKind = "ServiceAccount"
+
 	// Recommended Kubernetes app labels stamped on managed ServiceAccounts.
 	labelAppManagedBy = "app.kubernetes.io/managed-by"
 	labelAppComponent = "app.kubernetes.io/component"
