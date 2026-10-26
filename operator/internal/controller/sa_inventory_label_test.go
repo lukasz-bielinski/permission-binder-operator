@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
+	"github.com/permission-binder-operator/operator/internal/metadata"
 )
 
 // TestProcessServiceAccounts_InventoryLabelStampedOnCreate verifies that newly
@@ -44,7 +45,7 @@ func TestProcessServiceAccounts_InventoryLabelStampedOnCreate(t *testing.T) {
 		t.Errorf("ServiceAccount is missing the inventory label: got %q, want %q", got, ManagedByValue)
 	}
 	// The recommended Kubernetes labels must survive alongside it.
-	if got := sa.Labels[labelAppManagedBy]; got != ManagedByValue {
+	if got := sa.Labels[metadata.LabelAppManagedBy]; got != ManagedByValue {
 		t.Errorf("ServiceAccount lost app.kubernetes.io/managed-by: %q", got)
 	}
 
@@ -55,7 +56,7 @@ func TestProcessServiceAccounts_InventoryLabelStampedOnCreate(t *testing.T) {
 	if got := rb.Labels[LabelManagedBy]; got != ManagedByValue {
 		t.Errorf("SA RoleBinding is missing the inventory label: got %q, want %q", got, ManagedByValue)
 	}
-	if got := rb.Labels[labelAppManagedBy]; got != ManagedByValue {
+	if got := rb.Labels[metadata.LabelAppManagedBy]; got != ManagedByValue {
 		t.Errorf("SA RoleBinding lost app.kubernetes.io/managed-by: %q", got)
 	}
 }
@@ -74,7 +75,7 @@ func TestProcessServiceAccounts_InventoryLabelBackfilledOnExistingSA(t *testing.
 				AnnotationPermissionBinder:          "my-binder",
 				AnnotationPermissionBinderNamespace: "my-namespace",
 			},
-			Labels: map[string]string{labelAppManagedBy: ManagedByValue},
+			Labels: map[string]string{metadata.LabelAppManagedBy: ManagedByValue},
 		},
 	}
 	k8sClient := newSAFakeClient(existing)
@@ -91,7 +92,7 @@ func TestProcessServiceAccounts_InventoryLabelBackfilledOnExistingSA(t *testing.
 	if got := sa.Labels[LabelManagedBy]; got != ManagedByValue {
 		t.Errorf("Inventory label not backfilled on existing ServiceAccount: got %q", got)
 	}
-	if got := sa.Labels[labelAppManagedBy]; got != ManagedByValue {
+	if got := sa.Labels[metadata.LabelAppManagedBy]; got != ManagedByValue {
 		t.Errorf("Backfill clobbered the pre-existing labels: %v", sa.Labels)
 	}
 }

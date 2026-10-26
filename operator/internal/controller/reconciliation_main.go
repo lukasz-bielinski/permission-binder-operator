@@ -36,31 +36,28 @@ import (
 
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
 	networkpolicy "github.com/permission-binder-operator/operator/internal/controller/networkpolicy"
+	"github.com/permission-binder-operator/operator/internal/metadata"
 )
 
 const (
-	// Annotation keys
-	AnnotationManagedBy = "permission-binder.io/managed-by"
-	AnnotationCreatedAt = "permission-binder.io/created-at"
-	// AnnotationPermissionBinder identifies the name of the owning PermissionBinder CR.
-	AnnotationPermissionBinder = "permission-binder.io/permission-binder"
-	// AnnotationPermissionBinderNamespace identifies the namespace of the owning
-	// PermissionBinder CR. It makes ownership unique per operator instance when
-	// multiple instances run in parallel (e.g. isolated e2e tests), so that a CR
-	// name collision between instances no longer causes cross-instance deletion.
-	AnnotationPermissionBinderNamespace = "permission-binder.io/permission-binder-namespace"
-	AnnotationRole                      = "permission-binder.io/role"
-	// Orphan markers set by SAFE-MODE cleanup when a PermissionBinder is
-	// deleted; their presence makes a resource adoptable by another CR.
-	AnnotationOrphanedAt = "permission-binder.io/orphaned-at"
-	AnnotationOrphanedBy = "permission-binder.io/orphaned-by"
+	// The annotation/label contract lives in internal/metadata, which is the
+	// single place that decides what a managed object carries. These aliases
+	// keep the long-standing controller.Annotation*/Label* names working for
+	// the rest of the package, its tests and the e2e suite.
+	AnnotationManagedBy                 = metadata.AnnotationManagedBy
+	AnnotationCreatedAt                 = metadata.AnnotationCreatedAt
+	AnnotationPermissionBinder          = metadata.AnnotationPermissionBinder
+	AnnotationPermissionBinderNamespace = metadata.AnnotationPermissionBinderNamespace
+	AnnotationRole                      = metadata.AnnotationRole
+	AnnotationOrphanedAt                = metadata.AnnotationOrphanedAt
+	AnnotationOrphanedBy                = metadata.AnnotationOrphanedBy
 
 	// OrphanedByPermissionBinderDeletion is the AnnotationOrphanedBy value
 	// stamped by SAFE-MODE cleanup.
-	OrphanedByPermissionBinderDeletion = "permission-binder-deletion"
+	OrphanedByPermissionBinderDeletion = metadata.OrphanedByPermissionBinderDeletion
 
 	// Label keys
-	LabelManagedBy = "permission-binder.io/managed-by"
+	LabelManagedBy = metadata.LabelManagedBy
 
 	// DefaultManagedByValue is the default value of the managed-by label/annotation.
 	DefaultManagedByValue = "permission-binder-operator"
@@ -73,13 +70,10 @@ const (
 	clusterRoleKind = "ClusterRole"
 
 	// serviceAccountKind is the RoleBinding subject kind of a ServiceAccount
-	// subject (as opposed to the group flow's "Group").
+	// subject (as opposed to the group flow's "Group"). The
+	// app.kubernetes.io/* label keys now live in internal/metadata, which owns
+	// every key the stamp writes.
 	serviceAccountKind = "ServiceAccount"
-
-	// Recommended Kubernetes app labels stamped on managed ServiceAccounts.
-	labelAppManagedBy = "app.kubernetes.io/managed-by"
-	labelAppComponent = "app.kubernetes.io/component"
-	labelAppName      = "app.kubernetes.io/name"
 )
 
 // ManagedByValue is the value of the managed-by label/annotation stamped on

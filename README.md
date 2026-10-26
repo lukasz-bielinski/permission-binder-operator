@@ -211,6 +211,7 @@ subjects:
 
 ### Architecture & Design
 - [**Architecture Diagrams**](docs/ARCHITECTURE.md) - System architecture, component diagrams, deployment architecture
+- [**Metadata Contract**](docs/METADATA_CONTRACT.md) - the annotations and labels every managed resource carries, per kind, and when they are written
 - [**Sequence Diagrams**](docs/SEQUENCE_DIAGRAMS.md) - Detailed flow diagrams for reconciliation, NetworkPolicy, and error handling
 - [**API Reference**](docs/API_REFERENCE.md) - Complete CRD API documentation with examples
 
@@ -563,6 +564,9 @@ annotations (`permission-binder.io/permission-binder` and
 `…-namespace`) plus `permission-binder.io/created-by`,
 `permission-binder.io/sa-type` and, on the RoleBinding,
 `permission-binder.io/service-account`; they do not carry `created-at`.
+
+The full per-kind matrix, when the stamp is written and what is deliberately
+outside the contract: [Managed-resource metadata contract](docs/METADATA_CONTRACT.md).
 
 ### The `permission-binder.io/managed-by` label
 

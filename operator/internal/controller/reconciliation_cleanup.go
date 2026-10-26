@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
+	"github.com/permission-binder-operator/operator/internal/metadata"
 )
 
 // isOwnedByPermissionBinder reports whether the given annotations identify the
@@ -146,11 +147,7 @@ func (r *PermissionBinderReconciler) cleanupManagedResources(ctx context.Context
 	} else {
 		for _, roleBinding := range roleBindings {
 			// Add annotation indicating PermissionBinder was deleted but RoleBinding is preserved
-			if roleBinding.Annotations == nil {
-				roleBinding.Annotations = make(map[string]string)
-			}
-			roleBinding.Annotations[AnnotationOrphanedAt] = time.Now().Format(time.RFC3339)
-			roleBinding.Annotations[AnnotationOrphanedBy] = OrphanedByPermissionBinderDeletion
+			metadata.MarkOrphaned(&roleBinding, OrphanedByPermissionBinderDeletion, time.Now())
 
 			if err := r.Update(ctx, &roleBinding); err != nil {
 				logger.Error(err, "Failed to annotate RoleBinding as orphaned", "namespace", roleBinding.Namespace, "name", roleBinding.Name)
@@ -173,11 +170,7 @@ func (r *PermissionBinderReconciler) cleanupManagedResources(ctx context.Context
 			}
 
 			// Add annotation indicating PermissionBinder was deleted but namespace is preserved
-			if ns.Annotations == nil {
-				ns.Annotations = make(map[string]string)
-			}
-			ns.Annotations[AnnotationOrphanedAt] = time.Now().Format(time.RFC3339)
-			ns.Annotations[AnnotationOrphanedBy] = OrphanedByPermissionBinderDeletion
+			metadata.MarkOrphaned(&ns, OrphanedByPermissionBinderDeletion, time.Now())
 
 			if err := r.Update(ctx, &ns); err != nil {
 				logger.Error(err, "Failed to annotate namespace as orphaned", "namespace", namespace)
