@@ -38,6 +38,47 @@ func GenerateServiceAccountName(pattern, namespace, name string) string {
 	return result
 }
 
+// backfillServiceAccountInventoryLabel stamps LabelManagedBy on a
+// ServiceAccount created before it was part of the contract, so
+// `-l permission-binder.io/managed-by` returns the complete set of managed
+// resources (ServiceAccounts included) and SAFE-MODE cleanup can find them.
+//
+// Labels only - never the spec - and only when the ownership gate allows
+// writing, so a ServiceAccount claimed by another PermissionBinder is left
+// untouched. Unlike the ownership re-stamp on RoleBindings, a failure here is
+// non-fatal: the label is bookkeeping, it grants no permissions, and the next
+// pass retries it.
+func backfillServiceAccountInventoryLabel(
+	ctx context.Context,
+	k8sClient client.Client,
+	serviceAccount *corev1.ServiceAccount,
+	ownerName string,
+	ownerNamespace string,
+) {
+	if serviceAccount.Labels[LabelManagedBy] == ManagedByValue {
+		return
+	}
+	if !canTakeOwnership(serviceAccount.Annotations, ownerName, ownerNamespace) {
+		return
+	}
+
+	logger := log.FromContext(ctx)
+	if serviceAccount.Labels == nil {
+		serviceAccount.Labels = make(map[string]string)
+	}
+	serviceAccount.Labels[LabelManagedBy] = ManagedByValue
+
+	if err := k8sClient.Update(ctx, serviceAccount); err != nil {
+		logger.Error(err, "Failed to backfill managed-by label on ServiceAccount (non-fatal)",
+			"name", serviceAccount.Name,
+			"namespace", serviceAccount.Namespace)
+		return
+	}
+	logger.Info("Backfilled managed-by label on ServiceAccount",
+		"name", serviceAccount.Name,
+		"namespace", serviceAccount.Namespace)
+}
+
 // ProcessServiceAccounts creates ServiceAccounts and RoleBindings for a namespace
 // based on the ServiceAccountMapping configuration
 // ownerName and ownerNamespace identify the owning PermissionBinder CR; they are
@@ -87,6 +128,7 @@ func ProcessServiceAccounts(
 						Name:      fullSAName,
 						Namespace: namespace,
 						Labels: map[string]string{
+							LabelManagedBy:    ManagedByValue,
 							labelAppManagedBy: ManagedByValue,
 							labelAppComponent: saName, // deploy, runtime, etc.
 							labelAppName:      ownerName,
@@ -134,8 +176,9 @@ func ProcessServiceAccounts(
 			logger.Info("ServiceAccount already exists, skipping creation",
 				"name", fullSAName,
 				"namespace", namespace)
-			// Visibility only (issue #43): the SA half never mutates existing
-			// objects, but flag when a foreign-claimed SA is treated as satisfied.
+			// Visibility only (issue #43): the SA half does not reconcile the
+			// spec of existing objects, but flag when a foreign-claimed SA is
+			// treated as satisfied.
 			if sa.Annotations[AnnotationPermissionBinder] != "" && !isOwnedBy(sa.Annotations, ownerName, ownerNamespace) {
 				logger.Info("Existing ServiceAccount is claimed by another PermissionBinder - treating as satisfied without taking ownership",
 					"name", fullSAName,
@@ -145,6 +188,8 @@ func ProcessServiceAccounts(
 					"reconciledBy", ownerName,
 					"reconciledByNamespace", ownerNamespace)
 			}
+
+			backfillServiceAccountInventoryLabel(ctx, k8sClient, sa, ownerName, ownerNamespace)
 		}
 
 		// 2. Create or update RoleBinding for ServiceAccount
@@ -172,6 +217,7 @@ func ProcessServiceAccounts(
 						Name:      roleBindingName,
 						Namespace: namespace,
 						Labels: map[string]string{
+							LabelManagedBy:    ManagedByValue,
 							labelAppManagedBy: ManagedByValue,
 							labelAppComponent: "service-account-binding",
 							labelAppName:      ownerName,
@@ -191,7 +237,7 @@ func ProcessServiceAccounts(
 					},
 					Subjects: []rbacv1.Subject{
 						{
-							Kind:      "ServiceAccount",
+							Kind:      serviceAccountKind,
 							Name:      fullSAName,
 							Namespace: namespace,
 						},
@@ -235,10 +281,10 @@ func ProcessServiceAccounts(
 			// another PermissionBinder is excluded from this CR's processing
 			// entirely - not deleted/recreated on drift and not counted in
 			// processedSAs/status either (consistent exclusion, no metric
-			// flapping when the mapping later changes). SA RoleBindings are
-			// never orphan-annotated (SAFE-MODE cleanup selects by
-			// LabelManagedBy, which they do not carry), so only unclaimed,
-			// own and legacy name-only RoleBindings are manageable here.
+			// flapping when the mapping later changes). Only unclaimed, own
+			// and legacy name-only RoleBindings are manageable here. Since SA
+			// RoleBindings carry LabelManagedBy they are now in scope for
+			// SAFE-MODE orphan annotation on CR deletion, like group ones.
 			if !canTakeOwnership(rb.Annotations, ownerName, ownerNamespace) {
 				ownershipConflictsTotal.WithLabelValues("serviceaccount_rolebinding").Inc()
 				logger.Info("Refusing to take ownership of ServiceAccount RoleBinding claimed by another PermissionBinder",
@@ -276,8 +322,12 @@ func ProcessServiceAccounts(
 			// upgrade instead of only when the role mapping changes (issue #43
 			// upgrade asymmetry). Annotation-only changes use a plain Update -
 			// delete+recreate would briefly drop the granted permissions.
+			// The inventory label rides along on the same re-stamp, so legacy
+			// SA RoleBindings become selectable by
+			// `-l permission-binder.io/managed-by` without a second write.
 			stampOutdated := rb.Annotations[AnnotationPermissionBinderNamespace] != ownerNamespace ||
-				rb.Annotations[AnnotationPermissionBinder] != ownerName
+				rb.Annotations[AnnotationPermissionBinder] != ownerName ||
+				rb.Labels[LabelManagedBy] != ManagedByValue
 
 			if !needsUpdate && stampOutdated {
 				if rb.Annotations == nil {
@@ -285,6 +335,10 @@ func ProcessServiceAccounts(
 				}
 				rb.Annotations[AnnotationPermissionBinder] = ownerName
 				rb.Annotations[AnnotationPermissionBinderNamespace] = ownerNamespace
+				if rb.Labels == nil {
+					rb.Labels = make(map[string]string)
+				}
+				rb.Labels[LabelManagedBy] = ManagedByValue
 				if err := k8sClient.Update(ctx, rb); err != nil {
 					logger.Error(err, "Failed to re-stamp ownership annotations on RoleBinding",
 						"roleBinding", roleBindingName,
@@ -315,6 +369,7 @@ func ProcessServiceAccounts(
 						Name:      roleBindingName,
 						Namespace: namespace,
 						Labels: map[string]string{
+							LabelManagedBy:    ManagedByValue,
 							labelAppManagedBy: ManagedByValue,
 							labelAppComponent: "service-account-binding",
 							labelAppName:      ownerName,
@@ -334,7 +389,7 @@ func ProcessServiceAccounts(
 					},
 					Subjects: []rbacv1.Subject{
 						{
-							Kind:      "ServiceAccount",
+							Kind:      serviceAccountKind,
 							Name:      fullSAName,
 							Namespace: namespace,
 						},

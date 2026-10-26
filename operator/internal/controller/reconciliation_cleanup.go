@@ -101,6 +101,34 @@ func canTakeOwnership(annotations map[string]string, ownerName, ownerNamespace s
 	return annotations[AnnotationOrphanedAt] != "" // explicit orphan - adoptable
 }
 
+// isServiceAccountRoleBinding reports whether a RoleBinding was created by the
+// ServiceAccount flow (ProcessServiceAccounts) rather than by the LDAP-group
+// whitelist flow.
+//
+// Both flows stamp LabelManagedBy, so the cluster-wide selector in
+// getManagedRoleBindings returns them together. The group-flow cleanup in
+// reconcileAllManagedResources reasons about group names and the role mapping,
+// and neither applies to an SA RoleBinding: its subject is a ServiceAccount
+// (never carrying an LDAP prefix) and its role comes from
+// spec.serviceAccountMapping, not spec.roleMapping. Without this guard every
+// pass would delete them and ProcessServiceAccounts would recreate them -
+// a permanent delete/recreate loop that drops the SA's permissions in between.
+//
+// The annotations are the primary marker; the subject kind is the fallback for
+// RoleBindings written before those annotations existed.
+func isServiceAccountRoleBinding(roleBinding *rbacv1.RoleBinding) bool {
+	if roleBinding.Annotations[AnnotationServiceAccount] != "" ||
+		roleBinding.Annotations[AnnotationSAType] != "" {
+		return true
+	}
+	for _, subject := range roleBinding.Subjects {
+		if subject.Kind == serviceAccountKind {
+			return true
+		}
+	}
+	return false
+}
+
 // cleanupManagedResources cleans up all resources managed by this PermissionBinder
 // SAFE MODE: We do NOT delete RoleBindings or namespaces when PermissionBinder is deleted
 // This prevents cascade failures and accidental data loss
@@ -241,6 +269,12 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 
 	// Remove role bindings for roles that no longer exist in mapping
 	for _, roleBinding := range managedRoleBindings {
+		// SA RoleBindings are owned by the ServiceAccount flow and carry no
+		// role from spec.roleMapping - skip them (see isServiceAccountRoleBinding).
+		if isServiceAccountRoleBinding(&roleBinding) {
+			continue
+		}
+
 		// Try to get role from annotation first (supports roles with hyphens like "read-only")
 		role := ""
 		if roleBinding.Annotations != nil {
@@ -263,6 +297,12 @@ func (r *PermissionBinderReconciler) reconcileAllManagedResources(ctx context.Co
 
 	// Remove role bindings that don't match any current prefix
 	for _, roleBinding := range managedRoleBindings {
+		// An SA RoleBinding's subject is a ServiceAccount, so it matches no
+		// LDAP prefix by construction - skip it (see isServiceAccountRoleBinding).
+		if isServiceAccountRoleBinding(&roleBinding) {
+			continue
+		}
+
 		if len(roleBinding.Subjects) > 0 {
 			groupName := roleBinding.Subjects[0].Name
 			matchesAnyPrefix := false

@@ -498,7 +498,7 @@ func saRoleBindingFixture(namespace, saName, roleName string, annotations map[st
 			Name:     roleName,
 		},
 		Subjects: []rbacv1.Subject{
-			{Kind: "ServiceAccount", Name: fullSAName, Namespace: namespace},
+			{Kind: serviceAccountKind, Name: fullSAName, Namespace: namespace},
 		},
 	}
 }
