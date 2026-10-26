@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-26
+
+### 🚀 Highlights
+- **The managed-by label finally covers the ServiceAccount flow** (#102): `permission-binder.io/managed-by` was stamped only by the group flow, so `kubectl get sa,rolebindings -A -l permission-binder.io/managed-by=…` — the selector every runbook and both managed/orphaned gauges are built on — returned an **incomplete inventory**, and SAFE-MODE cleanup could not orphan-annotate the SA half on CR deletion. ServiceAccounts and their RoleBindings now carry it, on creation and by backfill.
+- **One module owns the annotation/label contract** (#104): the stamp was seven hand-rolled if-chains across two flows and they had drifted — `created-by` vs `managed-by`, no `created-at` on half the fleet, ownership never re-stamped on an adopted ServiceAccount, and a `Create` that lost an `AlreadyExists` race skipped the metadata step entirely, leaving a managed object unstamped. `operator/internal/metadata` now owns the keys and writes them idempotently; `docs/METADATA_CONTRACT.md` is the per-kind contract.
+- **NetworkPolicy GitOps ships disabled** (#103): `spec.networkPolicy` is ignored unless the operator runs with `ENABLE_NETWORK_POLICY=true`. **If you use the feature, set that variable when upgrading.** Nothing is removed — package, CRD schema, metrics and e2e tests are intact — and a CR that asks for it logs one warning per pass instead of going silently inert.
+- **One forced reconcile pass per CR after every operator start** (#102): the skip guard compares ConfigMap version, roleMapping hash and `metadata.generation`, none of which change when the operator itself changes, so on a steady-state cluster an upgrade would never re-stamp anything. The first pass per CR per process now bypasses the guard (process-local, no CRD field, no migration) and pulls in no deletion sweep.
+
+
 ### ⚙️ Behavior Changes (operational, not correctness)
 - **The `permission-binder.io/managed-by` label now covers the ServiceAccount flow**: ServiceAccounts and their RoleBindings are stamped with it on creation and backfilled on existing objects, so `kubectl get sa,rolebindings -A -l permission-binder.io/managed-by=<MANAGED_BY_VALUE>` finally returns the complete inventory instead of silently omitting everything the SA flow created. Two consequences for operators: the destructive one-liners in `docs/RUNBOOK.md` and `docs/SRE.md` (`kubectl delete rolebindings -A -l permission-binder.io/managed-by=…`) now also delete SA RoleBindings — append `-l '!permission-binder.io/sa-type'` to spare them — and `permission_binder_managed_rolebindings_total` steps up by the number of SA RoleBindings, a one-off jump in the dashboards, not new work. SAFE-MODE cleanup now orphan-annotates SA RoleBindings on CR deletion like group ones, so they are covered by `permission_binder_orphaned_resources_total{resource="rolebinding"}`.
 - **One forced reconcile pass per CR after every operator start**: the skip guard compares the ConfigMap `resourceVersion`, the roleMapping hash and `metadata.generation`, none of which change when the operator itself changes — so on a steady-state cluster the label backfill above would never have run. The first pass per CR per process now bypasses the guard (process-local ledger, no CRD field, no migration). The pass is the usual idempotent reconcile: it writes only where the live object differs, the status update is still gated by `statusChanged`, and `reconcileAllManagedResources` is NOT pulled in, so no deletion sweep rides along. A persistently incomplete pass keeps being forced until one completes.
@@ -19,9 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Bug Fixes
 - **A `Create` that loses an `AlreadyExists` race now stamps the object it found**: in the ServiceAccount flow both stale-cache paths logged "already exists, continuing" and skipped the metadata step entirely, so a managed ServiceAccount or SA RoleBinding could stay unstamped until something else happened to touch it. Both paths re-read the object and reconcile its stamp through the same ownership-gated helper as the ordinary adopt path (the group flow already re-read and fell through). A re-read that is still stale is logged and left for the next pass.
+- **The image build no longer breaks on a new package** (#105): the builder stage of `operator/Dockerfile` listed packages one by one (`cmd/main.go`, `api/`, `internal/controller/`) since the initial commit, and until #104 every package lived under one of those paths (`networkpolicy` sits inside `internal/controller/`). `internal/metadata` was the first one outside them, so the image build failed with `no required module provides package …/internal/metadata` while unit tests, lint and CodeQL stayed green — they build from the real tree, and only `build-and-push` exercises the COPY list. It is now `COPY internal/ internal/`.
 - **SA RoleBindings are no longer deleted by the group-flow cleanup**: stamping the inventory label pulls them into `getManagedRoleBindings`, which feeds the two deletion loops in `reconcileAllManagedResources`. Both reason about the group flow — the prefix loop matches `spec.prefixes` against the subject name (a ServiceAccount subject carries no LDAP prefix, so it would always lose) and the obsolete-role loop against `spec.roleMapping` (an SA role comes from `spec.serviceAccountMapping`) — so without a guard every pass would have deleted all SA RoleBindings and `ProcessServiceAccounts` would have recreated them, dropping the SA's permissions in between. `isServiceAccountRoleBinding` (ownership annotations first, ServiceAccount subject as the fallback for pre-annotation objects) skips them in both loops; a unit test asserts an SA RoleBinding survives a prefix change that still deletes the group RoleBinding next to it.
 - **Legacy ServiceAccounts and SA RoleBindings are relabelled in place**: the label rides along on the existing ownership re-stamp for RoleBindings (one write, no delete+recreate, so the granted permissions are never dropped), and ServiceAccounts gain a labels-only update. Both respect the issue #43 ownership gate — an object claimed by another PermissionBinder is left untouched — and a failed SA relabel is non-fatal (bookkeeping only, retried next pass), unlike the ownership re-stamp it sits next to.
 
+
+### 🧪 Testing & CI
+- **New tests**: `operator/internal/metadata/stamp_test.go` (contract: optional extras omitted when unset, change-reporting + idempotence, write-once `created-at`, foreign keys preserved while drift is corrected, orphan round trip), `sa_inventory_label_test.go` (label on create, backfill, ownership gate, cleanup guard, forced-pass ledger) and `sa_adoption_stamp_test.go` (whole contract asserted after adoption, including the stale-cache `AlreadyExists` race driven for real).
+- **Unit + envtest**: 650 pass / 0 fail / 3 skip (was 605/0/3 before this line), `go build ./...` and `go vet ./...` clean.
+- **E2E**: 45/45 passed, 0 failed on a live k3s cluster against the tested image `sha-844d447` (parallel runner, 3 slots, `E2E_WAIT_MULT=2`, operator pinned to the cluster's amd64 node because the image is amd64-only; 29 min wall-clock). The NetworkPolicy tests are out of the pools, so the two documented reds (#60/#82, tests 54 and 56) did not run.
+- **NetworkPolicy e2e tests parked** (44-57, 59, 60): out of the default pools while the feature ships disabled, the way test 12 was parked with the arm64 build; `POOL_C` drops to `(16 61)` with the original line commented beneath it. Test 58 (disabled mode) stays in Pool A.
 
 ## [1.9.0] - 2026-09-09
 
@@ -1041,7 +1057,8 @@ kubectl get pods -n permissions-binder-operator
 **Repository**: https://github.com/lukasz-bielinski/permission-binder-operator
 
 
-[Unreleased]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/lukasz-bielinski/permission-binder-operator/compare/v1.7.0...v1.8.0

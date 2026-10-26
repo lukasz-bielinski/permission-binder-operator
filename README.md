@@ -4,31 +4,40 @@
 
 A safe, predictable, and auditable Kubernetes operator that automatically manages RBAC RoleBindings based on ConfigMap entries.
 
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.9.0-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
-[![GitHub Release](https://img.shields.io/badge/Release-v1.9.0-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.9.0)
+[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-v1.10.0-blue?logo=docker)](https://hub.docker.com/r/lukaszbielinski/permission-binder-operator)
+[![GitHub Release](https://img.shields.io/badge/Release-v1.10.0-green?logo=github)](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.10.0)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ---
 
-## 🚀 What's New in v1.9.0
+## 🚀 What's New in v1.10.0
 
-### ⚙️ Spec Changes Are Reconciled (#94)
-- ✅ A prefix-only edit is no longer dropped: editing `spec.prefixes` while the ConfigMap and `spec.roleMapping` stay untouched used to hit the skip guard and do nothing. The skip guard now compares `metadata.generation` too, and `reconcileAllManagedResources` runs on a spec change, so a prefix change removes the RoleBindings whose group matches none of the current prefixes and creates the new ones — the behavior this README has always documented (#95).
-- ✅ New optional CRD status field **`status.lastProcessedGeneration`** (the generation last processed to completion; never stamped on an incomplete pass). Apply the regenerated CRD before rolling the image.
-- ✅ Covered by an envtest prefix-change regression, a stale-cache unit test for the `NotFound`-on-update path in `createRoleBinding`, and e2e test 02, which now patches the prefix directly.
+### 🏷️ One Metadata Contract, Covering Every Managed Object (#102, #104)
+- ✅ `permission-binder.io/managed-by` is now stamped as a **label** on ServiceAccounts and their RoleBindings too, so `kubectl get sa,rolebindings -A -l permission-binder.io/managed-by=<MANAGED_BY_VALUE>` returns the complete inventory. That selector is what every runbook one-liner, SAFE-MODE orphan annotation and the `permission_binder_managed_*` gauges are built on — the SA half used to be invisible to all of them.
+- ✅ The annotation/label contract moved into **`operator/internal/metadata`**: one `Stamp` per kind, written idempotently, reporting whether it changed anything so an up-to-date resource still costs no `Update`. It closes four long-standing divergences — `created-by` vs `managed-by`, no `created-at` on the SA flow, ownership never re-stamped on an adopted ServiceAccount, and a `Create` that lost an `AlreadyExists` race skipping the metadata step entirely (adoption through a stale cache left a managed object unstamped).
+- ✅ **Adoption always stamps**: anything found to exist already — by the initial `Get` or by the re-read after a losing `Create` — is re-stamped in place, never delete+recreated, so granted permissions are not dropped to fix metadata. The ownership gate (#43) still refuses objects claimed by another PermissionBinder.
+- 📖 New [`docs/METADATA_CONTRACT.md`](docs/METADATA_CONTRACT.md): the per-kind matrix, when the stamp is written, and what is deliberately outside it.
+- ⚠️ The destructive runbook one-liners (`kubectl delete rolebindings -A -l permission-binder.io/managed-by=…`) now also match SA RoleBindings. Append `-l '!permission-binder.io/sa-type'` to spare them. `permission_binder_managed_rolebindings_total` steps up once by the number of SA RoleBindings.
 
-### 📦 amd64-Only Images (arm64 paused)
-- ⚠️ The `1.9.0` image is **`linux/amd64` only**. The arm64 build and the multi-arch e2e test are commented out — not removed — in `docker-build-push.yml`, `operator/Makefile` and `operator/scripts/`, each with the line to restore (#96). The floating tags `latest`, `1` and `1.9` resolve to that same amd64-only image, so an arm64 node pulling any of them fails with `no matching manifest for linux/arm64`; arm64 clusters should pin `1.8.1` explicitly or build the image locally (`make docker-buildx PLATFORMS=linux/arm64,linux/amd64`).
+### 🔁 Upgrades Re-Stamp Themselves (#102)
+- ✅ The skip guard compares the ConfigMap `resourceVersion`, the roleMapping hash and `metadata.generation` — **none of which change when the operator changes** — so on a steady-state cluster a new stamp would never have landed. The first reconcile pass per CR after a process start now bypasses the guard: process-local ledger, no CRD field, no migration, no deletion sweep pulled in, and only a complete pass clears the debt.
 
-### 🐛 LDAP URL Fix (#77)
-- ✅ `ldap://host:port` in `domain_server` now connects — `ConnectLdap` used to dial `ldap://ldap://host:389`, so the documented plain-LDAP form always failed (the latent known issue listed since v1.8.0). Scheme is case-insensitive, surrounding whitespace is ignored, bare `host[:port]` still means plain LDAP, and unknown schemes or host-less values are rejected with a clear error before dialing.
+### 🚫 NetworkPolicy GitOps Ships Disabled (#103)
+- ⚠️ `spec.networkPolicy` is **ignored** unless the operator runs with `ENABLE_NETWORK_POLICY=true`. **If you use the feature, set that variable when you upgrade.** With it off the operator never clones the GitOps repository nor reads its credentials Secret, the five `permission_binder_networkpolicy_*` metrics stay at zero, and existing `status.networkPolicies` entries are left alone.
+- ✅ Nothing is removed — the `networkpolicy` package, the CRD schema, the metrics and the e2e tests are all intact, so re-enabling is a flag flip. A CR that asks for the feature logs one warning per reconcile pass naming the flag, instead of going silently inert.
+- 🧪 E2E tests 44-57, 59 and 60 are out of the default pools while the feature is off (test 58, "disabled mode", stays in); `POOL_C` keeps the original line commented beneath it.
 
-### 🧪 E2E Harness, CI & Examples
-- ✅ `KUBECONFIG` defaults to `~/.kube/config` with a `/readyz` preflight **before any cleanup**; `OPERATOR_IMAGE` (+ `OPERATOR_IMAGE_PULL_POLICY`) validates a release candidate without editing the committed manifest; `GITHUB_GITOPS_SECRET_FILE` is finally honoured; ServiceMonitor leftovers are removed (#79). Legacy namespace sweep anchored on the `permission-binder.io/managed-by` label plus an allow-list and a protected-namespace guard, with a `--list-test-namespaces` dry run (#78); test 16 now really removes the `rolebindings` rule and asserts the degradation and the recovery (#80); test 25 polls up to 180 s scoped to the current operator pod and test 02 has real assertions (#92).
-- ✅ `shellcheck` job in CI over all 73 tracked `*.sh` at `--severity=warning`, `.shellcheckrc` at the repository root (#83); `make test-e2e` runs the live-cluster suite; the `SECURITY.md` supported-versions table (stale at `1.0.x`) and the docs footers were refreshed (#85). Example overlays install the generated CRD and patch the real Deployment (#81); build them with `--load-restrictor LoadRestrictionsNone`.
-- ✅ Unit + envtest **627 pass / 0 fail / 3 skip** on envtest 1.37.0; isolated 61-test parallel e2e suite on a live cluster against the tested image `sha-eef948f` (59/61 effective — the two remaining failures are tests 54 and 56, the documented #60/#82 cases, see the release notes).
+### 📦 amd64-Only Images (arm64 still paused)
+- ⚠️ The `1.10.0` image is **`linux/amd64` only**, like `1.9.0`. The arm64 build and the multi-arch e2e test stay commented out — not removed — in `docker-build-push.yml`, `operator/Makefile` and `operator/scripts/` (#96). The floating tags `latest`, `1` and `1.10` resolve to that same amd64-only image, so an arm64 node pulling any of them fails with `no matching manifest for linux/arm64`; arm64 clusters should pin `1.8.1` explicitly or build the image locally (`make docker-buildx PLATFORMS=linux/arm64,linux/amd64`).
 
-📖 **Full Release Notes**: [v1.9.0 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.9.0) | [Changelog](CHANGELOG.md)
+### 🐛 Image Build Hardened (#105)
+- ✅ `operator/Dockerfile` copies `internal/` whole instead of listing packages one by one. The per-path list dated back to the initial commit and broke the moment a package appeared outside `internal/controller/` — unit tests, lint and CodeQL could not see it, because only `build-and-push` exercises the Dockerfile.
+
+### 🧪 Tests
+- ✅ Unit + envtest **650 pass / 0 fail / 3 skip** (was 605/0/3), `go build ./...` and `go vet ./...` clean.
+- ✅ E2E: 45/45 passed, 0 failed on a live k3s cluster against the tested image `sha-844d447` (parallel runner, 3 slots, `E2E_WAIT_MULT=2`, operator pinned to the cluster's amd64 node because the image is amd64-only; 29 min wall-clock). The NetworkPolicy tests are out of the pools, so the two documented reds (#60/#82, tests 54 and 56) did not run.
+
+📖 **Full Release Notes**: [v1.10.0 Release](https://github.com/lukasz-bielinski/permission-binder-operator/releases/tag/v1.10.0) | [Changelog](CHANGELOG.md)
 
 ---
 
@@ -410,7 +419,7 @@ All Docker images are **cryptographically signed** and include **supply chain at
 **Using Cosign with the repository public key (offline, no Sigstore infrastructure needed):**
 ```bash
 # cosign.pub is committed at the repository root
-cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.9.0
+cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.10.0
 ```
 
 **Using Cosign keyless (workflow identity):**
@@ -419,7 +428,7 @@ cosign verify --key cosign.pub lukaszbielinski/permission-binder-operator:1.9.0
 cosign verify \
   --certificate-identity-regexp="https://github.com/lukasz-bielinski/permission-binder-operator" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
-  lukaszbielinski/permission-binder-operator:1.9.0
+  lukaszbielinski/permission-binder-operator:1.10.0
 ```
 
 **Enforcing on OpenShift (`ClusterImagePolicy`, OpenShift 4.17+):**
@@ -445,7 +454,7 @@ The key pair does not change between releases, so a new tag needs no policy chan
 ```bash
 # Verify GitHub Attestations
 gh attestation verify \
-  oci://lukaszbielinski/permission-binder-operator:1.9.0 \
+  oci://lukaszbielinski/permission-binder-operator:1.10.0 \
   --owner lukasz-bielinski
 ```
 
@@ -706,18 +715,17 @@ Apache License 2.0 - See [LICENSE](LICENSE)
 ## Project Status
 
 **Status:** Production Ready ✅  
-**Version:** v1.9.0  
+**Version:** v1.10.0  
 **Last Updated:** 2026-09-09  
 **Maintainer:** [Łukasz Bieliński](https://github.com/lukasz-bielinski)
 
-### Recent Changes (v1.9.0)
-- ✅ **Spec Changes Reconciled** - a prefix-only edit is no longer skipped; the guard compares ConfigMap version, roleMapping hash and `metadata.generation`, new status field `status.lastProcessedGeneration`, prefix cleanup finally fires (#94)
-- ✅ **Docker Image** - Built and pushed `lukaszbielinski/permission-binder-operator:1.9.0` (golang 1.27 builder), **linux/amd64 only** — the arm64 build is paused (#96); keyless + key-pair Cosign signatures, `--recursive` over the pushed digest and every child manifest
-- ✅ **LDAP URL Fix** - `ldap://host:port` in `domain_server` now connects (it always dialed `ldap://ldap://host:389` before); unknown schemes and host-less values are rejected before dialing and connect errors report the dialed URL (#77)
-- ✅ **E2E Harness** - `KUBECONFIG` default + `/readyz` preflight, `OPERATOR_IMAGE` override, `GITHUB_GITOPS_SECRET_FILE` honoured, ServiceMonitor cleanup (#79); anchored legacy namespace sweep + `--list-test-namespaces` (#78); test 16 is a real RBAC-loss test (#80); test 25 is timing-robust and test 02 asserts (#92); test 61 gains a plain-`ldap://` phase (#77)
-- ✅ **Examples, CI & Docs** - overlays install the generated CRD and patch the real Deployment (#81); `shellcheck` job over every tracked `*.sh` with a root `.shellcheckrc` (#83); `make test-e2e` runs the live-cluster suite, `SECURITY.md` supported-versions table (stale at `1.0.x`) and docs footers refreshed (#85)
+### Recent Changes (v1.10.0)
 
----
+- ✅ **Metadata contract** - `permission-binder.io/managed-by` (label) now on ServiceAccounts and SA RoleBindings; the whole annotation/label contract owned by `operator/internal/metadata` and documented in `docs/METADATA_CONTRACT.md`; adoption (including the stale-cache `AlreadyExists` race) always re-stamps
+- ✅ **Upgrade behavior** - one forced, idempotent reconcile pass per CR after every operator start, so a new stamp lands without waiting for a ConfigMap, roleMapping or spec edit
+- ✅ **NetworkPolicy GitOps disabled by default** - `ENABLE_NETWORK_POLICY=true` re-enables it; code, CRD schema, metrics and e2e tests all kept
+- ✅ **Docker Image** - `lukaszbielinski/permission-binder-operator:1.10.0` (golang 1.27 builder), **linux/amd64 only** (#96); keyless + key-pair Cosign signatures
+- ✅ **Image build fix** - `COPY internal/ internal/`, so a new Go package no longer breaks the image after merge
 
 ## Roadmap
 

@@ -28,6 +28,7 @@ If you discover a security vulnerability in the Permission Binder Operator, plea
 
 | Version | Supported          | Security Updates |
 | ------- | ------------------ | ---------------- |
+| 1.10.x  | :white_check_mark: | Yes              |
 | 1.9.x   | :white_check_mark: | Yes              |
 | 1.8.x   | :white_check_mark: | Yes (last multi-arch image) |
 | < 1.8   | :x:                | No               |
