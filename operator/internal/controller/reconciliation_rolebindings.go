@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	permissionv1 "github.com/permission-binder-operator/operator/api/v1"
+	"github.com/permission-binder-operator/operator/internal/metadata"
 )
 
 // ensureNamespace creates a namespace if it doesn't exist
@@ -39,20 +40,14 @@ func (r *PermissionBinderReconciler) ensureNamespace(ctx context.Context, namesp
 	err := r.Get(ctx, types.NamespacedName{Name: namespace}, &ns)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Create namespace with annotations
-			now := time.Now().Format(time.RFC3339)
+			// Create namespace with the managed-resource stamp
+			now := time.Now()
+			stamp := namespaceStamp(permissionBinder)
 			ns = corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: namespace,
-					Annotations: map[string]string{
-						AnnotationManagedBy:                 ManagedByValue,
-						AnnotationCreatedAt:                 now,
-						AnnotationPermissionBinder:          permissionBinder.Name,
-						AnnotationPermissionBinderNamespace: permissionBinder.Namespace,
-					},
-					Labels: map[string]string{
-						LabelManagedBy: ManagedByValue,
-					},
+					Name:        namespace,
+					Annotations: stamp.Annotations(now),
+					Labels:      stamp.Labels(),
 				},
 			}
 			createErr := r.Create(ctx, &ns)
@@ -91,20 +86,10 @@ func (r *PermissionBinderReconciler) ensureNamespace(ctx context.Context, namesp
 			return nil
 		}
 
-		// Update existing namespace with annotations if not present
-		needsUpdate := false
-		if ns.Annotations == nil {
-			ns.Annotations = make(map[string]string)
-		}
-		if ns.Labels == nil {
-			ns.Labels = make(map[string]string)
-		}
-
 		// ADOPTION LOGIC: Remove orphaned annotations if present
 		// This allows automatic recovery when PermissionBinder is recreated
-		if ns.Annotations[AnnotationOrphanedAt] != "" {
-			delete(ns.Annotations, AnnotationOrphanedAt)
-			delete(ns.Annotations, AnnotationOrphanedBy)
+		needsUpdate := false
+		if metadata.ClearOrphan(&ns) {
 			needsUpdate = true
 
 			// Increment adoption metrics (automatic recovery)
@@ -117,24 +102,9 @@ func (r *PermissionBinderReconciler) ensureNamespace(ctx context.Context, namesp
 				"recovery", "automatic")
 		}
 
-		if ns.Annotations[AnnotationManagedBy] != ManagedByValue {
-			ns.Annotations[AnnotationManagedBy] = ManagedByValue
-			needsUpdate = true
-		}
-		if ns.Annotations[AnnotationPermissionBinder] != permissionBinder.Name {
-			ns.Annotations[AnnotationPermissionBinder] = permissionBinder.Name
-			needsUpdate = true
-		}
-		if ns.Annotations[AnnotationPermissionBinderNamespace] != permissionBinder.Namespace {
-			ns.Annotations[AnnotationPermissionBinderNamespace] = permissionBinder.Namespace
-			needsUpdate = true
-		}
-		if ns.Annotations[AnnotationCreatedAt] == "" {
-			ns.Annotations[AnnotationCreatedAt] = time.Now().Format(time.RFC3339)
-			needsUpdate = true
-		}
-		if ns.Labels[LabelManagedBy] != ManagedByValue {
-			ns.Labels[LabelManagedBy] = ManagedByValue
+		// Reconcile the stamp (created-at is only filled when absent, so an
+		// adopted namespace keeps the timestamp it already had).
+		if metadata.Apply(&ns, namespaceStamp(permissionBinder), time.Now()) {
 			needsUpdate = true
 		}
 
@@ -181,7 +151,7 @@ func (r *PermissionBinderReconciler) validateClusterRoleExists(ctx context.Conte
 // successfully processed.
 func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, namespace, name, role, group, clusterRole string, permissionBinder *permissionv1.PermissionBinder) (managed bool, err error) {
 	logger := log.FromContext(ctx)
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now()
 
 	// Validate ClusterRole exists before creating RoleBinding
 	// This is a critical security check for production environments
@@ -196,20 +166,13 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 			"security_impact", "high")
 	}
 
+	stamp := groupRoleBindingStamp(permissionBinder, role)
 	roleBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Annotations: map[string]string{
-				AnnotationManagedBy:                 ManagedByValue,
-				AnnotationCreatedAt:                 now,
-				AnnotationPermissionBinder:          permissionBinder.Name,
-				AnnotationPermissionBinderNamespace: permissionBinder.Namespace,
-				AnnotationRole:                      role, // Store full role name to support roles with hyphens (e.g., "read-only")
-			},
-			Labels: map[string]string{
-				LabelManagedBy: ManagedByValue,
-			},
+			Name:        name,
+			Namespace:   namespace,
+			Annotations: stamp.Annotations(now),
+			Labels:      stamp.Labels(),
 		},
 		Subjects: []rbacv1.Subject{
 			{
@@ -270,7 +233,7 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 
 		// Check if RoleBinding needs update - avoid unnecessary updates that change ResourceVersion
 		needsUpdate := false
-		hasOrphanedAnnotation := existing.Annotations[AnnotationOrphanedAt] != ""
+		hasOrphanedAnnotation := metadata.IsOrphaned(&existing)
 
 		// Check if RoleRef changed
 		if existing.RoleRef != roleBinding.RoleRef {
@@ -282,33 +245,10 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 			needsUpdate = true
 		}
 
-		// Check if annotations need update
-		if existing.Annotations == nil {
-			existing.Annotations = make(map[string]string)
-			needsUpdate = true
-		}
-		if existing.Labels == nil {
-			existing.Labels = make(map[string]string)
-			needsUpdate = true
-		}
-
-		// Check if managed-by annotation changed
-		if existing.Annotations[AnnotationManagedBy] != ManagedByValue {
-			needsUpdate = true
-		}
-		if existing.Annotations[AnnotationPermissionBinder] != permissionBinder.Name {
-			needsUpdate = true
-		}
-		if existing.Annotations[AnnotationPermissionBinderNamespace] != permissionBinder.Namespace {
-			needsUpdate = true
-		}
-		if existing.Annotations[AnnotationRole] != role {
-			needsUpdate = true
-		}
-		if existing.Annotations[AnnotationCreatedAt] == "" {
-			needsUpdate = true
-		}
-		if existing.Labels[LabelManagedBy] != ManagedByValue {
+		// Reconcile the stamp. Apply mutates in place and reports whether it
+		// had to, which is exactly the needsUpdate signal - the object is only
+		// written below, so a no-op stamp still costs no Update.
+		if metadata.Apply(&existing, stamp, now) {
 			needsUpdate = true
 		}
 
@@ -330,10 +270,7 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 
 		// ADOPTION LOGIC: Remove orphaned annotations if present
 		// This allows automatic recovery when PermissionBinder is recreated
-		if hasOrphanedAnnotation {
-			delete(existing.Annotations, AnnotationOrphanedAt)
-			delete(existing.Annotations, AnnotationOrphanedBy)
-
+		if metadata.ClearOrphan(&existing) {
 			// Increment adoption metrics (automatic recovery)
 			adoptionEventsTotal.Inc()
 
@@ -344,15 +281,6 @@ func (r *PermissionBinderReconciler) createRoleBinding(ctx context.Context, name
 				"action", "adoption",
 				"recovery", "automatic")
 		}
-
-		existing.Annotations[AnnotationManagedBy] = ManagedByValue
-		existing.Annotations[AnnotationPermissionBinder] = permissionBinder.Name
-		existing.Annotations[AnnotationPermissionBinderNamespace] = permissionBinder.Namespace
-		existing.Annotations[AnnotationRole] = role // Store full role name to support roles with hyphens (e.g., "read-only")
-		if existing.Annotations[AnnotationCreatedAt] == "" {
-			existing.Annotations[AnnotationCreatedAt] = now
-		}
-		existing.Labels[LabelManagedBy] = ManagedByValue
 
 		if err := r.Update(ctx, &existing); err != nil {
 			if !errors.IsNotFound(err) {
