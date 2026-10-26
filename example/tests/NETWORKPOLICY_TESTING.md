@@ -1,5 +1,12 @@
 # NetworkPolicy E2E Testing Guide
 
+> **The NetworkPolicy feature ships disabled.** These tests (44-57, 59, 60) are
+> out of the default pools in `run-tests-parallel.sh` and will fail against a
+> default deployment, because a disabled feature creates no PRs and writes no
+> status entries. To run them: deploy the operator with
+> `ENABLE_NETWORK_POLICY=true` and restore the commented `POOL_C` line.
+> Test 58 (disabled mode) asserts the off behavior and stays enabled.
+
 ## Overview
 
 NetworkPolicy E2E tests verify that the operator correctly creates GitHub Pull Requests with NetworkPolicy files. These tests are **asynchronous** - the operator creates PRs in the background, so tests must wait and verify.

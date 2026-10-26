@@ -98,6 +98,14 @@ spec:
           # otherwise instances re-stamp each other's resources.
           # - name: MANAGED_BY_VALUE
           #   value: "permission-binder-operator-e2e-a"
+          # ENABLE_NETWORK_POLICY re-enables the NetworkPolicy GitOps feature
+          # (template rendering, Git/PR operations, drift detection), which
+          # ships DISABLED. Nothing is removed - the code, the CRD schema, the
+          # metrics and the e2e tests are intact - so this is a flag flip.
+          # With it off, spec.networkPolicy is ignored and one warning per
+          # reconcile pass says so.
+          # - name: ENABLE_NETWORK_POLICY
+          #   value: "true"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
