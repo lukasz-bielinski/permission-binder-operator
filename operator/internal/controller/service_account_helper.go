@@ -19,9 +19,9 @@ import (
 
 const (
 	// Annotation keys specific to the ServiceAccount flow - see
-	// internal/metadata for the contract (AnnotationCreatedBy is the
-	// deprecated spelling of AnnotationManagedBy, still written because every
-	// SA in the field carries it).
+	// internal/metadata for the contract (AnnotationCreatedBy is the legacy
+	// spelling of AnnotationManagedBy, still written because every SA in the
+	// field carries it).
 	AnnotationCreatedBy      = metadata.AnnotationCreatedBy
 	AnnotationSAType         = metadata.AnnotationSAType
 	AnnotationServiceAccount = metadata.AnnotationServiceAccount

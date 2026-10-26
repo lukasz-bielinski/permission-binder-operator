@@ -71,11 +71,15 @@ const (
 	AnnotationServiceAccount = "permission-binder.io/service-account"
 
 	// AnnotationCreatedBy is the ServiceAccount flow's historical spelling of
-	// AnnotationManagedBy.
+	// AnnotationManagedBy, written with the same value on ServiceAccounts and
+	// SA RoleBindings because that is what every such object in the field
+	// carries today. It is legacy: read AnnotationManagedBy, which is on every
+	// managed resource, and drop this key once nothing outside the repo greps
+	// for it.
 	//
-	// Deprecated: kept because it is what every ServiceAccount and SA
-	// RoleBinding in the field carries today; both keys are written with the
-	// same value. Read AnnotationManagedBy.
+	// Not marked with a `Deprecated:` doc directive on purpose - this is an
+	// internal package, so the only possible users are the three in-repo sites
+	// that must keep writing and asserting it, and SA1019 would fire on each.
 	AnnotationCreatedBy = "permission-binder.io/created-by"
 
 	// AnnotationOrphanedAt and AnnotationOrphanedBy are the orphan markers set

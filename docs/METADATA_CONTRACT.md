@@ -19,7 +19,7 @@ four stamp constructors in
 | `permission-binder.io/role` | group RoleBinding, ServiceAccount | Full role key from `spec.roleMapping` / `spec.serviceAccountMapping`, so a role name with hyphens survives round-tripping through the resource name. |
 | `permission-binder.io/sa-type` | ServiceAccount, SA RoleBinding | The `spec.serviceAccountMapping` key (`deploy`, `runtime`, …). |
 | `permission-binder.io/service-account` | SA RoleBinding | The ServiceAccount the RoleBinding binds. |
-| `permission-binder.io/created-by` | ServiceAccount, SA RoleBinding | **Deprecated** spelling of `managed-by`, same value. Written because every ServiceAccount in the field carries it; read `managed-by`. |
+| `permission-binder.io/created-by` | ServiceAccount, SA RoleBinding | **Legacy** spelling of `managed-by`, same value. Written because every ServiceAccount in the field carries it; read `managed-by`. |
 | `permission-binder.io/orphaned-at`, `…/orphaned-by` | all | Set by SAFE-MODE cleanup when the CR is deleted (resources are preserved, not deleted). Their presence makes a resource adoptable by another CR; adoption removes them and counts `permission_binder_adoption_events_total`. |
 | `app.kubernetes.io/managed-by`, `…/component`, `…/name` (labels) | ServiceAccount, SA RoleBinding | The recommended Kubernetes labels, where a component/name pair is meaningful. |
 
@@ -37,7 +37,7 @@ labels survive every pass.
 | `role` | — | ✅ | ✅ | — (role lives on the SA) |
 | `sa-type` | — | — | ✅ | ✅ |
 | `service-account` | — | — | — | ✅ |
-| `created-by` (deprecated) | — | — | ✅ | ✅ |
+| `created-by` (legacy) | — | — | ✅ | ✅ |
 | `app.kubernetes.io/*` | — | — | ✅ | ✅ |
 | orphan markers on CR deletion | ✅ | ✅ | ✅ | ✅ |
 
@@ -84,4 +84,4 @@ had drifted:
 | ServiceAccount ownership annotations were never re-stamped on adoption | A legacy SA stayed unclaimed indefinitely. |
 | A `Create` that lost an `AlreadyExists` race skipped the stamp entirely (SA flow) | A managed object could stay unstamped until something else happened to touch it. |
 
-All five are closed; `created-by` is kept as a deprecated alias.
+All five are closed; `created-by` is kept as a legacy alias.
