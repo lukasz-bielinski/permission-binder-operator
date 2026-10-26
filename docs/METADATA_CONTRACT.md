@@ -39,7 +39,7 @@ labels survive every pass.
 | `service-account` | — | — | — | ✅ |
 | `created-by` (legacy) | — | — | ✅ | ✅ |
 | `app.kubernetes.io/*` | — | — | ✅ | ✅ |
-| orphan markers on CR deletion | ✅ | ✅ | ✅ | ✅ |
+| orphan markers on CR deletion | ✅ | ✅ | — (see below) | ✅ |
 
 ## When the stamp is written
 
@@ -51,6 +51,15 @@ labels survive every pass.
 - **Every pass** — `metadata.Apply` reconciles drift and reports whether it
   changed anything, so an up-to-date resource costs no `Update` (no
   ResourceVersion churn, no watch traffic).
+- **SAFE-MODE deletion** — deleting a PermissionBinder preserves its resources
+  and marks them orphaned, which makes them adoptable again. The cleanup
+  selects namespaces and RoleBindings by the `managed-by` label, so **both
+  group and SA RoleBindings** are marked (the SA half only since the label
+  covers them) — but **ServiceAccounts are not**: no cleanup path annotates
+  them. That is deliberate rather than harmful: a ServiceAccount grants
+  nothing by itself, and the RoleBinding that does carry its permissions is
+  marked. Adoption still clears the markers from a ServiceAccount that has
+  them, so a hand-annotated one recovers normally.
 - **Ownership gate** — adoption always runs behind `canTakeOwnership`: a
   resource with a live claim by *another* PermissionBinder is never written to
   (issue #43). Unclaimed, own, legacy name-only and explicitly orphaned
